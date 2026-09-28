@@ -8,8 +8,12 @@
  */
 import { existsSync, statSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createRunTurn } from "../../src/agent/run-turn.js";
+import { loadAgentEnv } from "../../src/config/env.js";
 import { CLI_EXIT_CODES, type RunSummary } from "../../src/contracts/cli.js";
 import { databasePath } from "../../src/db/client.js";
+import { createIntegrations } from "../../src/integrations/registry.js";
+import { startServer } from "../../src/server/runtime.js";
 import { expectedIdempotencyKey } from "../scenarios/facts.js";
 import {
   J1_BILLING_INQUIRY,
@@ -17,8 +21,9 @@ import {
   J5_WEEKLY_DIGEST,
   type Scenario,
 } from "../scenarios/index.js";
+import { ApiClient } from "../support/api-client.js";
 import { FAKE_CREDENTIAL_VALUES } from "../support/fakes/credentials.js";
-import { type Harness, startHarness } from "../support/harness.js";
+import { freePort, type Harness, startHarness } from "../support/harness.js";
 import { requireNativeSdkBinary } from "../support/sdk-gate-support.js";
 import {
   BUILT_CLI,
@@ -60,6 +65,25 @@ beforeAll(async () => {
 afterAll(async () => {
   await harness?.close();
 });
+
+/** The real server (in this process) on a state directory the CLI wrote, as the app would open it. */
+async function openApp(stateDir: string): Promise<{ api: ApiClient; close(): Promise<void> }> {
+  const loaded = loadAgentEnv({
+    ...env,
+    AGENT_STATE_DIR: stateDir,
+    PORT: String(await freePort()),
+  });
+  if (!loaded.ok) throw new Error(JSON.stringify(loaded.problems));
+  const catalog = createIntegrations();
+  const server = await startServer({
+    env: loaded.env,
+    runTurn: createRunTurn({ catalog, version: "0.0.0-e2e" }),
+    integrations: Object.values(catalog),
+    version: "0.0.0-e2e",
+    log: () => {},
+  });
+  return { api: new ApiClient(server.url), close: () => server.close() };
+}
 
 function expectNoCredentials(result: CliResult): void {
   const output = `${result.stdout}\n${result.stderr}`;
@@ -120,6 +144,23 @@ describe("the built CLI against the fakes and the scripted model", () => {
       expectedIdempotencyKey(run?.id ?? "", "toolu_j2_refund"),
     ]);
     expect(harness.script?.problems ?? []).toEqual([]);
+
+    // The app, opened on the same state directory, shows the CLI's run and conversation.
+    const app = await openApp(stateDir);
+    try {
+      const runs = await app.api.expect("GET /api/runs", { query: { source: "cli" } });
+      expect(runs.items.map((item) => [item.id, item.source, item.mode, item.status])).toEqual([
+        [run?.id, "cli", "headless", "completed"],
+      ]);
+      const detail = await app.api.expect("GET /api/conversations/:conversationId", {
+        params: { conversationId: run?.conversation_id ?? "" },
+      });
+      expect(detail.conversation.source).toBe("cli");
+      expect(detail.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+      expect(JSON.stringify(detail.messages[1]?.parts)).toContain("Posted to #billing.");
+    } finally {
+      await app.close();
+    }
   });
 
   it("--json prints exactly one RunSummary; outbound actions are denied in headless mode", async () => {
