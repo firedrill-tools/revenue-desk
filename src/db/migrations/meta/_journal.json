@@ -22,6 +22,13 @@
       "when": 1790622021870,
       "tag": "0002_run_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790623906669,
+      "tag": "0003_run_session",
+      "breakpoints": true
     }
   ]
 }

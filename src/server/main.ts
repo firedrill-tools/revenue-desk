@@ -14,6 +14,7 @@ import { createRunTurn } from "../agent/run-turn.js";
 import { loadAgentEnv, withDotenvFile } from "../config/env.js";
 import { createRedactor } from "../config/redact.js";
 import type { AgentEnv, ConfigProblem } from "../contracts/env.js";
+import { stateDirUsageBaselines } from "../db/usage-baseline.js";
 import { integrations } from "../integrations/registry.js";
 import { type RunningServer, startServer } from "./runtime.js";
 
@@ -60,7 +61,8 @@ async function main(): Promise<void> {
   try {
     server = await startServer({
       env,
-      runTurn: createRunTurn({ catalog, version }),
+      // A resumed session's usage is measured against what the database recorded.
+      runTurn: createRunTurn({ catalog, version, usageStore: stateDirUsageBaselines }),
       integrations: Object.values(catalog),
       redact,
       version,

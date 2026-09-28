@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 import { createRunTurn } from "../../src/agent/run-turn.js";
 import { loadAgentEnv } from "../../src/config/env.js";
 import type { EnvVarName, SdkChildPassthroughVar } from "../../src/contracts/env.js";
+import { stateDirUsageBaselines } from "../../src/db/usage-baseline.js";
 import { createIntegrations } from "../../src/integrations/registry.js";
 import { startServer } from "../../src/server/runtime.js";
 import { sandboxResponder } from "../scenarios/index.js";
@@ -227,6 +228,8 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
         runTurn: createRunTurn({
           catalog,
           version: "0.0.0-harness",
+          // As src/server/main.ts: usage baselines from the database.
+          usageStore: stateDirUsageBaselines,
           onStderr: (line) => lines.push(`[claude] ${line}`),
         }),
         integrations: Object.values(catalog),

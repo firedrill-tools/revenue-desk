@@ -270,6 +270,12 @@ export const runs = sqliteTable(
      */
     ownerPid: integer("owner_pid"),
     ownerStartedAt: text("owner_started_at"),
+    /**
+     * The Agent SDK session the run used. A resumed session reports running
+     * totals, so a run's usage is the session's totals minus the usage its
+     * earlier runs recorded (src/db/usage-baseline.ts).
+     */
+    sdkSessionId: text("sdk_session_id"),
   },
   (t) => [
     index("runs_conversation_idx").on(t.conversationId, t.startedAt),

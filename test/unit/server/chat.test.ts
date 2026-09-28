@@ -253,6 +253,8 @@ describe("POST /api/chat: the refund turn", () => {
       terminalReason: "completed",
       userMessageId: expect.any(String),
       assistantMessageId: turn.final.id,
+      // The session the run used, for the usage baseline of the next run.
+      sdkSessionId: "sess_refund",
     });
     expect(getToolCallByToolUseId(db, REFUND_CALL.id)).toMatchObject({
       status: "succeeded",

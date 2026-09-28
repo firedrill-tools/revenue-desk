@@ -1,0 +1,1 @@
+ALTER TABLE `runs` ADD `sdk_session_id` text;

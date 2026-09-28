@@ -3,11 +3,16 @@
 // A resumed session's result reports running totals for the whole session
 // (total_cost_usd, modelUsage and duration_api_ms continue from the totals
 // its transcript saved; checked against SDK 0.3.283 on 2026-09-28). A run's
-// own usage is therefore the session totals minus the totals at the end of
-// the previous run of that session, which the core keeps in a small file per
-// session under CLAUDE_CONFIG_DIR. Without a baseline (an older session, a
-// removed file) tokens come from this run's own stream events and the cost is
-// the session cost pro-rated by tokens: an estimate, labelled as such here.
+// own usage is therefore the session totals minus a baseline: what the
+// session's earlier runs recorded. The server and the CLI read it from the
+// database (src/db/usage-baseline.ts), so run rows and conversation totals
+// never count a request twice; without a store the core keeps the totals in
+// a small file per session under CLAUDE_CONFIG_DIR. A new session, or a
+// resume that started a different session, has a zero baseline. Without a
+// baseline (an older session) tokens come from this run's own stream events
+// and the cost is the session cost pro-rated by tokens: an estimate,
+// labelled as such here. Totals below the baseline mean the SDK did not
+// carry the session's totals over, and are this run's own.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -82,7 +87,8 @@ export function runUsage(input: {
     durationMs: input.result.duration_ms,
   };
   if (input.baseline !== null) {
-    const base = input.baseline;
+    // Totals below the baseline did not continue from it: they are this run's own.
+    const base = carriesOver(totals, input.baseline) ? input.baseline : ZERO_TOTALS;
     return {
       costUsd: roundUsd(nonNegative(totals.costUsd - base.costUsd)),
       inputTokens: nonNegative(totals.inputTokens - base.inputTokens),
@@ -110,10 +116,51 @@ export function runUsage(input: {
   };
 }
 
-/** Where the session totals at the end of each run are kept. */
+/** Whether `totals` continue from `baseline` (running totals never go down). */
+function carriesOver(totals: UsageTotals, baseline: UsageTotals): boolean {
+  return (
+    totals.costUsd + 1e-9 >= baseline.costUsd &&
+    totals.inputTokens >= baseline.inputTokens &&
+    totals.outputTokens >= baseline.outputTokens &&
+    totals.cacheReadTokens >= baseline.cacheReadTokens &&
+    totals.cacheCreationTokens >= baseline.cacheCreationTokens
+  );
+}
+
+/** Which run of which session a baseline is asked for. */
+export type BaselineKey = {
+  readonly sessionId: string;
+  /** The run being measured: never part of its own baseline. */
+  readonly runId: string;
+};
+
+/** Where the baseline of a resumed session comes from. */
 export interface UsageBaselineStore {
-  read(sessionId: string): UsageTotals | null;
-  write(sessionId: string, totals: UsageTotals): void;
+  /** The session's totals before this run; null when unknown. */
+  read(key: BaselineKey): UsageTotals | null;
+  /** The session's totals at the end of this run (stores that keep them). */
+  write(key: BaselineKey, totals: UsageTotals): void;
+}
+
+/**
+ * The baseline of a run: zero for a new session or when the SDK started a
+ * different session than the one resumed, the store's otherwise (null when
+ * it does not know or cannot say).
+ */
+export function usageBaseline(input: {
+  readonly resumeSessionId: string | null;
+  readonly sessionId: string;
+  readonly runId: string;
+  readonly store: UsageBaselineStore;
+}): UsageTotals | null {
+  if (input.resumeSessionId === null || input.resumeSessionId !== input.sessionId) {
+    return ZERO_TOTALS;
+  }
+  try {
+    return input.store.read({ sessionId: input.sessionId, runId: input.runId });
+  } catch {
+    return null;
+  }
 }
 
 const SESSION_ID = /^[A-Za-z0-9-]{8,64}$/;
@@ -138,7 +185,7 @@ export function fileUsageBaselineStore(directory: string): UsageBaselineStore {
   const pathOf = (sessionId: string) =>
     SESSION_ID.test(sessionId) ? join(directory, `${sessionId}.json`) : null;
   return {
-    read(sessionId) {
+    read({ sessionId }) {
       const path = pathOf(sessionId);
       if (path === null) return null;
       try {
@@ -148,7 +195,7 @@ export function fileUsageBaselineStore(directory: string): UsageBaselineStore {
         return null;
       }
     },
-    write(sessionId, totals) {
+    write({ sessionId }, totals) {
       const path = pathOf(sessionId);
       if (path === null) return;
       mkdirSync(directory, { recursive: true });

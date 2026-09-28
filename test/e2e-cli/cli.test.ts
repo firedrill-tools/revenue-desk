@@ -13,6 +13,7 @@ import { createRunTurn } from "../../src/agent/run-turn.js";
 import { loadAgentEnv } from "../../src/config/env.js";
 import { CLI_EXIT_CODES, type RunSummary } from "../../src/contracts/cli.js";
 import { databasePath } from "../../src/db/client.js";
+import { stateDirUsageBaselines } from "../../src/db/usage-baseline.js";
 import { createIntegrations } from "../../src/integrations/registry.js";
 import { startServer } from "../../src/server/runtime.js";
 import { expectedIdempotencyKey } from "../scenarios/facts.js";
@@ -108,7 +109,11 @@ async function openApp(stateDir: string): Promise<{ api: ApiClient; close(): Pro
   const catalog = createIntegrations();
   const server = await startServer({
     env: loaded.env,
-    runTurn: createRunTurn({ catalog, version: "0.0.0-e2e" }),
+    runTurn: createRunTurn({
+      catalog,
+      version: "0.0.0-e2e",
+      usageStore: stateDirUsageBaselines,
+    }),
     integrations: Object.values(catalog),
     version: "0.0.0-e2e",
     log: () => {},

@@ -2,7 +2,7 @@
 // user's message to run.finished, with usage, the effective policy and the
 // connection availability the run used.
 
-import { and, desc, eq, type SQL } from "drizzle-orm";
+import { and, desc, eq, ne, type SQL, sql } from "drizzle-orm";
 import type { Page, RunDetailView, RunSummaryView } from "../../contracts/api.js";
 import type { AgentEffort } from "../../contracts/env.js";
 import type {
@@ -127,6 +127,55 @@ export function toRunUsage(row: RunRow): RunUsage | null {
     modelRequests: row.modelRequests ?? 0,
     durationMs: row.durationMs ?? 0,
     durationApiMs: row.durationApiMs ?? 0,
+  };
+}
+
+/** The Agent SDK session the run uses (its `session` event). */
+export function setRunSession(db: DbExecutor, id: string, sdkSessionId: string): void {
+  db.update(runs).set({ sdkSessionId }).where(eq(runs.id, id)).run();
+}
+
+/** Usage totals of an SDK session: cost, tokens and API time. */
+export type SessionUsage = {
+  readonly costUsd: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+  readonly durationApiMs: number;
+};
+
+/**
+ * What the earlier runs of an SDK session recorded, summed (runs that
+ * recorded no usage count as zero). Null when no earlier run of the session
+ * is known, e.g. rows written before runs recorded their session.
+ */
+export function recordedSessionUsage(
+  db: DbExecutor,
+  sdkSessionId: string,
+  excludingRunId: string,
+): SessionUsage | null {
+  const row = db
+    .select({
+      runs: sql<number>`count(*)`,
+      costUsd: sql<number>`coalesce(sum(${runs.costUsd}), 0)`,
+      inputTokens: sql<number>`coalesce(sum(${runs.inputTokens}), 0)`,
+      outputTokens: sql<number>`coalesce(sum(${runs.outputTokens}), 0)`,
+      cacheReadTokens: sql<number>`coalesce(sum(${runs.cacheReadTokens}), 0)`,
+      cacheCreationTokens: sql<number>`coalesce(sum(${runs.cacheCreationTokens}), 0)`,
+      durationApiMs: sql<number>`coalesce(sum(${runs.durationApiMs}), 0)`,
+    })
+    .from(runs)
+    .where(and(eq(runs.sdkSessionId, sdkSessionId), ne(runs.id, excludingRunId)))
+    .get();
+  if (row === undefined || row.runs === 0) return null;
+  return {
+    costUsd: row.costUsd,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    cacheCreationTokens: row.cacheCreationTokens,
+    durationApiMs: row.durationApiMs,
   };
 }
 

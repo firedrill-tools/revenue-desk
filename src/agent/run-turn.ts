@@ -42,7 +42,7 @@ import {
   runUsage,
   sessionTotals,
   type UsageBaselineStore,
-  ZERO_TOTALS,
+  usageBaseline,
 } from "./usage.js";
 
 export type RunTurnDependencies = {
@@ -53,7 +53,11 @@ export type RunTurnDependencies = {
   /** PATH for the Claude CLI child. Default: this process's PATH. */
   readonly hostPath?: string;
   readonly connectUpstream?: UpstreamConnector;
-  /** Per-session usage baselines. Default: files under <state>/claude/revenue-desk/usage. */
+  /**
+   * Where a resumed session's usage baseline comes from. The server and the
+   * CLI pass the database's (src/db/usage-baseline.ts). Default: files under
+   * <state>/claude/revenue-desk/usage.
+   */
   readonly usageStore?: (stateDir: string) => UsageBaselineStore;
   /** How long a stop waits after interrupt() before aborting the SDK process. Default 3000. */
   readonly stopGraceMs?: number;
@@ -377,9 +381,14 @@ async function execute(
 
     const result = mapper.result;
     if (result !== null) {
-      const stateStore = (deps.usageStore ?? defaultUsageStore)(input.env.runtime.stateDir);
-      const baseline =
-        input.resumeSessionId === null ? ZERO_TOTALS : stateStore.read(input.resumeSessionId);
+      const store = (deps.usageStore ?? defaultUsageStore)(input.env.runtime.stateDir);
+      const sessionId = mapper.sessionId ?? result.session_id;
+      const baseline = usageBaseline({
+        resumeSessionId: input.resumeSessionId,
+        sessionId,
+        runId: input.runId,
+        store,
+      });
       emit({
         type: "usage",
         ...runUsage({
@@ -389,9 +398,8 @@ async function execute(
           modelRequests: mapper.modelRequests,
         }),
       });
-      const sessionId = mapper.sessionId ?? result.session_id;
       try {
-        stateStore.write(sessionId, sessionTotals(result));
+        store.write({ sessionId, runId: input.runId }, sessionTotals(result));
       } catch {
         // A missing baseline only makes the next resumed run's usage an estimate.
       }

@@ -14,7 +14,7 @@ import {
   setConversationSession,
   setConversationStatus,
 } from "../db/repos/conversations.js";
-import { finishRun, recordRunStarted, recordRunUsage } from "../db/repos/runs.js";
+import { finishRun, recordRunStarted, recordRunUsage, setRunSession } from "../db/repos/runs.js";
 import {
   insertToolCall,
   interruptToolCalls,
@@ -57,6 +57,7 @@ export class RunRecorder {
         return;
       case "session":
         setConversationSession(db, conversationId, event.sdkSessionId);
+        setRunSession(db, runId, event.sdkSessionId);
         return;
       case "tool.input.start":
         this.#baseMetadata.set(event.toolCallId, event.tool);

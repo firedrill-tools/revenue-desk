@@ -34,6 +34,7 @@ import { readSettings } from "../db/repos/settings.js";
 import type { DbExecutor } from "../db/repos/types.js";
 import type { ConversationRow } from "../db/schema.js";
 import { seedDatabase } from "../db/seed.js";
+import { recordedUsageBaselines, stateDirUsageBaselines } from "../db/usage-baseline.js";
 import {
   connectionSnapshot,
   integrations,
@@ -72,7 +73,15 @@ export function createServices(options: ServiceOptions = {}): Promise<AskService
       const known = workspaceDb === null ? {} : knownConnections(workspaceDb);
       return connectionSnapshot(catalog, env, known).plans;
     },
-    runTurn: createRunTurn({ catalog, version: packageVersion() }),
+    runTurn: createRunTurn({
+      catalog,
+      version: packageVersion(),
+      // A resumed session's usage is measured against what the database recorded.
+      usageStore: (stateDir) =>
+        workspaceDb === null
+          ? stateDirUsageBaselines(stateDir)
+          : recordedUsageBaselines(workspaceDb),
+    }),
   };
   return Promise.resolve(services);
 }
