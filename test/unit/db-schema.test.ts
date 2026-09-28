@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
@@ -22,7 +22,12 @@ import {
   INTEGRATIONS,
   type ProfileId,
 } from "../../src/contracts/integration.js";
-import { databasePath, openDatabase, type RevenueDeskDatabase } from "../../src/db/client.js";
+import {
+  DEFAULT_MIGRATIONS_FOLDER,
+  databasePath,
+  openDatabase,
+  type RevenueDeskDatabase,
+} from "../../src/db/client.js";
 import {
   approvals,
   conversations,
@@ -81,7 +86,7 @@ describe("database client", () => {
     expect(database.sqlite.pragma("busy_timeout", { simple: true })).toBe(5000);
   });
 
-  it("applies the committed migration and is idempotent on reopen", () => {
+  it("applies the committed migrations and is idempotent on reopen", () => {
     const first = fileDatabase();
     const tables = first.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -101,7 +106,13 @@ describe("database client", () => {
     );
     const again = openDatabase({ path: first.path });
     open.push(again);
-    expect(again.sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(1);
+    const journal = JSON.parse(
+      readFileSync(join(DEFAULT_MIGRATIONS_FOLDER, "meta", "_journal.json"), "utf8"),
+    ) as { entries: unknown[] };
+    expect(journal.entries.length).toBeGreaterThanOrEqual(2);
+    expect(again.sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(
+      journal.entries.length,
+    );
   });
 });
 
@@ -188,10 +199,23 @@ describe("schema constraints", () => {
     expect(db.select({ status: runs.status }).from(runs).get()).toEqual({ status: "completed" });
   });
 
-  it("keeps tool_use_id unique and requires an integration once a known tool is decided", () => {
+  it("keeps tool_use_id unique within a run and requires an integration once a known tool is decided", () => {
     const database = fileDatabase();
     seedConversationAndRun(database);
     const { db } = database;
+    db.insert(runs)
+      .values({
+        id: "r2",
+        conversationId: "c1",
+        source: "ui",
+        mode: "interactive",
+        model: "claude-sonnet-5",
+        effort: "medium",
+        policySnapshot: DEFAULT_POLICY,
+        connectionsSnapshot: [],
+        startedAt: NOW,
+      })
+      .run();
     const call = {
       runId: "r1",
       conversationId: "c1",
@@ -210,6 +234,10 @@ describe("schema constraints", () => {
         .values({ ...call, id: "t2", toolUseId: "toolu_1", integration: "stripe" })
         .run(),
     ).toThrow(/UNIQUE constraint failed/);
+    // Another run may repeat a tool_use id (a scripted model does).
+    db.insert(toolCalls)
+      .values({ ...call, id: "t2", runId: "r2", toolUseId: "toolu_1", integration: "stripe" })
+      .run();
     expect(() =>
       db
         .insert(toolCalls)

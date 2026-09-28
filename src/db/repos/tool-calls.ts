@@ -1,7 +1,7 @@
 // The action log: one row per tool call (docs/ARCHITECTURE.md §8). Inputs are
 // redacted and outputs compacted by the caller before they reach this module.
 
-import { and, asc, count, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { ToolCallStatus, ToolCallView } from "../../contracts/api.js";
 import type { ToolDecision } from "../../contracts/events.js";
 import { CONNECTION_KINDS, type ConnectionKind } from "../../contracts/integration.js";
@@ -23,38 +23,56 @@ export type NewToolCall = Pick<
   | "title"
 > & { readonly input: JsonObject; readonly startedAt: IsoTime };
 
-/** Records a call once its input is complete. A repeated tool_use id is ignored. */
+/**
+ * A call is identified by its run and the model's tool_use id: a tool_use id
+ * is unique only within a run (a scripted model, or a replayed transcript,
+ * can repeat one), so no write may ever reach another run's row.
+ */
+export type ToolCallKey = { readonly runId: string; readonly toolUseId: string };
+
+function byKey(key: ToolCallKey) {
+  return and(eq(toolCalls.runId, key.runId), eq(toolCalls.toolUseId, key.toolUseId));
+}
+
+/** Records a call once its input is complete. A repeated tool_use id in the same run is ignored. */
 export function insertToolCall(db: DbExecutor, call: NewToolCall): void {
   const { input, ...values } = call;
   db.insert(toolCalls)
     .values({ ...values, inputJson: input, status: "running", decision: "pending" })
-    .onConflictDoNothing({ target: toolCalls.toolUseId })
+    .onConflictDoNothing({ target: [toolCalls.runId, toolCalls.toolUseId] })
     .run();
 }
 
+export function getToolCall(db: DbExecutor, key: ToolCallKey): ToolCallRow | undefined {
+  return db.select().from(toolCalls).where(byKey(key)).get();
+}
+
+/** The latest call with this tool_use id in any run (diagnostics and tests). */
 export function getToolCallByToolUseId(db: DbExecutor, toolUseId: string): ToolCallRow | undefined {
-  return db.select().from(toolCalls).where(eq(toolCalls.toolUseId, toolUseId)).get();
+  return db
+    .select()
+    .from(toolCalls)
+    .where(eq(toolCalls.toolUseId, toolUseId))
+    .orderBy(desc(toolCalls.startedAt))
+    .get();
 }
 
 export function markToolCallAwaitingApproval(
   db: DbExecutor,
-  toolUseId: string,
+  key: ToolCallKey,
   approvalId: string,
 ): void {
-  db.update(toolCalls)
-    .set({ status: "awaiting_approval", approvalId })
-    .where(eq(toolCalls.toolUseId, toolUseId))
-    .run();
+  db.update(toolCalls).set({ status: "awaiting_approval", approvalId }).where(byKey(key)).run();
 }
 
 /** An approval was decided: approved calls run on; others are denied. */
 export function markToolCallDecided(
   db: DbExecutor,
-  toolUseId: string,
+  key: ToolCallKey,
   decision: Extract<ToolDecision, "approved" | "denied" | "timed_out" | "stopped">,
 ): void {
   const status: ToolCallStatus = decision === "approved" ? "running" : "denied";
-  db.update(toolCalls).set({ status, decision }).where(eq(toolCalls.toolUseId, toolUseId)).run();
+  db.update(toolCalls).set({ status, decision }).where(byKey(key)).run();
 }
 
 /**
@@ -63,7 +81,7 @@ export function markToolCallDecided(
  */
 export function markToolCallDenied(
   db: DbExecutor,
-  toolUseId: string,
+  key: ToolCallKey,
   input: {
     readonly decision: Extract<
       ToolDecision,
@@ -73,7 +91,7 @@ export function markToolCallDenied(
     readonly finishedAt: IsoTime;
   },
 ): void {
-  const row = getToolCallByToolUseId(db, toolUseId);
+  const row = getToolCall(db, key);
   if (row === undefined) return;
   const rejected = input.decision === "rejected";
   db.update(toolCalls)
@@ -86,13 +104,13 @@ export function markToolCallDenied(
       finishedAt: input.finishedAt,
       durationMs: elapsedMs(row.startedAt, input.finishedAt),
     })
-    .where(eq(toolCalls.toolUseId, toolUseId))
+    .where(byKey(key))
     .run();
 }
 
 export function markToolCallFinished(
   db: DbExecutor,
-  toolUseId: string,
+  key: ToolCallKey,
   result: {
     readonly output: JsonValue;
     readonly truncated: boolean;
@@ -106,7 +124,7 @@ export function markToolCallFinished(
     readonly finishedAt: IsoTime;
   },
 ): void {
-  const row = getToolCallByToolUseId(db, toolUseId);
+  const row = getToolCall(db, key);
   if (row === undefined) return;
   db.update(toolCalls)
     .set({
@@ -124,7 +142,7 @@ export function markToolCallFinished(
       finishedAt: result.finishedAt,
       durationMs: Math.max(0, Math.round(result.durationMs)),
     })
-    .where(eq(toolCalls.toolUseId, toolUseId))
+    .where(byKey(key))
     .run();
 }
 

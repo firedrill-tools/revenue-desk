@@ -124,7 +124,7 @@ function setup() {
     input: { charge: "ch_1" },
     startedAt: T0,
   });
-  markToolCallAwaitingApproval(db, "toolu_refund", "apr_1");
+  markToolCallAwaitingApproval(db, { runId: "r_ui", toolUseId: "toolu_refund" }, "apr_1");
   insertPendingApproval(db, {
     id: "apr_1",
     runId: "r_ui",

@@ -51,6 +51,7 @@ import {
 } from "../../../src/db/repos/runs.js";
 import { readSettings, updateSettings } from "../../../src/db/repos/settings.js";
 import {
+  getToolCall,
   getToolCallByToolUseId,
   insertToolCall,
   interruptToolCalls,
@@ -613,25 +614,29 @@ describe("tool calls", () => {
     toolCall(database, "r1", "toolu_1");
     toolCall(database, "r1", "toolu_1");
     expect(listToolCalls(database.db, "r1")).toHaveLength(1);
-    markToolCallAwaitingApproval(database.db, "toolu_1", "a1");
+    markToolCallAwaitingApproval(database.db, { runId: "r1", toolUseId: "toolu_1" }, "a1");
     expect(getToolCallByToolUseId(database.db, "toolu_1")).toMatchObject({
       status: "awaiting_approval",
       approvalId: "a1",
       decision: "pending",
     });
-    markToolCallDecided(database.db, "toolu_1", "approved");
-    markToolCallFinished(database.db, "toolu_1", {
-      output: { id: "re_1" },
-      truncated: false,
-      isError: false,
-      errorCode: null,
-      errorMessage: null,
-      httpStatus: 200,
-      upstreamTool: "POST /v1/refunds",
-      idempotencyKey: "idem",
-      durationMs: 12.4,
-      finishedAt: T1,
-    });
+    markToolCallDecided(database.db, { runId: "r1", toolUseId: "toolu_1" }, "approved");
+    markToolCallFinished(
+      database.db,
+      { runId: "r1", toolUseId: "toolu_1" },
+      {
+        output: { id: "re_1" },
+        truncated: false,
+        isError: false,
+        errorCode: null,
+        errorMessage: null,
+        httpStatus: 200,
+        upstreamTool: "POST /v1/refunds",
+        idempotencyKey: "idem",
+        durationMs: 12.4,
+        finishedAt: T1,
+      },
+    );
     const [view] = listToolCalls(database.db, "r1");
     expect(view).toMatchObject({
       toolCallId: "toolu_1",
@@ -651,18 +656,22 @@ describe("tool calls", () => {
   it("marks an unasked call auto, failures with their error, and denials", () => {
     const database = setup();
     toolCall(database, "r1", "toolu_auto");
-    markToolCallFinished(database.db, "toolu_auto", {
-      output: { error: "declined" },
-      truncated: true,
-      isError: true,
-      errorCode: "card_declined",
-      errorMessage: "Your card was declined.",
-      httpStatus: 402,
-      upstreamTool: null,
-      idempotencyKey: null,
-      durationMs: 5,
-      finishedAt: T1,
-    });
+    markToolCallFinished(
+      database.db,
+      { runId: "r1", toolUseId: "toolu_auto" },
+      {
+        output: { error: "declined" },
+        truncated: true,
+        isError: true,
+        errorCode: "card_declined",
+        errorMessage: "Your card was declined.",
+        httpStatus: 402,
+        upstreamTool: null,
+        idempotencyKey: null,
+        durationMs: 5,
+        finishedAt: T1,
+      },
+    );
     expect(getToolCallByToolUseId(database.db, "toolu_auto")).toMatchObject({
       decision: "auto",
       status: "failed",
@@ -676,11 +685,15 @@ describe("tool calls", () => {
     });
 
     toolCall(database, "r1", "toolu_policy");
-    markToolCallDenied(database.db, "toolu_policy", {
-      decision: "policy_denied",
-      reason: "Denied by policy",
-      finishedAt: T1,
-    });
+    markToolCallDenied(
+      database.db,
+      { runId: "r1", toolUseId: "toolu_policy" },
+      {
+        decision: "policy_denied",
+        reason: "Denied by policy",
+        finishedAt: T1,
+      },
+    );
     expect(getToolCallByToolUseId(database.db, "toolu_policy")).toMatchObject({
       status: "denied",
       decision: "policy_denied",
@@ -690,17 +703,65 @@ describe("tool calls", () => {
     });
 
     toolCall(database, "r1", "toolu_rejected");
-    markToolCallDenied(database.db, "toolu_rejected", {
-      decision: "rejected",
-      reason: "amount: required",
-      finishedAt: T1,
-    });
+    markToolCallDenied(
+      database.db,
+      { runId: "r1", toolUseId: "toolu_rejected" },
+      {
+        decision: "rejected",
+        reason: "amount: required",
+        finishedAt: T1,
+      },
+    );
     expect(getToolCallByToolUseId(database.db, "toolu_rejected")).toMatchObject({
       status: "failed",
       decision: "rejected",
       isError: true,
       errorMessage: "amount: required",
     });
+  });
+
+  it("never lets one run's events change another run's call with the same tool_use id", () => {
+    const database = setup();
+    run(database, "r2", "c1", T1);
+    toolCall(database, "r1", "toolu_same");
+    markToolCallAwaitingApproval(database.db, { runId: "r1", toolUseId: "toolu_same" }, "a1");
+    insertToolCall(database.db, {
+      id: "row_toolu_same_r2",
+      runId: "r2",
+      conversationId: "c1",
+      toolUseId: "toolu_same",
+      integration: "stripe",
+      connectionKind: "api",
+      toolName: "mcp__stripe__create_refund",
+      operation: "stripe.refunds.create",
+      actionClass: "financial",
+      title: "A call",
+      input: { charge: "ch_1" },
+      startedAt: T1,
+    });
+    markToolCallDenied(
+      database.db,
+      { runId: "r2", toolUseId: "toolu_same" },
+      {
+        decision: "denied",
+        reason: "No",
+        finishedAt: T2,
+      },
+    );
+    expect(listToolCalls(database.db, "r1")).toMatchObject([
+      {
+        toolCallId: "toolu_same",
+        status: "awaiting_approval",
+        decision: "pending",
+        approvalId: "a1",
+      },
+    ]);
+    expect(listToolCalls(database.db, "r2")).toMatchObject([
+      { toolCallId: "toolu_same", status: "denied", decision: "denied", approvalId: null },
+    ]);
+    expect(getToolCall(database.db, { runId: "r1", toolUseId: "toolu_same" })?.status).toBe(
+      "awaiting_approval",
+    );
   });
 
   it("allows a rejected unknown tool without an integration", () => {
@@ -719,11 +780,15 @@ describe("tool calls", () => {
       input: {},
       startedAt: T0,
     });
-    markToolCallDenied(database.db, "toolu_x", {
-      decision: "rejected",
-      reason: "Unknown tool",
-      finishedAt: T1,
-    });
+    markToolCallDenied(
+      database.db,
+      { runId: "r1", toolUseId: "toolu_x" },
+      {
+        decision: "rejected",
+        reason: "Unknown tool",
+        finishedAt: T1,
+      },
+    );
     expect(listToolCalls(database.db, "r1")[0]).toMatchObject({
       integration: null,
       decision: "rejected",
@@ -740,12 +805,16 @@ describe("tool calls", () => {
     toolCall(database, "r1", "toolu_running");
     toolCall(database, "r1", "toolu_waiting");
     toolCall(database, "r1", "toolu_done");
-    markToolCallAwaitingApproval(database.db, "toolu_waiting", "a1");
-    markToolCallDenied(database.db, "toolu_done", {
-      decision: "denied",
-      reason: "No",
-      finishedAt: T1,
-    });
+    markToolCallAwaitingApproval(database.db, { runId: "r1", toolUseId: "toolu_waiting" }, "a1");
+    markToolCallDenied(
+      database.db,
+      { runId: "r1", toolUseId: "toolu_done" },
+      {
+        decision: "denied",
+        reason: "No",
+        finishedAt: T1,
+      },
+    );
     expect(interruptToolCalls(database.db, "r1", T2)).toBe(2);
     expect(listToolCalls(database.db, "r1").map((call) => [call.toolCallId, call.status])).toEqual([
       ["toolu_running", "interrupted"],

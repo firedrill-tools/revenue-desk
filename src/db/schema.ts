@@ -320,8 +320,8 @@ export const toolCalls = sqliteTable(
     conversationId: text("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
-    /** The model's tool_use id. */
-    toolUseId: text("tool_use_id").notNull().unique(),
+    /** The model's tool_use id; unique within its run (the idempotency key is per run too). */
+    toolUseId: text("tool_use_id").notNull(),
     /** Null only for a rejected unknown tool. */
     integration: text("integration", { enum: INTEGRATION }),
     connectionKind: text("connection_kind", { enum: CONNECTION_KIND }),
@@ -351,6 +351,7 @@ export const toolCalls = sqliteTable(
     durationMs: integer("duration_ms"),
   },
   (t) => [
+    uniqueIndex("tool_calls_run_tool_use_idx").on(t.runId, t.toolUseId),
     index("tool_calls_run_idx").on(t.runId, t.startedAt),
     index("tool_calls_integration_idx").on(t.integration),
     check(
@@ -399,7 +400,7 @@ export const approvals = sqliteTable(
     expiresAt: text("expires_at").notNull(),
   },
   (t) => [
-    uniqueIndex("approvals_tool_use_idx").on(t.toolUseId),
+    uniqueIndex("approvals_run_tool_use_idx").on(t.runId, t.toolUseId),
     index("approvals_status_idx").on(t.status, t.expiresAt),
     index("approvals_run_idx").on(t.runId),
     check("approvals_integration", oneOf("integration", INTEGRATION)),

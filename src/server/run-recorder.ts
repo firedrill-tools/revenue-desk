@@ -22,6 +22,7 @@ import {
   markToolCallDecided,
   markToolCallDenied,
   markToolCallFinished,
+  type ToolCallKey,
 } from "../db/repos/tool-calls.js";
 import type { DbExecutor } from "../db/repos/types.js";
 import { type Redact, redactJson, redactJsonObject } from "./redaction.js";
@@ -59,15 +60,15 @@ export class RunRecorder {
         this.#toolInput(event);
         return;
       case "approval.requested":
-        markToolCallAwaitingApproval(db, event.toolCallId, event.approvalId);
+        markToolCallAwaitingApproval(db, this.#key(event.toolCallId), event.approvalId);
         this.#setStatus("awaiting_approval");
         return;
       case "approval.resolved":
-        markToolCallDecided(db, event.toolCallId, decisionOf(event));
+        markToolCallDecided(db, this.#key(event.toolCallId), decisionOf(event));
         if (countPendingApprovalsForRun(db, runId) === 0) this.#setStatus("running");
         return;
       case "tool.denied":
-        markToolCallDenied(db, event.toolCallId, {
+        markToolCallDenied(db, this.#key(event.toolCallId), {
           decision: event.decision,
           reason: this.#options.redact(event.reason),
           finishedAt: this.#now(),
@@ -108,7 +109,7 @@ export class RunRecorder {
   #toolOutput(event: AgentEventOf<"tool.output">): void {
     const { db, redact } = this.#options;
     const error = event.error;
-    markToolCallFinished(db, event.toolCallId, {
+    markToolCallFinished(db, this.#key(event.toolCallId), {
       output: redactJson(event.output, redact),
       truncated: event.truncated,
       isError: event.isError,
@@ -155,6 +156,10 @@ export class RunRecorder {
         now,
       );
     });
+  }
+
+  #key(toolUseId: string): ToolCallKey {
+    return { runId: this.#options.runId, toolUseId };
   }
 
   #setStatus(status: ConversationStatus): void {
