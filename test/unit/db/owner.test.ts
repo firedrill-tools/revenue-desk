@@ -5,9 +5,12 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { describe, expect, it } from "vitest";
 import {
+  createProcessProbe,
   currentRunOwner,
   OWNER_START_TOLERANCE_MS,
+  ownerOf,
   ownerState,
+  psPath,
   type RunOwner,
   systemProcessProbe,
 } from "../../../src/db/owner.js";
@@ -88,5 +91,61 @@ describe("the system probe", () => {
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     }
+  });
+});
+
+describe("the ps probe", () => {
+  it("runs ps by absolute path with no secret in its environment", () => {
+    process.env.REVENUE_DESK_TEST_SECRET = "sk_test_should_not_leak";
+    try {
+      const calls: { command: string; args: readonly string[]; env: Record<string, string> }[] = [];
+      const probe = createProcessProbe((command, args, options) => {
+        calls.push({ command, args, env: { ...options.env } });
+        return { status: 0, stdout: "Tue Sep 29 03:11:52 2026\n" };
+      }, "/bin/ps");
+      expect(probe.startedAt(4242)?.getTime()).toBe(Date.parse("Tue Sep 29 03:11:52 2026"));
+      expect(calls).toEqual([
+        {
+          command: "/bin/ps",
+          args: ["-o", "lstart=", "-p", "4242"],
+          env: { LC_ALL: "C", PATH: "/usr/bin:/bin" },
+        },
+      ]);
+      expect(JSON.stringify(calls)).not.toContain("sk_test_should_not_leak");
+      expect(psPath((path) => path === "/usr/bin/ps")).toBe("/usr/bin/ps");
+      expect(psPath(() => true)).toBe("/bin/ps");
+      expect(systemProcessProbe.startedAt(process.pid)).not.toBeNull();
+    } finally {
+      delete process.env.REVENUE_DESK_TEST_SECRET;
+    }
+  });
+
+  it("reads nothing from a failing or unreadable ps", () => {
+    expect(createProcessProbe(() => ({ status: 1, stdout: "" })).startedAt(1)).toBeNull();
+    expect(createProcessProbe(() => ({ status: 0, stdout: "not a date" })).startedAt(1)).toBeNull();
+    expect(
+      createProcessProbe(() => {
+        throw new Error("ENOENT");
+      }).startedAt(1),
+    ).toBeNull();
+  });
+});
+
+describe("an owner started through a delayed exec", () => {
+  it("records its start as ps reports it, so another process sees it alive", () => {
+    // The pid was forked at 09:00:00; Node initialised 4.5 s later (sh -c 'sleep 4; exec node …').
+    const forked = "2026-09-28T09:00:00.000Z";
+    const nodeStart = Date.parse(forked) + 4_546;
+    const probe = probeOf({ 3000: forked });
+    const owner = ownerOf(3_000, probe, nodeStart);
+    expect(owner.startedAt).toBe(forked);
+    expect(ownerState(owner, { self: SELF, probe })).toBe("alive");
+    // With Node's clock, it would have been taken for a reused pid.
+    const byNodeClock = { pid: 3_000, startedAt: new Date(nodeStart).toISOString() };
+    expect(ownerState(byNodeClock, { self: SELF, probe })).toBe("gone");
+    // Without ps, Node's clock is the fallback.
+    expect(ownerOf(3_000, { startedAt: () => null }, nodeStart).startedAt).toBe(
+      new Date(nodeStart).toISOString(),
+    );
   });
 });
