@@ -19,6 +19,7 @@ import {
   cleanupAll,
   createTestServer,
   heldScript,
+  LIVE_OWNER,
   refundScript,
   TEST_SECRET,
   userMessage,
@@ -180,6 +181,8 @@ describe("runs, stop and approvals", () => {
       },
       connections: [],
       startedAt: "2026-09-28T10:00:00.000Z",
+      // Another process that is still running (a CLI, or the server's own finished runs).
+      owner: LIVE_OWNER,
     });
   }
 

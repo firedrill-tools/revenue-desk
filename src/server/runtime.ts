@@ -17,7 +17,6 @@ import type { AgentEnv } from "../contracts/env.js";
 import type { RunTurn } from "../contracts/events.js";
 import type { IntegrationDefinition } from "../contracts/integration.js";
 import { databasePath, openDatabase } from "../db/client.js";
-import { recoverAfterRestart } from "../db/recover.js";
 import type { DbExecutor } from "../db/repos/types.js";
 import { seedDatabase } from "../db/seed.js";
 import { createApprovalGate } from "../policy/approvals.js";
@@ -26,6 +25,7 @@ import { createApprovalStore } from "./approval-store.js";
 import { ChatService } from "./chat-service.js";
 import { createComposioAuthorizer } from "./composio-connect.js";
 import { type ComposioAuthorizer, ConnectionService } from "./connections.js";
+import { OrphanSweeper, type OrphanSweeperOptions } from "./orphans.js";
 import { describeError, type Redact } from "./redaction.js";
 import { RunRegistry } from "./run-registry.js";
 import { createSessionSecrets, type SessionSecrets } from "./security.js";
@@ -52,6 +52,8 @@ export type ServerDependencies = {
   readonly secrets?: SessionSecrets;
   readonly maxConcurrentRuns?: number;
   readonly stopGraceMs?: number;
+  /** Test seams for run ownership (src/db/owner.ts). Default: this process and the system. */
+  readonly ownership?: OrphanSweeperOptions["ownership"];
 };
 
 /** Wires the services over an open database. */
@@ -86,12 +88,21 @@ export function createApiServices(
     ...(deps.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: deps.maxConcurrentRuns }),
     ...(deps.stopGraceMs === undefined ? {} : { stopGraceMs: deps.stopGraceMs }),
   });
+  const orphans = new OrphanSweeper({
+    db: deps.db,
+    runsLocally: (runId) => registry.get(runId) !== undefined,
+    now,
+    log,
+    redact,
+    ...(deps.ownership === undefined ? {} : { ownership: deps.ownership }),
+  });
   const chat = new ChatService({
     db: deps.db,
     env: deps.env,
     registry,
     connections,
     approvals,
+    orphans,
     now,
     newId,
   });
@@ -104,6 +115,7 @@ export function createApiServices(
     chat,
     approvals,
     connections,
+    orphans,
     redact,
     now,
     newId,
@@ -111,11 +123,14 @@ export function createApiServices(
   };
 }
 
-/** Seeds defaults, recovers from a restart and stores connection configuration. */
+/**
+ * Seeds defaults, recovers the runs whose process is gone (this server's
+ * previous life, a killed CLI) and stores connection configuration.
+ */
 export function prepareDatabase(services: ApiServices): void {
   const now = services.now().toISOString();
   seedDatabase(services.db, now);
-  const recovered = recoverAfterRestart(services.db, { now });
+  const recovered = services.orphans.boot();
   if (recovered.runs > 0 || recovered.approvals > 0) {
     services.log(
       `Boot recovery: ${recovered.runs} interrupted run(s) failed, ${recovered.approvals} pending approval(s) expired.`,

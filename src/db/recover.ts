@@ -1,30 +1,43 @@
-// Boot recovery (docs/ARCHITECTURE.md §7): the approvals a run waits on live
-// in the server's memory, so a restart ends every run the server owned.
+// Recovery of runs whose owner is gone (docs/ARCHITECTURE.md §7, §8).
 //
-// - runs still `running` become `failed` with `server_restart`;
-// - their in-flight tool calls become `interrupted`;
-// - every pending approval becomes `expired`, decided by `restart` (only the
-//   server asks for approvals; the headless CLI never does);
-// - their conversations show `error`;
-// - their persisted assistant messages are closed, so a reloaded page never
+// Every run row names the process that runs it (src/db/owner.ts): the server
+// or one CLI invocation, which may be working on the same database right now.
+// A run still `running` whose owner exited (a crash, a restart, a CLI killed
+// with SIGKILL) would stay running for ever and block its conversation, so it
+// is recovered:
+//
+// - the run becomes `failed` with `server_restart` ("the process died with
+//   the run in flight");
+// - its in-flight tool calls become `interrupted`;
+// - its pending approvals become `expired`, decided by `restart` (the waiter
+//   lived in the dead process);
+// - its conversation shows `error`;
+// - its persisted assistant message is closed, so a reloaded page never
 //   offers an approval card or a spinner that nothing will ever answer.
 //
-// Runs of the CLI (source `cli`) run in their own process, possibly right now,
-// so they are left alone unless the caller asks for them.
+// Runs whose owner is alive, another server's or a CLI's, are left alone.
+// Recovery runs at server boot, when the CLI opens the database, before a new
+// run is refused because its conversation seems busy, and when the app lists
+// conversations.
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ChatMessageMetadata, ChatUIMessage } from "../contracts/api.js";
 import type { RunSource } from "../contracts/events.js";
-import { expireAllPendingApprovals } from "./repos/approvals.js";
+import { type OwnerState, ownerState, type ProcessProbe, type RunOwner } from "./owner.js";
+import { expireDanglingApprovals, expirePendingApprovalsOfRun } from "./repos/approvals.js";
 import { setConversationStatus } from "./repos/conversations.js";
 import { getMessageRow, replaceAssistantMessage } from "./repos/messages.js";
-import { finishRun } from "./repos/runs.js";
+import { finishRun, runningRuns } from "./repos/runs.js";
 import { interruptToolCalls } from "./repos/tool-calls.js";
 import type { DbExecutor, IsoTime } from "./repos/types.js";
-import { conversations, runs } from "./schema.js";
+import { conversations, type RunRow, runs } from "./schema.js";
 
-export const RESTART_RUN_MESSAGE = "The server restarted while this run was in progress.";
-export const RESTART_APPROVAL_REASON = "The server restarted before a decision was made.";
+/** Why a recovered run failed, by the kind of process that owned it. */
+export const ORPHANED_RUN_MESSAGES: { readonly [S in RunSource]: string } = {
+  ui: "The server stopped while this run was in progress.",
+  cli: "The command-line process running this run exited before it finished.",
+};
+export const RESTART_APPROVAL_REASON = "The server stopped before a decision was made.";
 export const INTERRUPTED_TOOL_TEXT = "Interrupted: the run ended before this call finished.";
 
 export type RecoveryResult = {
@@ -33,54 +46,130 @@ export type RecoveryResult = {
   readonly approvals: number;
 };
 
+export type RecoveryOptions = {
+  readonly now: IsoTime;
+  /** Only this conversation's runs. Default: every running run. */
+  readonly conversationId?: string;
+  /**
+   * Whether this process is still running a run it owns (the server's run
+   * registry). A run it owns but no longer runs is recovered. Default: none.
+   */
+  readonly runsLocally?: (runId: string) => boolean;
+  /** Test seams (src/db/owner.ts). */
+  readonly self?: RunOwner;
+  readonly probe?: ProcessProbe;
+};
+
+/** Whether a running row still has a process working on it. */
+export function runOwnerState(
+  run: Pick<RunRow, "ownerPid" | "ownerStartedAt">,
+  options: Pick<RecoveryOptions, "self" | "probe"> = {},
+): OwnerState {
+  return ownerState(
+    { pid: run.ownerPid, startedAt: run.ownerStartedAt },
+    {
+      ...(options.self === undefined ? {} : { self: options.self }),
+      ...(options.probe === undefined ? {} : { probe: options.probe }),
+    },
+  );
+}
+
+/** True when nothing will ever finish this running run. */
+export function isOrphaned(run: RunRow, options: Omit<RecoveryOptions, "now"> = {}): boolean {
+  switch (runOwnerState(run, options)) {
+    case "alive":
+      return false;
+    case "self":
+      return !(options.runsLocally?.(run.id) ?? false);
+    case "gone":
+      return true;
+  }
+}
+
+/**
+ * Fails every running run (of one conversation, or all) whose owner is gone,
+ * in one transaction. Never touches a run a live process owns.
+ */
+export function recoverOrphanedRuns(db: DbExecutor, options: RecoveryOptions): RecoveryResult {
+  const { now } = options;
+  return db.transaction(
+    (tx) => {
+      let recovered = 0;
+      let toolCalls = 0;
+      let approvals = 0;
+      for (const run of runningRuns(tx, options.conversationId)) {
+        if (!isOrphaned(run, options)) continue;
+        const outcome = recoverRun(tx, run, now);
+        if (outcome === null) continue;
+        recovered += 1;
+        toolCalls += outcome.toolCalls;
+        approvals += outcome.approvals;
+      }
+      return { runs: recovered, toolCalls, approvals };
+    },
+    { behavior: "immediate" },
+  );
+}
+
+/**
+ * Server boot: recovers every orphaned run (nothing of this process runs
+ * yet), then expires the pending approvals of runs that are not running.
+ */
 export function recoverAfterRestart(
   db: DbExecutor,
-  options: { readonly now: IsoTime; readonly sources?: readonly RunSource[] },
+  options: Omit<RecoveryOptions, "conversationId" | "runsLocally">,
 ): RecoveryResult {
-  const sources = options.sources ?? ["ui"];
-  const { now } = options;
-  return db.transaction((tx) => {
-    const stale = tx
-      .select()
-      .from(runs)
-      .where(and(eq(runs.status, "running"), inArray(runs.source, [...sources])))
-      .all();
-    let toolCalls = 0;
-    for (const run of stale) {
-      finishRun(tx, run.id, {
-        status: "failed",
-        finishedAt: now,
-        stopReason: null,
-        terminalReason: null,
-        error: { code: "server_restart", message: RESTART_RUN_MESSAGE },
-      });
-      toolCalls += interruptToolCalls(tx, run.id, now);
-      const conversation = tx
-        .select({ status: conversations.status })
-        .from(conversations)
-        .where(eq(conversations.id, run.conversationId))
-        .get();
-      if (conversation?.status === "running" || conversation?.status === "awaiting_approval") {
-        setConversationStatus(tx, run.conversationId, "error", now);
-      }
-      if (run.assistantMessageId !== null) {
-        const row = getMessageRow(tx, run.assistantMessageId);
-        if (row !== undefined && row.role === "assistant") {
-          replaceAssistantMessage(
-            tx,
-            row.id,
-            closeInterruptedMessage(
-              { parts: row.partsJson, metadata: row.metadataJson ?? undefined },
-              RESTART_APPROVAL_REASON,
-            ),
-            now,
-          );
-        }
-      }
-    }
-    const approvals = expireAllPendingApprovals(tx, now, RESTART_APPROVAL_REASON);
-    return { runs: stale.length, toolCalls, approvals };
+  const result = recoverOrphanedRuns(db, options);
+  const dangling = expireDanglingApprovals(db, options.now, RESTART_APPROVAL_REASON);
+  return { ...result, approvals: result.approvals + dangling };
+}
+
+function recoverRun(
+  tx: DbExecutor,
+  run: RunRow,
+  now: IsoTime,
+): { readonly toolCalls: number; readonly approvals: number } | null {
+  const failed = finishRun(tx, run.id, {
+    status: "failed",
+    finishedAt: now,
+    stopReason: null,
+    terminalReason: null,
+    error: { code: "server_restart", message: ORPHANED_RUN_MESSAGES[run.source] },
   });
+  if (!failed) return null;
+  const toolCalls = interruptToolCalls(tx, run.id, now);
+  const approvals = expirePendingApprovalsOfRun(tx, run.id, now, RESTART_APPROVAL_REASON);
+  const conversation = tx
+    .select({ status: conversations.status })
+    .from(conversations)
+    .where(eq(conversations.id, run.conversationId))
+    .get();
+  const otherRunning = tx
+    .select({ id: runs.id })
+    .from(runs)
+    .where(and(eq(runs.conversationId, run.conversationId), eq(runs.status, "running")))
+    .get();
+  if (
+    otherRunning === undefined &&
+    (conversation?.status === "running" || conversation?.status === "awaiting_approval")
+  ) {
+    setConversationStatus(tx, run.conversationId, "error", now);
+  }
+  if (run.assistantMessageId !== null) {
+    const row = getMessageRow(tx, run.assistantMessageId);
+    if (row !== undefined && row.role === "assistant") {
+      replaceAssistantMessage(
+        tx,
+        row.id,
+        closeInterruptedMessage(
+          { parts: row.partsJson, metadata: row.metadataJson ?? undefined },
+          RESTART_APPROVAL_REASON,
+        ),
+        now,
+      );
+    }
+  }
+  return { toolCalls, approvals };
 }
 
 type Part = ChatUIMessage["parts"][number];

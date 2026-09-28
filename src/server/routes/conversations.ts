@@ -41,6 +41,7 @@ export function registerConversationRoutes(app: Hono, services: ApiServices): vo
     if (!query.ok) return query.response;
     const cursor = query.data.cursor === undefined ? undefined : decodeCursor(query.data.cursor);
     if (cursor === null) return apiError(c, "invalid_request", "The cursor is not valid.");
+    services.orphans.sweep();
     return c.json(
       conversationPage(services.db, {
         q: query.data.q,
@@ -64,6 +65,7 @@ export function registerConversationRoutes(app: Hono, services: ApiServices): vo
   });
 
   app.get(API_PATHS.conversation, (c) => {
+    services.orphans.sweep();
     const row = getConversation(services.db, c.req.param("conversationId"));
     if (row === undefined) return apiError(c, "not_found", "No conversation has this id.");
     // The active run's assistant message is replayed by the stream endpoint;

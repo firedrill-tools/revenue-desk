@@ -15,6 +15,13 @@
       "when": 1790619601770,
       "tag": "0001_run_scoped_tool_use_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790622021870,
+      "tag": "0002_run_owner",
+      "breakpoints": true
     }
   ]
 }

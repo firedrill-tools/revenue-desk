@@ -18,6 +18,8 @@ import type { AgentEnv } from "../contracts/env.js";
 import type { RunTurnInput } from "../contracts/events.js";
 import type { IntegrationId } from "../contracts/integration.js";
 import { databasePath, openDatabase } from "../db/client.js";
+import { currentRunOwner } from "../db/owner.js";
+import { recoverOrphanedRuns } from "../db/recover.js";
 import { readConnectionRows } from "../db/repos/connections.js";
 import {
   getConversation,
@@ -96,8 +98,20 @@ function openCliWorkspace(
   const database = openDatabase({ path: databasePath(env.runtime.stateDir) });
   const { db } = database;
   const redact = createRedactor(env);
+  const recover = (conversationId?: string) => {
+    const recovered = recoverOrphanedRuns(db, {
+      now: options.now().toISOString(),
+      ...(conversationId === undefined ? {} : { conversationId }),
+    });
+    if (recovered.runs > 0) {
+      options.log(`recovered ${recovered.runs} earlier run(s) whose process had exited.`);
+    }
+  };
   try {
     seedDatabase(db, options.now().toISOString());
+    // A run whose process died (e.g. a CLI killed with SIGKILL) must not keep
+    // its conversation busy: nothing will ever finish it.
+    recover();
   } catch (error) {
     database.close();
     throw error;
@@ -119,6 +133,7 @@ function openCliWorkspace(
     beginRun(input: RunTurnInput): RunRecorder {
       const assistantMessageId = options.newId();
       const startedAt = options.now().toISOString();
+      if (runningRunOf(db, input.conversationId) !== undefined) recover(input.conversationId);
       db.transaction(
         (tx) => {
           if (runningRunOf(tx, input.conversationId) !== undefined) {
@@ -138,6 +153,7 @@ function openCliWorkspace(
             connections: connectionSnapshot(integrations(), input.env, knownConnections(tx))
               .connections,
             startedAt,
+            owner: currentRunOwner(),
           });
           insertUserMessage(tx, {
             id: userMessageId,

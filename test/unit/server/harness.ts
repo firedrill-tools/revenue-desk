@@ -35,13 +35,22 @@ import { USER_DENIAL_REASON } from "../../../src/policy/approvals.js";
 import { createApp } from "../../../src/server/app.js";
 import type { ComposioAuthorizer } from "../../../src/server/connections.js";
 import type { Redact } from "../../../src/server/redaction.js";
-import { createApiServices, prepareDatabase } from "../../../src/server/runtime.js";
+import {
+  createApiServices,
+  prepareDatabase,
+  type ServerDependencies,
+} from "../../../src/server/runtime.js";
 import type { ApiServices } from "../../../src/server/services.js";
 import {
   cleanupAll,
+  GONE_OWNER,
+  LIVE_OWNER,
   onCleanup,
   openTestDatabase,
+  probeOf,
   refundDescriptor,
+  TEST_OWNERSHIP,
+  TEST_SELF,
   tempStateDir,
 } from "../db/support.js";
 
@@ -49,7 +58,17 @@ export const HOST = "127.0.0.1:4320";
 export const ORIGIN = `http://${HOST}`;
 export const TEST_SECRET = "sk_test_harnessSecretValue0001";
 
-export { cleanupAll, openTestDatabase, refundDescriptor, tempStateDir };
+export {
+  cleanupAll,
+  GONE_OWNER,
+  LIVE_OWNER,
+  openTestDatabase,
+  probeOf,
+  refundDescriptor,
+  TEST_OWNERSHIP,
+  TEST_SELF,
+  tempStateDir,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -552,6 +571,8 @@ export type TestServerOptions = {
   readonly maxConcurrentRuns?: number;
   readonly stopGraceMs?: number;
   readonly stateDir?: string;
+  /** Run ownership seams. Default TEST_OWNERSHIP: LIVE_OWNER runs, GONE_OWNER does not. */
+  readonly ownership?: ServerDependencies["ownership"];
 };
 
 export type TestServer = {
@@ -599,6 +620,7 @@ export function createTestServer(options: TestServerOptions = {}): TestServer {
       ? {}
       : { maxConcurrentRuns: options.maxConcurrentRuns }),
     ...(options.stopGraceMs === undefined ? {} : { stopGraceMs: options.stopGraceMs }),
+    ownership: options.ownership ?? TEST_OWNERSHIP,
   });
   prepareDatabase(services);
   const app = createApp({ version: "0.0.0-test", api: services });

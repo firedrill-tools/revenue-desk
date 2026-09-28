@@ -10,7 +10,7 @@ import { getRun, insertRun } from "../../../src/db/repos/runs.js";
 import { listToolCalls } from "../../../src/db/repos/tool-calls.js";
 import { seedDatabase } from "../../../src/db/seed.js";
 import { RunPersistence } from "../../../src/server/run-persistence.js";
-import { cleanupAll, openTestDatabase } from "../db/support.js";
+import { cleanupAll, openTestDatabase, TEST_SELF } from "../db/support.js";
 
 afterEach(cleanupAll);
 
@@ -39,6 +39,7 @@ function setup() {
     policy: DEFAULT_POLICY,
     connections: [],
     startedAt: T0,
+    owner: TEST_SELF,
   });
   const lines: string[] = [];
   const persistence = new RunPersistence({

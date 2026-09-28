@@ -6,8 +6,9 @@
  * it before this suite). Fails, never skips, without the build or the native
  * Claude CLI.
  */
-import { existsSync, statSync } from "node:fs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { existsSync, rmSync, statSync } from "node:fs";
+import Database from "better-sqlite3";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import { createRunTurn } from "../../src/agent/run-turn.js";
 import { loadAgentEnv } from "../../src/config/env.js";
 import { CLI_EXIT_CODES, type RunSummary } from "../../src/contracts/cli.js";
@@ -20,6 +21,7 @@ import {
   J2_REFUND_DUPLICATE,
   J5_WEEKLY_DIGEST,
   type Scenario,
+  text,
 } from "../scenarios/index.js";
 import { ApiClient } from "../support/api-client.js";
 import { FAKE_CREDENTIAL_VALUES } from "../support/fakes/credentials.js";
@@ -47,6 +49,28 @@ const MODEL_NEVER_ANSWERS: Scenario = {
   expected: { status: "cancelled" },
 };
 
+/** A CLI run that is killed with SIGKILL while its model request is open. */
+const KILLED_MID_RUN: Scenario = {
+  id: "cli-killed-mid-run",
+  job: "failure",
+  title: "The CLI is killed mid-run",
+  prompt: "Reconcile yesterday's payouts (the scripted model never answers; the CLI is killed).",
+  steps: [() => ({ hang: true })],
+  approvals: {},
+  expected: { status: "failed" },
+};
+
+/** The next turn of that conversation, in the app or in another CLI invocation. */
+const AFTER_THE_KILL: Scenario = {
+  id: "after-killed-cli",
+  job: "failure",
+  title: "Continue after the CLI was killed",
+  prompt: "Pick up where the command line left off.",
+  steps: [() => [text("Picked up after the command line stopped.")]],
+  approvals: {},
+  expected: { status: "completed" },
+};
+
 let harness: Harness;
 let env: Record<string, string>;
 
@@ -55,7 +79,14 @@ beforeAll(async () => {
   requireNativeSdkBinary();
   harness = await startHarness({
     server: "none",
-    model: [J1_BILLING_INQUIRY, J2_REFUND_DUPLICATE, J5_WEEKLY_DIGEST, MODEL_NEVER_ANSWERS],
+    model: [
+      J1_BILLING_INQUIRY,
+      J2_REFUND_DUPLICATE,
+      J5_WEEKLY_DIGEST,
+      MODEL_NEVER_ANSWERS,
+      KILLED_MID_RUN,
+      AFTER_THE_KILL,
+    ],
   });
   // The harness's environment without a server port (the CLI does not listen).
   const { PORT: _port, ...rest } = harness.env;
@@ -249,6 +280,119 @@ describe("the built CLI against the fakes and the scripted model", () => {
       expect.objectContaining({ id: summary.runId, source: "cli", status: "cancelled" }),
     ]);
     expect(state.runs[0]?.stop_reason).toBe("shutdown");
+  });
+
+  /** Runs KILLED_MID_RUN in the built CLI and kills it with SIGKILL once the model was asked. */
+  async function killedCliRun(stateDir: string): Promise<{
+    readonly runId: string;
+    readonly conversationId: string;
+    readonly pid: number;
+  }> {
+    const model = harness.model;
+    if (model === null) throw new Error("scripted model expected");
+    const before = model.requests.length;
+    const asked = () =>
+      model.requests
+        .slice(before)
+        .some((request) => JSON.stringify(request.body ?? null).includes(KILLED_MID_RUN.prompt));
+    const result = await runBuiltCli(["ask", "--state-dir", stateDir, KILLED_MID_RUN.prompt], {
+      env,
+      stop: { signal: "SIGKILL", when: () => until(asked) },
+    });
+    expect(result.signal).toBe("SIGKILL");
+    // Nothing ran the CLI's cleanup: its run is still `running`, owned by the dead process.
+    const sqlite = new Database(databasePath(stateDir), { readonly: true });
+    try {
+      const rows = sqlite
+        .prepare(
+          "SELECT id, conversation_id, status, source, owner_pid, owner_started_at FROM runs WHERE status = 'running'",
+        )
+        .all() as {
+        id: string;
+        conversation_id: string;
+        source: string;
+        owner_pid: number | null;
+        owner_started_at: string | null;
+      }[];
+      expect(rows).toHaveLength(1);
+      const [row] = rows;
+      if (row === undefined || row.owner_pid === null) throw new Error("no owned running run");
+      expect(row.source).toBe("cli");
+      expect(row.owner_started_at).not.toBeNull();
+      return { runId: row.id, conversationId: row.conversation_id, pid: row.owner_pid };
+    } finally {
+      sqlite.close();
+    }
+  }
+
+  it("a CLI killed with SIGKILL does not block its conversation: the app's next turn recovers it", async () => {
+    const stateDir = freshStateDir("sigkill-app");
+    prepareWorkspace(stateDir, harness.fakes);
+    // The app is already running when the CLI dies, so its boot recovery plays no part.
+    const app = await openApp(stateDir);
+    onTestFinished(() => rmSync(stateDir, { recursive: true, force: true }));
+    try {
+      const killed = await killedCliRun(stateDir);
+      expect(readState(stateDir).conversations).toEqual([
+        expect.objectContaining({ id: killed.conversationId, source: "cli", status: "running" }),
+      ]);
+
+      await app.api.session();
+      const chunks = await app.api.chat(killed.conversationId, AFTER_THE_KILL.prompt);
+      const streamed = chunks
+        .filter((chunk) => chunk.type === "text-delta")
+        .map((chunk) => String(chunk.delta))
+        .join("");
+      expect(streamed).toContain("Picked up after the command line stopped.");
+
+      const state = readState(stateDir);
+      expect(state.runs.map((run) => [run.id === killed.runId, run.source, run.status])).toEqual([
+        [true, "cli", "failed"],
+        [false, "ui", "completed"],
+      ]);
+      expect(state.runs[0]?.error_code).toBe("server_restart");
+      expect(state.conversations).toEqual([
+        expect.objectContaining({ id: killed.conversationId, status: "idle" }),
+      ]);
+      const runs = await app.api.expect("GET /api/runs", {
+        query: { conversationId: killed.conversationId },
+      });
+      expect(runs.items.find((item) => item.id === killed.runId)?.error).toEqual({
+        code: "server_restart",
+        message: "The command-line process running this run exited before it finished.",
+      });
+      expect(harness.script?.problems ?? []).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a CLI killed with SIGKILL does not block its conversation: the next CLI invocation recovers it", async () => {
+    const stateDir = freshStateDir("sigkill-cli");
+    onTestFinished(() => rmSync(stateDir, { recursive: true, force: true }));
+    prepareWorkspace(stateDir, harness.fakes);
+    const killed = await killedCliRun(stateDir);
+    const result = await runBuiltCli(
+      [
+        "ask",
+        "--json",
+        "--state-dir",
+        stateDir,
+        "--conversation",
+        killed.conversationId,
+        AFTER_THE_KILL.prompt,
+      ],
+      { env },
+    );
+    expect(result.code, result.stderr).toBe(CLI_EXIT_CODES.completed);
+    expect(result.stderr).toContain("recovered 1 earlier run(s) whose process had exited");
+    const summary = onlySummary(result);
+    expect(summary.reply).toContain("Picked up after the command line stopped.");
+    const state = readState(stateDir);
+    expect(state.runs.map((run) => [run.id, run.status, run.error_code])).toEqual([
+      [killed.runId, "failed", "server_restart"],
+      [summary.runId, "completed", null],
+    ]);
   });
 
   it("runs four at once with isolated state directories", async () => {

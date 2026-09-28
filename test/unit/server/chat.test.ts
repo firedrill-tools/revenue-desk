@@ -31,7 +31,9 @@ import {
   cleanupAll,
   createTestServer,
   ev,
+  GONE_OWNER,
   heldScript,
+  LIVE_OWNER,
   LOOKUP_CALL,
   ORIGIN,
   REFUND_CALL,
@@ -41,6 +43,7 @@ import {
   refundScript,
   type Script,
   STOP_REASON,
+  TEST_SELF,
   type TestServer,
   userMessage,
   waitFor,
@@ -600,23 +603,93 @@ describe("limits", () => {
     await later.text();
   });
 
-  it("refuses a turn on a conversation another process is running (the CLI)", async () => {
-    const server = createTestServer();
+  /** A conversation whose last run is running in another process (the CLI). */
+  async function runningElsewhere(
+    server: TestServer,
+    owner: { pid: number; startedAt: string },
+  ): Promise<{ conversationId: string; runId: string }> {
     const conversationId = await server.createConversation();
     const first = await server.request("POST", "/api/chat", {
       conversationId,
-      message: userMessage("u1", "Hi"),
+      message: userMessage(`u_${conversationId}`, "Hi"),
     });
+    expect(first.status).toBe(200);
     await first.text();
     await activeRunDone(server);
     server.database.sqlite
-      .prepare("UPDATE runs SET status = 'running', finished_at = NULL WHERE conversation_id = ?")
+      .prepare(
+        "UPDATE runs SET status = 'running', finished_at = NULL, source = 'cli', owner_pid = ?, owner_started_at = ? WHERE conversation_id = ?",
+      )
+      .run(owner.pid, owner.startedAt, conversationId);
+    server.database.sqlite
+      .prepare("UPDATE conversations SET status = 'running' WHERE id = ?")
       .run(conversationId);
+    const runId = server.core?.inputs.at(-1)?.runId ?? "";
+    return { conversationId, runId };
+  }
+
+  it("refuses a turn on a conversation another live process is running (the CLI)", async () => {
+    const server = createTestServer();
+    const { conversationId, runId } = await runningElsewhere(server, LIVE_OWNER);
     const response = await server.request("POST", "/api/chat", {
       conversationId,
       message: userMessage("u2", "Hi"),
     });
     expect(response.status).toBe(409);
+    expect(((await response.json()) as ApiErrorBody).error.code).toBe("run_active");
+    expect(getRun(server.services.db, runId)?.status).toBe("running");
+  });
+
+  it("recovers a run whose process is gone (a killed CLI) instead of refusing the turn", async () => {
+    const server = createTestServer();
+    const { conversationId, runId } = await runningElsewhere(server, GONE_OWNER);
+    const response = await server.request("POST", "/api/chat", {
+      conversationId,
+      message: userMessage("u2", "Hello again"),
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    await activeRunDone(server);
+    expect(getRun(server.services.db, runId)).toMatchObject({
+      status: "failed",
+      errorCode: "server_restart",
+      errorMessage: "The command-line process running this run exited before it finished.",
+    });
+    const second = server.core?.inputs.at(-1)?.runId ?? "";
+    expect(getRun(server.services.db, second)).toMatchObject({
+      status: "completed",
+      ownerPid: TEST_SELF.pid,
+      ownerStartedAt: TEST_SELF.startedAt,
+    });
+    expect(getConversation(server.services.db, conversationId)?.status).toBe("idle");
+    expect(server.logs.join("\n")).toMatch(/Recovered 1 run\(s\) whose process had exited/);
+  });
+
+  it("shows a dead process's run as failed when the app lists conversations and runs", async () => {
+    const server = createTestServer();
+    const { conversationId, runId } = await runningElsewhere(server, GONE_OWNER);
+    const listed = (await (await server.request("GET", "/api/conversations")).json()) as {
+      items: { id: string; status: string; activeRunId: string | null }[];
+    };
+    expect(listed.items.find((item) => item.id === conversationId)).toMatchObject({
+      status: "error",
+      activeRunId: null,
+    });
+    expect(getRun(server.services.db, runId)?.status).toBe("failed");
+  });
+
+  it("recovers a dead process's run when the user presses Stop on it", async () => {
+    const server = createTestServer();
+    const { runId } = await runningElsewhere(server, GONE_OWNER);
+    // A live one is refused as another process's.
+    const { runId: liveRunId } = await runningElsewhere(server, LIVE_OWNER);
+    const live = await server.request("POST", `/api/runs/${liveRunId}/stop`);
+    expect(live.status).toBe(409);
+    expect(((await live.json()) as ApiErrorBody).error.message).toMatch(/another process/);
+    const stop = await server.request("POST", `/api/runs/${runId}/stop`);
+    expect(stop.status).toBe(409);
+    expect(((await stop.json()) as ApiErrorBody).error.message).toBe("This run is not running.");
+    expect(getRun(server.services.db, runId)?.status).toBe("failed");
   });
 });
 

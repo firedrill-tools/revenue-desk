@@ -2,10 +2,10 @@
 // pending row before the core emits approval.requested; every decision
 // (user, timeout, stop, restart) settles it exactly once.
 
-import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, notInArray, sql } from "drizzle-orm";
 import type { ApprovalStatus, ApprovalView } from "../../contracts/api.js";
 import type { ApprovalDescriptor } from "../../contracts/events.js";
-import { type ApprovalRow, approvals } from "../schema.js";
+import { type ApprovalRow, approvals, runs } from "../schema.js";
 import type { DbExecutor, IsoTime } from "./types.js";
 
 export type NewApproval = {
@@ -149,7 +149,34 @@ export function approvalCountsByRun(
   return counts;
 }
 
-/** Boot recovery: nothing in this process waits for them any more. */
+/** Recovery of one run whose owner is gone: nothing waits for its approvals any more. */
+export function expirePendingApprovalsOfRun(
+  db: DbExecutor,
+  runId: string,
+  now: IsoTime,
+  reason: string,
+): number {
+  return db
+    .update(approvals)
+    .set({ status: "expired", decidedBy: "restart", reason, decidedAt: now })
+    .where(and(eq(approvals.runId, runId), eq(approvals.status, "pending")))
+    .run().changes;
+}
+
+/**
+ * Pending approvals of runs that are no longer running: nothing can decide
+ * them. Approvals of runs still running (in another live server) are kept.
+ */
+export function expireDanglingApprovals(db: DbExecutor, now: IsoTime, reason: string): number {
+  const live = db.select({ id: runs.id }).from(runs).where(eq(runs.status, "running"));
+  return db
+    .update(approvals)
+    .set({ status: "expired", decidedBy: "restart", reason, decidedAt: now })
+    .where(and(eq(approvals.status, "pending"), notInArray(approvals.runId, live)))
+    .run().changes;
+}
+
+/** Every pending approval: nothing in this process waits for them any more. */
 export function expireAllPendingApprovals(db: DbExecutor, now: IsoTime, reason: string): number {
   return db
     .update(approvals)

@@ -14,6 +14,7 @@ import { insertRun, runningRunOf } from "../db/repos/runs.js";
 import type { DbExecutor } from "../db/repos/types.js";
 import type { ApprovalGateController } from "../policy/approvals.js";
 import type { ConnectionService } from "./connections.js";
+import type { OrphanSweeper } from "./orphans.js";
 import { prepareRunContext } from "./run-context.js";
 import type { ActiveRun, RunRegistry } from "./run-registry.js";
 
@@ -40,6 +41,7 @@ export type ChatServiceOptions = {
   readonly registry: RunRegistry;
   readonly connections: ConnectionService;
   readonly approvals: ApprovalGateController;
+  readonly orphans: OrphanSweeper;
   readonly now: () => Date;
   readonly newId: () => string;
 };
@@ -56,6 +58,14 @@ export class ChatService {
     const conversation = getConversation(db, conversationId);
     if (conversation === undefined) {
       return { ok: false, code: "not_found", message: "No conversation has this id." };
+    }
+    // A run in the database that no live process runs (a killed CLI) is
+    // recovered here instead of blocking the conversation for ever.
+    if (
+      registry.forConversation(conversationId) === undefined &&
+      runningRunOf(db, conversationId)
+    ) {
+      this.#options.orphans.conversation(conversationId);
     }
     if (
       registry.forConversation(conversationId) !== undefined ||
@@ -106,6 +116,7 @@ export class ChatService {
         policy: context.policy,
         connections: context.connectionSnapshot,
         startedAt: now,
+        owner: this.#options.orphans.owner,
       });
       insertUserMessage(tx, {
         id: turn.messageId,

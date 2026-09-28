@@ -16,6 +16,7 @@ import type {
   SdkTerminalReason,
 } from "../../contracts/events.js";
 import type { PolicyModes } from "../../contracts/integration.js";
+import type { RunOwner } from "../owner.js";
 import { type RunRow, runs } from "../schema.js";
 import { approvalCountsByRun, listApprovalsForRun } from "./approvals.js";
 import {
@@ -40,6 +41,8 @@ export type NewRun = {
   readonly policy: PolicyModes;
   readonly connections: readonly RunConnection[];
   readonly startedAt: IsoTime;
+  /** The process that runs it (src/db/owner.ts). */
+  readonly owner: RunOwner;
 };
 
 export function insertRun(db: DbExecutor, run: NewRun): void {
@@ -57,6 +60,8 @@ export function insertRun(db: DbExecutor, run: NewRun): void {
       policySnapshot: { ...run.policy },
       connectionsSnapshot: [...run.connections],
       startedAt: run.startedAt,
+      ownerPid: run.owner.pid,
+      ownerStartedAt: run.owner.startedAt,
     })
     .run();
 }
@@ -73,6 +78,21 @@ export function runningRunOf(db: DbExecutor, conversationId: string): RunRow | u
     .where(and(eq(runs.conversationId, conversationId), eq(runs.status, "running")))
     .orderBy(desc(runs.startedAt))
     .get();
+}
+
+/** Every running run, oldest first; only the conversation's when one is given. */
+export function runningRuns(db: DbExecutor, conversationId?: string): RunRow[] {
+  const running = eq(runs.status, "running");
+  return db
+    .select()
+    .from(runs)
+    .where(
+      conversationId === undefined
+        ? running
+        : and(running, eq(runs.conversationId, conversationId)),
+    )
+    .orderBy(runs.startedAt, runs.id)
+    .all();
 }
 
 /** From run.started: what the core actually used. */

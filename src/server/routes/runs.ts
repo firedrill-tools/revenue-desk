@@ -25,10 +25,12 @@ export function registerRunRoutes(app: Hono, services: ApiServices): void {
     if (!query.ok) return query.response;
     const cursor = query.data.cursor === undefined ? undefined : decodeCursor(query.data.cursor);
     if (cursor === null) return apiError(c, "invalid_request", "The cursor is not valid.");
+    services.orphans.sweep();
     return c.json(runPage(services.db, { ...query.data, cursor }));
   });
 
   app.get(API_PATHS.run, (c) => {
+    services.orphans.sweep();
     const row = getRun(services.db, c.req.param("runId"));
     if (row === undefined) return apiError(c, "not_found", "No run has this id.");
     return c.json(runDetailView(services.db, row));
@@ -43,8 +45,13 @@ export function registerRunRoutes(app: Hono, services: ApiServices): void {
       const response: StopRunResponse = { runId, status: "stopping" };
       return c.json(response, 202);
     }
-    const row = getRun(services.db, runId);
+    let row = getRun(services.db, runId);
     if (row === undefined) return apiError(c, "not_found", "No run has this id.");
+    if (row.status === "running" && active === undefined) {
+      // Its process may be gone (a killed CLI): then the run is recovered, not refused.
+      services.orphans.conversation(row.conversationId);
+      row = getRun(services.db, runId) ?? row;
+    }
     return apiError(
       c,
       "run_not_active",

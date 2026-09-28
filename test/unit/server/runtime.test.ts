@@ -16,6 +16,7 @@ import { type RunningServer, SERVER_HOST, startServer } from "../../../src/serve
 import {
   cleanupAll,
   fakeIntegrations,
+  GONE_OWNER,
   heldScript,
   refundDescriptor,
   scriptedCore,
@@ -56,6 +57,7 @@ describe("startServer", () => {
       policy: DEFAULT_POLICY,
       connections: [],
       startedAt: "2026-09-28T09:00:00.000Z",
+      owner: GONE_OWNER,
     });
     insertPendingApproval(previous.db, {
       id: "apr_old",

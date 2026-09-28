@@ -64,7 +64,7 @@ import {
 } from "../../../src/db/repos/tool-calls.js";
 import { conversations, messages, runs, toolCalls } from "../../../src/db/schema.js";
 import { seedDatabase } from "../../../src/db/seed.js";
-import { cleanupAll, openTestDatabase } from "./support.js";
+import { cleanupAll, openTestDatabase, TEST_SELF } from "./support.js";
 
 afterEach(cleanupAll);
 
@@ -95,6 +95,7 @@ function run(database: RevenueDeskDatabase, id: string, conversationId: string, 
     policy: DEFAULT_POLICY,
     connections: [],
     startedAt,
+    owner: TEST_SELF,
   });
 }
 

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApprovalDescriptor } from "../../../src/contracts/events.js";
 import { databasePath, openDatabase, type RevenueDeskDatabase } from "../../../src/db/client.js";
+import type { ProcessProbe, RunOwner } from "../../../src/db/owner.js";
 
 const cleanups: (() => void)[] = [];
 
@@ -56,3 +57,31 @@ export function refundDescriptor(expiresInMs = 60_000): ApprovalDescriptor {
     expiresAt: new Date(Date.now() + expiresInMs).toISOString(),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Run owners (src/db/owner.ts) with a scripted view of the system's processes
+// ---------------------------------------------------------------------------
+
+/** The process under test, as tests record it. */
+export const TEST_SELF: RunOwner = { pid: 1_000, startedAt: "2026-09-28T08:00:00.000Z" };
+/** Another process that is still running (a CLI in the middle of a run). */
+export const LIVE_OWNER: RunOwner = { pid: 3_000, startedAt: "2026-09-28T09:59:30.000Z" };
+/** A process that exited (a CLI killed with SIGKILL). */
+export const GONE_OWNER: RunOwner = { pid: 2_000, startedAt: "2026-09-28T09:00:00.000Z" };
+
+/** The processes that exist, with the start time `ps` would report. */
+export function probeOf(processes: Readonly<Record<number, string>>): ProcessProbe {
+  return {
+    exists: (pid) => pid in processes,
+    startedAt: (pid) => {
+      const started = processes[pid];
+      return started === undefined ? null : new Date(started);
+    },
+  };
+}
+
+/** TEST_SELF, with LIVE_OWNER running and GONE_OWNER gone. */
+export const TEST_OWNERSHIP = {
+  self: TEST_SELF,
+  probe: probeOf({ [LIVE_OWNER.pid]: LIVE_OWNER.startedAt }),
+} as const;

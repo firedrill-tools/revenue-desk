@@ -262,6 +262,14 @@ export const runs = sqliteTable(
       .notNull(),
     startedAt: text("started_at").notNull(),
     finishedAt: text("finished_at"),
+    /**
+     * The process that runs it (the server or a CLI invocation): its pid and
+     * when that process started, so a reused pid is not mistaken for it.
+     * Null only for rows written before migration 0002. A running run whose
+     * owner is gone is recovered (src/db/recover.ts).
+     */
+    ownerPid: integer("owner_pid"),
+    ownerStartedAt: text("owner_started_at"),
   },
   (t) => [
     index("runs_conversation_idx").on(t.conversationId, t.startedAt),
