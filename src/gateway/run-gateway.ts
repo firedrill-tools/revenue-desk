@@ -133,6 +133,20 @@ function apiTools(
   });
 }
 
+/** HubSpot's in-process REST tools (the owners lookup), for the descriptors the profile lists. */
+function hubspotApiTools(
+  catalog: IntegrationCatalog,
+  connection: Extract<ResolvedConnection, { readonly integration: "hubspot" }>,
+  descriptors: readonly ToolDescriptor[],
+): GatewayTool[] {
+  const definitions = catalog.hubspot.apiTools?.(connection) ?? [];
+  const byName = new Map(definitions.map((definition) => [definition.name, definition]));
+  return descriptors.flatMap((descriptor) => {
+    const definition = byName.get(descriptor.name);
+    return definition === undefined ? [] : [apiGatewayTool(definition, descriptor)];
+  });
+}
+
 /** The run's observer, preceded by the integration's memory of finished calls. */
 function remembering(
   memory: RunMemory | undefined,
@@ -241,6 +255,9 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
         tools = upstreamGatewayTools(upstream, descriptors, {
           ...(options.toolTimeoutMs === undefined ? {} : { timeoutMs: options.toolTimeoutMs }),
         }).tools;
+        if (plan.connection.integration === "hubspot") {
+          tools = [...tools, ...hubspotApiTools(options.catalog, plan.connection, descriptors)];
+        }
       }
     } catch (error) {
       outcomes.set(integration, {

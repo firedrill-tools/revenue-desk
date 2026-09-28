@@ -5,6 +5,7 @@
 import type { HubSpotConnection, ProbeResult } from "../../contracts/integration.js";
 import { connectUpstream, type Upstream, type UpstreamConnector } from "../../gateway/mcp-proxy.js";
 import { abortable } from "../shared/abort.js";
+import type { HttpDeps } from "../shared/http.js";
 import { listOf, maskIdentifier, preview, scrub } from "../shared/text.js";
 import { HubSpotLaunchError } from "./launch.js";
 import { HUBSPOT_TOOL_NAMES } from "./profile.js";
@@ -17,6 +18,8 @@ export type HubSpotProbeDeps = {
   readonly connect?: ConnectUpstream;
   readonly launch?: HubSpotLaunchOverrides;
   readonly timeoutMs?: number;
+  /** The HTTP layer of the in-process REST tools (owners.ts); tests pass a fake fetch. */
+  readonly http?: HttpDeps;
 };
 
 const USER_DETAILS = "hubspot-get-user-details";

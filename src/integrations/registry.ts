@@ -92,7 +92,7 @@ export function createIntegrations(deps: IntegrationDeps = {}): Integrations {
   return {
     gmail: createGmailIntegration(connectors),
     google_calendar: createGoogleCalendarIntegration(connectors),
-    hubspot: createHubSpotIntegration(deps.hubspot),
+    hubspot: createHubSpotIntegration({ ...deps.hubspot, ...http }),
     stripe: createStripeIntegration(http),
     quickbooks: createQuickBooksIntegration(http),
     slack: createSlackIntegration(http),

@@ -23,7 +23,7 @@ import {
 } from "../../scenarios/index.js";
 import { runScenarioOverHttp } from "../../scenarios/run-over-http.js";
 import { type Scenario, text } from "../../scenarios/script.js";
-import { gmail } from "../../scenarios/tools.js";
+import { gmail, hubspot } from "../../scenarios/tools.js";
 import type { StreamChunk } from "../../support/api-client.js";
 import { type Harness, type HarnessOptions, startHarness } from "../../support/harness.js";
 import { requireNativeSdkBinary } from "../../support/sdk-gate-support.js";
@@ -48,6 +48,35 @@ const SEND_UNKNOWN_DRAFT: Scenario = {
   ],
   approvals: { unknown_send: "deny" },
   expected: { status: "completed", replyIncludes: ["did not send"] },
+};
+
+/** Who owns a HubSpot record: the owner id resolved to a name with the owners lookup. */
+const OWNER_OF_A_RECORD: Scenario = {
+  id: "hubspot-owner-name",
+  job: "J3",
+  title: "Name the owner of a HubSpot record",
+  prompt: "Who owns the Copperleaf Studios account in HubSpot?",
+  steps: [
+    () => [
+      hubspot.search("owner_company", {
+        objectType: "companies",
+        query: "Copperleaf Studios",
+        properties: ["name", "hubspot_owner_id"],
+      }),
+    ],
+    (context) => [
+      hubspot.listOwners("owner_lookup", {
+        owner_id: context.pick("owner_company", /"hubspot_owner_id":\s*"(\d+)"/, "71001"),
+      }),
+    ],
+    (context) => [
+      text(
+        `Copperleaf Studios is owned by ${context.pick("owner_lookup", /"name":\s*"([^"]+)"/, "an unknown owner")}.`,
+      ),
+    ],
+  ],
+  approvals: {},
+  expected: { status: "completed", replyIncludes: ["owned by Jordan Reyes"] },
 };
 
 async function withHarness(
@@ -307,6 +336,29 @@ describe("full stack: the jobs, with the database checked against what happened"
       expect(harness.fakes.quickbooks.sentInvoices.map((entry) => entry.to)).toEqual(
         send.recipients,
       );
+    });
+  });
+
+  it("HubSpot owners: an owner id is named with the owners lookup, a read against HubSpot's API", {
+    timeout: TIMEOUT,
+  }, async () => {
+    await withHarness(OWNER_OF_A_RECORD, {}, async (harness) => {
+      const { rows } = await play(harness, OWNER_OF_A_RECORD);
+      expect(rows.call("owner_lookup")).toMatchObject({
+        integration: "hubspot",
+        upstream_tool: "GET /crm/v3/owners",
+        operation: "hubspot.owners.list",
+        action_class: "read",
+        decision: "auto",
+        status: "succeeded",
+        http_status: 200,
+      });
+      expect(JSON.parse(rows.call("owner_lookup").output_json ?? "null")).toMatchObject({
+        owners: [{ id: "71001", name: "Jordan Reyes" }],
+      });
+      expect(
+        harness.fakes.hubspot.requests.filter((entry) => entry.path === "/crm/v3/owners/71001"),
+      ).toHaveLength(1);
     });
   });
 

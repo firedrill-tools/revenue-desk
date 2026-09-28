@@ -46,6 +46,11 @@ export type ApiToolSource<I extends ApiIntegrationId> = {
 /** HubSpot's upstream MCP server for one connection. Throws when it cannot be launched. */
 export type HubSpotUpstreamSource = {
   upstream(connection: HubSpotConnection): UpstreamConfig;
+  /**
+   * Profile tools that run in process against HubSpot's REST API (the owners
+   * lookup the MCP server lacks), offered beside the forwarded MCP tools.
+   */
+  apiTools?(connection: HubSpotConnection): readonly ApiToolDefinition[];
 };
 
 /** Opens the Composio session MCP for a run (one session serves both toolkits). */

@@ -147,9 +147,13 @@ export class HubSpotFake {
         dataHostingLocation: this.crm.portal.dataHostingLocation,
       }),
     );
-    rest("GET", "/crm/v3/owners", () =>
-      ok({ results: this.crm.owners.map((owner) => this.crm.owner(owner.id, null)) }),
-    );
+    rest("GET", "/crm/v3/owners", (request) => {
+      const email = request.query.get("email")?.toLowerCase();
+      const owners = this.crm.owners.filter(
+        (owner) => email === undefined || owner.email.toLowerCase() === email,
+      );
+      return ok({ results: owners.map((owner) => this.crm.owner(owner.id, null)) });
+    });
     rest("GET", "/crm/v3/owners/:id", (request) =>
       ok(this.crm.owner(request.params.id ?? "", request.query.get("idProperty"))),
     );

@@ -51,6 +51,7 @@ const SECTION_2: {
     ["hubspot-get-association-definitions", "hubspot.associations.definitions", "read"],
     ["hubspot-list-properties", "hubspot.properties.list", "read"],
     ["hubspot-get-property", "hubspot.properties.get", "read"],
+    ["hubspot-list-owners", "hubspot.owners.list", "read"],
     ["hubspot-batch-create-objects", "hubspot.objects.create", "internal_write"],
     ["hubspot-batch-update-objects", "hubspot.objects.update", "internal_write"],
   ],

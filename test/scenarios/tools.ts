@@ -122,6 +122,8 @@ export const hubspot = {
         },
       ],
     }),
+  listOwners: (id: string, args: { owner_id?: string; email?: string }): ScriptedCall =>
+    call(id, "mcp__hubspot__hubspot-list-owners", input(args)),
   /** A note as a model writes it before it learns HubSpot's rules: no hs_timestamp. */
   createUntimedNote: (id: string, args: { body: string; associations: Association[] }) =>
     call(id, "mcp__hubspot__hubspot-batch-create-objects", {

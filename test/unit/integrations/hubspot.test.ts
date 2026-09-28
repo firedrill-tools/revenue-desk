@@ -13,7 +13,11 @@ import { classifyHubSpot } from "../../../src/integrations/hubspot/classify.js";
 import { createHubSpotIntegration } from "../../../src/integrations/hubspot/definition.js";
 import { checkHubSpotInput } from "../../../src/integrations/hubspot/input-rules.js";
 import { type ConnectUpstream, probeHubSpot } from "../../../src/integrations/hubspot/probe.js";
-import { HUBSPOT_PROFILE, HUBSPOT_TOOL_NAMES } from "../../../src/integrations/hubspot/profile.js";
+import {
+  HUBSPOT_API_TOOL_NAMES,
+  HUBSPOT_PROFILE,
+  HUBSPOT_TOOL_NAMES,
+} from "../../../src/integrations/hubspot/profile.js";
 import { resolveHubSpot } from "../../../src/integrations/hubspot/resolve.js";
 import { hubspotUpstreamConfig } from "../../../src/integrations/hubspot/upstream.js";
 import { SETTINGS, secret, testEnv } from "./helpers.js";
@@ -44,7 +48,7 @@ const stdio: HubSpotConnection = {
 };
 
 describe("hubspot-mcp-0.4 profile", () => {
-  it("offers the 10 decided tools, all present in the 0.4.0 capture", () => {
+  it("forwards the 10 decided MCP tools, all present in the 0.4.0 capture", () => {
     expect(HUBSPOT_TOOL_NAMES).toEqual([
       "hubspot-get-user-details",
       "hubspot-list-objects",
@@ -58,7 +62,17 @@ describe("hubspot-mcp-0.4 profile", () => {
       "hubspot-batch-update-objects",
     ]);
     const captured = new Map(fixture.tools.map((tool) => [tool.name, tool]));
+    // The owners lookup is Revenue Desk's own REST tool: the MCP server has none.
+    expect(HUBSPOT_API_TOOL_NAMES).toEqual(["hubspot-list-owners"]);
+    expect(captured.has("hubspot-list-owners")).toBe(false);
+    expect(HUBSPOT_PROFILE.tools["hubspot-list-owners"]).toMatchObject({
+      upstream: "GET /crm/v3/owners",
+      operation: "hubspot.owners.list",
+      baseClass: "read",
+      readOnly: true,
+    });
     for (const spec of Object.values(HUBSPOT_PROFILE.tools)) {
+      if (HUBSPOT_API_TOOL_NAMES.includes(spec.name)) continue;
       const tool = captured.get(spec.name);
       expect(tool, spec.name).toBeDefined();
       expect(spec.upstream).toBe(spec.name);
