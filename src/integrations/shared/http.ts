@@ -72,12 +72,18 @@ export type HttpDeps = {
 /** A failure to get any HTTP response. */
 export class TransportError extends Error {
   override readonly name = "TransportError";
+  /**
+   * True for a write that may have reached the provider (it was not refused
+   * before sending): it may have been applied although no answer arrived.
+   */
+  readonly outcomeUnknown: boolean;
   constructor(
     readonly kind: "network" | "timeout" | "aborted",
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; outcomeUnknown?: boolean },
   ) {
     super(message, options);
+    this.outcomeUnknown = options?.outcomeUnknown ?? false;
   }
 }
 
@@ -168,17 +174,25 @@ async function attempt(
     text = await response.text();
   } catch (error) {
     // A request that may have reached the provider carried its key there.
-    if (!cancelledBeforeSending && !isPreSendNetworkError(error)) {
-      noteHttpRequest(request.idempotencyKey);
-    }
+    const mayHaveReached = !cancelledBeforeSending && !isPreSendNetworkError(error);
+    if (mayHaveReached) noteHttpRequest(request.idempotencyKey);
+    // A write sent without an answer may have been applied: its outcome is unknown, not failed.
+    const outcomeUnknown = mayHaveReached && !request.retryable;
     if (request.signal?.aborted) {
-      throw new TransportError("aborted", "The request was cancelled", { cause: error });
+      throw new TransportError("aborted", "The request was cancelled", {
+        cause: error,
+        outcomeUnknown,
+      });
     }
     if (timeout.aborted) {
-      throw new TransportError("timeout", `No response within ${timeoutMs} ms`, { cause: error });
+      throw new TransportError("timeout", `No response within ${timeoutMs} ms`, {
+        cause: error,
+        outcomeUnknown,
+      });
     }
     throw new TransportError("network", `Network error: ${describeCause(error)}`, {
       cause: error,
+      outcomeUnknown,
     });
   }
   return { status: response.status, headers: response.headers, json: parseBody(text), text };

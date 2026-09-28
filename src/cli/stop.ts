@@ -4,7 +4,10 @@
 // so the core interrupts the SDK and finishes the run itself. The run then
 // has `graceMs` to deliver its run.finished; after that (or at once on a
 // second request) `forced` resolves and the CLI finishes without it, so the
-// process always exits within about 1.5 seconds of a signal.
+// process exits within about 1.5 seconds of a signal. The exception is a
+// write that is executing (holdWhile): a started refund or invoice is never
+// cancelled, and exiting would drop its answer, so the CLI waits for it, at
+// most the hold's limit, unless a second request says not to.
 
 import type { RunStopReason } from "../contracts/events.js";
 
@@ -22,12 +25,20 @@ export type StopRequest = {
   readonly cause: string;
 };
 
+/** How often a held stop checks whether the write settled. */
+const HOLD_POLL_MS = 100;
+
 export class StopController {
   readonly #controller = new AbortController();
   readonly #graceMs: number;
   readonly #forced = Promise.withResolvers<void>();
   #request: StopRequest | null = null;
   readonly #timers = new Set<NodeJS.Timeout>();
+  #hold: {
+    readonly active: () => boolean;
+    readonly maxMs: number;
+    readonly onHold: () => void;
+  } | null = null;
   // Signal listeners do not keep Node's event loop alive. Without this handle
   // a run that awaits something without an open handle would end the process
   // (exit 13, "unsettled top-level await") instead of waiting for its signal.
@@ -56,6 +67,14 @@ export class StopController {
     this.#schedule(() => this.stop({ reason: "timeout", cause: `the ${ms} ms time limit` }), ms);
   }
 
+  /**
+   * After the grace period, keeps waiting while `active()` holds, at most
+   * `maxMs` longer; `onHold` runs once when the wait starts.
+   */
+  holdWhile(active: () => boolean, maxMs: number, onHold: () => void = () => {}): void {
+    this.#hold = { active, maxMs, onHold };
+  }
+
   stop(request: StopRequest): void {
     if (this.#request !== null) {
       this.#forced.resolve();
@@ -64,7 +83,17 @@ export class StopController {
     this.#request = request;
     this.#clearTimers();
     this.#controller.abort(request.reason);
-    this.#schedule(() => this.#forced.resolve(), this.#graceMs);
+    this.#schedule(() => this.#forceUnlessHeld(Date.now()), this.#graceMs);
+  }
+
+  #forceUnlessHeld(since: number, announced = false): void {
+    const hold = this.#hold;
+    if (hold === null || !hold.active() || Date.now() - since >= hold.maxMs) {
+      this.#forced.resolve();
+      return;
+    }
+    if (!announced) hold.onHold();
+    this.#schedule(() => this.#forceUnlessHeld(since, true), HOLD_POLL_MS);
   }
 
   dispose(): void {

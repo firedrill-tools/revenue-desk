@@ -14,6 +14,15 @@
 import type { AgentEvent, ToolDecision } from "../contracts/events.js";
 import type { JsonObject } from "../contracts/json.js";
 
+/** What the gateway knows about a call it started. */
+export type CallExecution = {
+  readonly upstreamTool: string;
+  /** A write's idempotency key (API writes send it to the provider). */
+  readonly idempotencyKey: string | null;
+  readonly readOnly: boolean;
+  readonly apiKind: boolean;
+};
+
 type CallState = {
   readonly toolCallId: string;
   toolName: string | null;
@@ -25,6 +34,8 @@ type CallState = {
   settled: boolean;
   /** The gateway started it and has not reported it finished. */
   executing: boolean;
+  /** How the gateway runs it, from the moment it started: for an outcome the run cannot wait for. */
+  execution: CallExecution | null;
   decision: ToolDecision | null;
   /** What a callback saw, for a call the mapper never announced. */
   callbackInput: JsonObject | null;
@@ -52,6 +63,7 @@ export class ToolCallLedger {
         released: false,
         settled: false,
         executing: false,
+        execution: null,
         decision: null,
         callbackInput: null,
         held: [],
@@ -162,8 +174,14 @@ export class ToolCallLedger {
     return this.#calls.get(toolCallId)?.settled === true;
   }
 
-  setExecuting(toolCallId: string, executing: boolean): void {
-    this.#state(toolCallId).executing = executing;
+  setExecuting(toolCallId: string, executing: boolean, execution?: CallExecution): void {
+    const state = this.#state(toolCallId);
+    state.executing = executing;
+    if (execution !== undefined) state.execution = execution;
+  }
+
+  executionOf(toolCallId: string): CallExecution | null {
+    return this.#calls.get(toolCallId)?.execution ?? null;
   }
 
   isExecuting(toolCallId: string): boolean {

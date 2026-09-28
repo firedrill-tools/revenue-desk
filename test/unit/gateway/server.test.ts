@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createRedactorFor } from "../../../src/config/redact.js";
@@ -159,6 +160,7 @@ describe("a gateway server", () => {
         toolUseId: "toolu_refund",
         idempotencyKey: key,
         arguments: { charge: "ch_2" },
+        readOnly: false,
       },
     ]);
     expect(finished).toEqual([
@@ -262,5 +264,106 @@ describe("a gateway server", () => {
     );
     const without = createGatewayServer({ integration: "stripe", runId: "run_1", tools });
     expect((await client(without.serverConfig())).getInstructions()).toBeUndefined();
+  });
+});
+
+describe("a started write", () => {
+  it("is not cancelled with its request, and its real result is still reported", async () => {
+    const signals = new Map<string, AbortSignal>();
+    let release: () => void = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = (name: string, readOnly: boolean) =>
+      apiGatewayTool(
+        defineApiTool({
+          name,
+          description: name,
+          input: { charge: z.string() },
+          readOnly,
+          run: async (args, context) => {
+            if (context.signal !== undefined) signals.set(name, context.signal);
+            await Promise.race([
+              released,
+              new Promise((_resolve, reject) =>
+                context.signal?.addEventListener("abort", () => reject(new Error("cancelled"))),
+              ),
+            ]);
+            return { id: `${name}_done`, charge: args.charge };
+          },
+        }),
+        descriptor(name, readOnly),
+      );
+    const events = recorder();
+    const server = createGatewayServer({
+      integration: "stripe",
+      runId: "run_42",
+      tools: [slow("list_charges", true), slow("create_refund", false)],
+      observer: events.observer,
+      writeDeadlineMs: 30_000,
+    });
+    const connected = await client(server.serverConfig());
+    const cancel = new AbortController();
+    const call = (name: string, id: string) =>
+      connected
+        .request(
+          {
+            method: "tools/call",
+            params: {
+              name,
+              arguments: { charge: "ch_2" },
+              _meta: { "claudecode/toolUseId": id },
+            },
+          },
+          CallToolResultSchema,
+          { signal: cancel.signal },
+        )
+        .catch((error: unknown) => error);
+    const read = call("list_charges", "toolu_read");
+    const write = call("create_refund", "toolu_refund");
+    await expect.poll(() => signals.size).toBe(2);
+
+    // Stop: the CLI cancels both requests.
+    cancel.abort("stop");
+    await Promise.all([read, write]);
+    await expect.poll(() => signals.get("list_charges")?.aborted).toBe(true);
+    expect(signals.get("create_refund")?.aborted).toBe(false);
+
+    // The provider answers the write after the request was cancelled: it is logged as it happened.
+    release();
+    await expect.poll(() => events.finished.length).toBe(2);
+    const refund = events.finished.find((result) => result.call.tool === "create_refund");
+    expect(refund).toMatchObject({
+      isError: false,
+      output: { id: "create_refund_done", charge: "ch_2" },
+    });
+    expect(events.started.find((call) => call.tool === "create_refund")?.readOnly).toBe(false);
+  });
+
+  it("is aborted at its own deadline", async () => {
+    let seen: AbortSignal | undefined;
+    const server = createGatewayServer({
+      integration: "stripe",
+      runId: "run_42",
+      tools: [
+        apiGatewayTool(
+          defineApiTool({
+            name: "create_refund",
+            description: "Refund.",
+            input: { charge: z.string() },
+            readOnly: false,
+            run: async (_args, context) => {
+              seen = context.signal;
+              await new Promise((resolve) => setTimeout(resolve, 200));
+              return {};
+            },
+          }),
+          descriptor("create_refund", false),
+        ),
+      ],
+      writeDeadlineMs: 20,
+    });
+    await callWithMeta(await client(server.serverConfig()), "create_refund", { charge: "c" }, "t1");
+    expect(seen?.aborted).toBe(true);
   });
 });

@@ -85,6 +85,13 @@ describe("buildSystemPrompt", () => {
     }
   });
 
+  it("never repeats a write whose outcome is unknown", () => {
+    // A write sent without an answer may already be applied; a retry gets a new idempotency key.
+    expect(STABLE_RULES).toContain(
+      "If a change fails with outcome_unknown, it was sent but no answer came back, so it may already have been made. Never repeat it",
+    );
+  });
+
   // The rules below come from the real-model runs against the sandbox (the live lane).
   it("moves money only when asked, and recommends instead", () => {
     expect(STABLE_RULES).toContain(

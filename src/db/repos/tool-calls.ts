@@ -146,7 +146,34 @@ export function markToolCallFinished(
     .run();
 }
 
-/** The run ended (stop, failure or restart) with these calls in flight. */
+/**
+ * The gateway started executing an API write: its row keeps the idempotency
+ * key the provider receives from now on, so a run that ends before the
+ * answer (a forced stop, a crash) still records which request may have been
+ * applied. The call's own outcome replaces it (markToolCallFinished).
+ */
+export function markToolCallExecuting(
+  db: DbExecutor,
+  key: ToolCallKey,
+  idempotencyKey: string,
+): void {
+  db.update(toolCalls)
+    .set({ idempotencyKey })
+    .where(
+      and(byKey(key), eq(toolCalls.status, "running"), sql`${toolCalls.idempotencyKey} IS NULL`),
+    )
+    .run();
+}
+
+/** Why a started write that ended without its answer is not "not run". */
+export const INTERRUPTED_WRITE_MESSAGE =
+  "The run ended while this write was running, before its result arrived, so it may have been applied. Check the record (its idempotency key is recorded) before trying again.";
+
+/**
+ * The run ended (stop, failure or restart) with these calls in flight. A
+ * write that had started (its idempotency key is recorded) may have been
+ * applied: it is interrupted with the outcome_unknown error, not as never run.
+ */
 export function interruptToolCalls(db: DbExecutor, runId: string, now: IsoTime): number {
   const inFlight = db
     .select()
@@ -156,11 +183,24 @@ export function interruptToolCalls(db: DbExecutor, runId: string, now: IsoTime):
     )
     .all();
   for (const row of inFlight) {
+    const startedWrite =
+      row.status === "running" &&
+      row.idempotencyKey !== null &&
+      row.actionClass !== null &&
+      row.actionClass !== "read";
     db.update(toolCalls)
       .set({
         status: "interrupted",
         finishedAt: now,
         durationMs: elapsedMs(row.startedAt, now),
+        ...(startedWrite
+          ? {
+              isError: true,
+              errorCode: "outcome_unknown",
+              errorMessage: INTERRUPTED_WRITE_MESSAGE,
+              decision: row.decision === "pending" ? "auto" : row.decision,
+            }
+          : {}),
       })
       .where(eq(toolCalls.id, row.id))
       .run();

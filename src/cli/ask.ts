@@ -10,6 +10,7 @@
 // core's, or one the CLI synthesises when the core fails, ends early, or
 // does not finish within the grace period after a stop.
 
+import { ExecutingWrites, WRITE_DRAIN_MS } from "../agent/executing-writes.js";
 import {
   type AskCommand,
   CLI_EXIT_CODES,
@@ -263,6 +264,16 @@ class AskInvocation {
       streamReply: !this.#command.json,
     });
     const iterator = events[Symbol.asyncIterator]();
+    // A stop waits for a write that is executing: its answer is the record of what happened.
+    const writes = new ExecutingWrites();
+    this.#stopper.holdWhile(
+      () => writes.count > 0,
+      WRITE_DRAIN_MS,
+      () =>
+        this.#note(
+          `Waiting for ${writes.titles().join(", ")} to finish: it was already sent and may be applied. Press Ctrl-C again to stop waiting.`,
+        ),
+    );
     const forced = this.#stopper.forced.then(() => "forced" as const);
     let failure: Failure | null = null;
 
@@ -280,6 +291,7 @@ class AskInvocation {
       if (step === "forced" || step.done === true) break;
 
       const event = step.value;
+      writes.apply(event);
       builder.apply(event);
       printer.handle(event);
       try {

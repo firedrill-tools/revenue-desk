@@ -53,12 +53,14 @@ import { readSettings, updateSettings } from "../../../src/db/repos/settings.js"
 import {
   getToolCall,
   getToolCallByToolUseId,
+  INTERRUPTED_WRITE_MESSAGE,
   insertToolCall,
   interruptToolCalls,
   listToolCalls,
   markToolCallAwaitingApproval,
   markToolCallDecided,
   markToolCallDenied,
+  markToolCallExecuting,
   markToolCallFinished,
   toolCallCountsByKind,
 } from "../../../src/db/repos/tool-calls.js";
@@ -822,6 +824,63 @@ describe("tool calls", () => {
       ["toolu_waiting", "interrupted"],
       ["toolu_done", "denied"],
     ]);
+  });
+});
+
+describe("a write the run ended while it was executing", () => {
+  function setup() {
+    const database = seeded();
+    conversation(database, "c1");
+    run(database, "r1", "c1");
+    return database;
+  }
+
+  it("keeps its idempotency key and is interrupted as outcome unknown, not as never run", () => {
+    const database = setup();
+    toolCall(database, "r1", "toolu_refund");
+    toolCall(database, "r1", "toolu_queued");
+    toolCall(database, "r1", "toolu_read", "mcp");
+    markToolCallExecuting(database.db, { runId: "r1", toolUseId: "toolu_refund" }, "k".repeat(64));
+    // Only a running row without a key takes one.
+    markToolCallExecuting(database.db, { runId: "r1", toolUseId: "toolu_refund" }, "x".repeat(64));
+    expect(interruptToolCalls(database.db, "r1", T2)).toBe(3);
+    const [refund, queued, read] = listToolCalls(database.db, "r1");
+    expect(refund).toMatchObject({
+      toolCallId: "toolu_refund",
+      status: "interrupted",
+      isError: true,
+      idempotencyKey: "k".repeat(64),
+      decision: "auto",
+      error: { code: "outcome_unknown", message: INTERRUPTED_WRITE_MESSAGE },
+    });
+    expect(INTERRUPTED_WRITE_MESSAGE).toContain("may have been applied");
+    // A write that never started, and a read, are simply interrupted.
+    expect(queued).toMatchObject({ status: "interrupted", isError: false, idempotencyKey: null });
+    expect(read).toMatchObject({ status: "interrupted", isError: false });
+  });
+
+  it("takes its real outcome when the answer arrives", () => {
+    const database = setup();
+    toolCall(database, "r1", "toolu_refund");
+    const key = { runId: "r1", toolUseId: "toolu_refund" };
+    markToolCallExecuting(database.db, key, "k".repeat(64));
+    markToolCallFinished(database.db, key, {
+      output: { id: "re_1" },
+      truncated: false,
+      isError: false,
+      errorCode: null,
+      errorMessage: null,
+      httpStatus: null,
+      upstreamTool: "POST /v1/refunds",
+      idempotencyKey: "k".repeat(64),
+      durationMs: 1200,
+      finishedAt: T1,
+    });
+    expect(interruptToolCalls(database.db, "r1", T2)).toBe(0);
+    expect(listToolCalls(database.db, "r1")[0]).toMatchObject({
+      status: "succeeded",
+      idempotencyKey: "k".repeat(64),
+    });
   });
 });
 

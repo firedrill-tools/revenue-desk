@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ENDED_WHILE_RUNNING,
   RUN_ENDED_REASON,
   SdkMessageMapper,
   STOPPED_BEFORE_RUN_REASON,
@@ -424,6 +425,50 @@ describe("SdkMessageMapper", () => {
       reason: RUN_ENDED_REASON,
     });
     expect(mapper.lastText).toBe("Refunding");
+  });
+
+  it("never says a call the gateway was still executing at the end did not run", () => {
+    const { events, ledger, mapper } = setup();
+    mapper.handle(messageStart("msg_1"));
+    for (const message of toolStep("msg_1", "toolu_refund", "mcp__stripe__create_refund", {
+      charge: "ch_2",
+    })) {
+      mapper.handle(message);
+    }
+    mapper.handle(messageStop());
+    ledger.decide("toolu_refund", "approved");
+    ledger.setExecuting("toolu_refund", true, {
+      upstreamTool: "POST /v1/refunds",
+      idempotencyKey: "k".repeat(64),
+      readOnly: false,
+      apiKind: true,
+    });
+    mapper.finish();
+    expect(ofType(events, "tool.denied")).toEqual([]);
+    expect(ofType(events, "tool.output")).toEqual([
+      {
+        type: "tool.output",
+        toolCallId: "toolu_refund",
+        output: ENDED_WHILE_RUNNING,
+        truncated: false,
+        isError: true,
+        error: {
+          provider: null,
+          status: null,
+          code: "outcome_unknown",
+          message: ENDED_WHILE_RUNNING,
+        },
+        durationMs: 0,
+        // The provider can be asked about this request.
+        execution: {
+          upstreamTool: "POST /v1/refunds",
+          httpStatus: null,
+          idempotencyKey: "k".repeat(64),
+        },
+      },
+    ]);
+    expect(ENDED_WHILE_RUNNING).toMatch(/may already have been made\. Do not repeat it/);
+    expect(eventContractViolations(asRun(events))).toEqual([]);
   });
 
   it("announces a call only a callback saw before stopping it at the end", () => {

@@ -399,6 +399,8 @@ describe("runTurn on the real Claude Agent SDK", () => {
         "tool.input.available",
         "approval.requested",
         "approval.resolved",
+        // The gateway announces the call as it starts executing it.
+        "tool.progress",
         "tool.output",
       ]);
       const key = idempotencyKeyFor(turn.runId, "toolu_refund");

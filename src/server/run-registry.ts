@@ -11,9 +11,15 @@
 //
 // The registry guarantees that every run ends exactly once: if the core
 // throws, returns without run.finished, or does not stop within the grace
-// period after Stop, the server finishes the run itself.
+// period after Stop, the server finishes the run itself. A Stop (or time
+// limit) does not close a run while one of its writes is executing: a
+// started write is never cancelled, and its answer is the record of what
+// happened, so the grace period extends until it settles (at most
+// WRITE_DRAIN_MS). Shutdown does not wait: the write is then recorded as
+// outcome_unknown with its idempotency key.
 
 import { randomUUID } from "node:crypto";
+import { ExecutingWrites, WRITE_DRAIN_MS } from "../agent/executing-writes.js";
 import { MAX_CONCURRENT_RUNS } from "../contracts/api.js";
 import type {
   AgentEvent,
@@ -31,6 +37,8 @@ export const DEFAULT_STOP_GRACE_MS = 10_000;
 /** After run.finished, how long the core has to end its event stream. */
 export const DRAIN_GRACE_MS = 3_000;
 export const CORE_ENDED_EARLY_TEXT = "The agent stopped unexpectedly before finishing the run.";
+/** How often a held close checks whether the run's writes settled. */
+const WRITE_HOLD_POLL_MS = 250;
 
 export type RunRegistryOptions = {
   readonly db: DbExecutor;
@@ -63,6 +71,8 @@ export class ActiveRun {
   readonly assistantMessageId: string;
   readonly channel = new RunChannel();
   readonly controller = new AbortController();
+  /** The run's writes that are executing, from its events. */
+  readonly writes = new ExecutingWrites();
   /** Resolves once the run is finished, persisted and removed from the registry. */
   readonly done: Promise<void>;
 
@@ -94,14 +104,27 @@ export class ActiveRun {
   stop(reason: RunStopReason, graceMs: number): boolean {
     if (this.finished) return false;
     if (!this.controller.signal.aborted) this.controller.abort(reason);
-    this.forceAfter(graceMs);
+    this.forceAfter(graceMs, reason === "shutdown" ? 0 : WRITE_DRAIN_MS);
     return true;
   }
 
-  /** @internal */
-  forceAfter(ms: number): void {
+  /**
+   * Closes the run after `ms` unless it finished; while a write is executing
+   * the close waits for it, up to `holdForWritesMs` longer.
+   * @internal
+   */
+  forceAfter(ms: number, holdForWritesMs = 0): void {
     if (this.#forceTimer !== undefined) return;
-    this.#forceTimer = setTimeout(this.#force, ms);
+    const holdUntil = Date.now() + ms + holdForWritesMs;
+    const fire = () => {
+      if (this.writes.count > 0 && Date.now() < holdUntil) {
+        this.#forceTimer = setTimeout(fire, WRITE_HOLD_POLL_MS);
+        this.#forceTimer.unref();
+        return;
+      }
+      this.#force();
+    };
+    this.#forceTimer = setTimeout(fire, ms);
     this.#forceTimer.unref();
   }
 
@@ -199,6 +222,7 @@ export class RunRegistry {
     });
 
     const handle = (event: AgentEvent): void => {
+      run.writes.apply(event);
       if (persistence.finished) {
         log(`run ${run.runId}: ignored ${event.type} after run.finished`);
         return;

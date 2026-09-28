@@ -113,6 +113,42 @@ describe("sendHttp retry rules", () => {
     expect(error).toMatchObject({ kind: "timeout" });
   });
 
+  it("marks a write sent without an answer as outcome unknown, never a read or a refused write", async () => {
+    // After the connection: the provider may have received and applied it.
+    for (const failure of [networkError("ECONNRESET"), networkError("UND_ERR_SOCKET")]) {
+      const error = (await sendHttp(write, mockFetch(() => failure).http).catch(
+        (e: unknown) => e,
+      )) as TransportError;
+      expect(error.outcomeUnknown).toBe(true);
+    }
+    const timedOut = (await sendHttp(write, {
+      timeoutMs: 20,
+      fetch: (_, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("t", "AbortError")));
+        }),
+    }).catch((e: unknown) => e)) as TransportError;
+    expect(timedOut).toMatchObject({ kind: "timeout", outcomeUnknown: true });
+    // Refused before sending: nothing reached the provider.
+    const refused = (await sendHttp(
+      write,
+      mockFetch(() => networkError("ECONNREFUSED")).http,
+    ).catch((e: unknown) => e)) as TransportError;
+    expect(refused.outcomeUnknown).toBe(false);
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const early = (await sendHttp(
+      { ...write, signal: cancelled.signal },
+      mockFetch(() => new DOMException("aborted", "AbortError")).http,
+    ).catch((e: unknown) => e)) as TransportError;
+    expect(early.outcomeUnknown).toBe(false);
+    // A read is simply failed.
+    const readError = (await sendHttp(read, mockFetch(() => networkError("ECONNRESET")).http).catch(
+      (e: unknown) => e,
+    )) as TransportError;
+    expect(readError.outcomeUnknown).toBe(false);
+  });
+
   it("parses JSON bodies and keeps non-JSON text", async () => {
     const mock = mockFetch(() => ({ status: 502, text: "<html>bad gateway</html>" }));
     const response = await sendHttp(read, mock.http);

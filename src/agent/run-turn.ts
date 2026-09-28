@@ -32,6 +32,7 @@ import { openRunGateway, type RunGateway } from "../gateway/run-gateway.js";
 import type { GatewayCall, GatewayObserver } from "../gateway/types.js";
 import { createCanUseTool, createPreToolUseHook } from "./decisions.js";
 import { EventChannel } from "./event-channel.js";
+import { WRITE_DRAIN_MS } from "./executing-writes.js";
 import { runOutcome, stopReasonOf } from "./outcome.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { SdkMessageMapper, type ToolView } from "./sdk-mapper.js";
@@ -61,8 +62,14 @@ export type RunTurnDependencies = {
   readonly usageStore?: (stateDir: string) => UsageBaselineStore;
   /** How long a stop waits after interrupt() before aborting the SDK process. Default 3000. */
   readonly stopGraceMs?: number;
-  /** How long the end of a run waits for tool calls still executing. Default 5000. */
+  /** How long the end of a run waits for reads still executing. Default 5000. */
   readonly drainMs?: number;
+  /**
+   * How long the end of a run waits for writes still executing (a started
+   * write is never cancelled; its result is the record of what happened).
+   * Default WRITE_DRAIN_MS.
+   */
+  readonly writeDrainMs?: number;
   readonly progressIntervalMs?: number;
   readonly connectTimeoutMs?: number;
   readonly now?: () => Date;
@@ -141,27 +148,45 @@ function toolView(registry: ToolRegistry): ToolView {
 
 /** Counts calls the gateway is executing, so the end of a run can wait for them. */
 class InFlight {
-  #count = 0;
-  #waiters: (() => void)[] = [];
+  #all = 0;
+  #writes = 0;
+  readonly #waiters = new Set<() => void>();
 
-  start(): void {
-    this.#count += 1;
+  start(write: boolean): void {
+    this.#all += 1;
+    if (write) this.#writes += 1;
   }
 
-  finish(): void {
-    this.#count = Math.max(0, this.#count - 1);
-    if (this.#count === 0) for (const waiter of this.#waiters.splice(0)) waiter();
+  finish(write: boolean): void {
+    this.#all = Math.max(0, this.#all - 1);
+    if (write) this.#writes = Math.max(0, this.#writes - 1);
+    for (const waiter of [...this.#waiters]) waiter();
   }
 
+  /** Resolves when no write is executing, or after `timeoutMs`. */
+  writesIdle(timeoutMs: number): Promise<void> {
+    return this.#until(() => this.#writes === 0, timeoutMs);
+  }
+
+  /** Resolves when no call is executing, or after `timeoutMs`. */
   idle(timeoutMs: number): Promise<void> {
-    if (this.#count === 0) return Promise.resolve();
+    return this.#until(() => this.#all === 0, timeoutMs);
+  }
+
+  #until(done: () => boolean, timeoutMs: number): Promise<void> {
+    if (done()) return Promise.resolve();
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
-      timer.unref();
-      this.#waiters.push(() => {
+      const finish = () => {
         clearTimeout(timer);
+        this.#waiters.delete(check);
         resolve();
-      });
+      };
+      const check = () => {
+        if (done()) finish();
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      timer.unref();
+      this.#waiters.add(check);
     });
   }
 }
@@ -221,8 +246,19 @@ async function execute(
   const observer: GatewayObserver = {
     callStarted(call) {
       executing.add(call);
-      inFlight.start();
-      if (call.toolUseId !== null) ledger.setExecuting(call.toolUseId, true);
+      inFlight.start(!call.readOnly);
+      const id = call.toolUseId;
+      if (id === null) return;
+      ledger.setExecuting(id, true, {
+        upstreamTool: call.upstreamTool,
+        idempotencyKey: call.idempotencyKey,
+        readOnly: call.readOnly,
+        apiKind: call.connectionKind === "api",
+      });
+      // Consumers learn at once that the call is executing (ExecutingWrites, the action log).
+      if (!ledger.isSettled(id)) {
+        ledger.emitFor(id, { type: "tool.progress", toolCallId: id, elapsedMs: 0 });
+      }
     },
     callProgress(call, elapsedMs) {
       const id = call.toolUseId;
@@ -252,7 +288,7 @@ async function execute(
         }
       }
       // A write the gateway refused before starting it (no tool-use id) never started.
-      if (executing.delete(result.call)) inFlight.finish();
+      if (executing.delete(result.call)) inFlight.finish(!result.call.readOnly);
     },
   };
 
@@ -376,6 +412,8 @@ async function execute(
 
     // A stop that arrives after the SDK finished does not change how the run ended.
     const stoppedBy = stopReason();
+    // Writes were not cancelled with the query: their results are what happened.
+    await inFlight.writesIdle(deps.writeDrainMs ?? WRITE_DRAIN_MS);
     await inFlight.idle(deps.drainMs ?? DEFAULT_DRAIN_MS);
     mapper.finish();
 

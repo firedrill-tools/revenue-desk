@@ -198,7 +198,11 @@ configuration error it carries the run and conversation ids the invocation
 had reserved; nothing was written under them.
 
 SIGINT or SIGTERM interrupts the run, prints the summary with `--json` and
-exits within about 1.5 seconds; a second signal skips the wait. No work
+exits within about 1.5 seconds; a second signal skips the wait. The exception
+is a write that is already executing (a refund, invoice, payment or post):
+the CLI says so on stderr and waits for its answer, at most about 70 seconds,
+because it may already be applied; a second signal stops waiting, and the
+write is recorded as `outcome_unknown` with its idempotency key. No work
 continues after the output is written.
 
 Examples:
@@ -243,7 +247,12 @@ and the class's mode decides what happens:
 - **Writes happen once.** Stripe writes carry an `Idempotency-Key` and
   QuickBooks writes a `requestid`, both derived from the run and the model's
   tool-call id. Writes are never retried automatically; reads retry at most
-  twice, on 429 or a connection error.
+  twice, on 429 or a connection error. A write that has started is not
+  cancelled by Stop or a time limit: the run waits for the provider's answer
+  (at most about 70 seconds) and records what really happened. A write sent
+  without an answer (a timeout, a dropped connection, a shutdown) is recorded
+  as `outcome_unknown` with its idempotency key, and the agent is told to
+  check the record rather than try again.
 - **Live Stripe keys are refused.** A `sk_live_` or `rk_live_` key makes
   Stripe `invalid` and its tools are not offered, unless
   `ALLOW_LIVE_STRIPE=1`.

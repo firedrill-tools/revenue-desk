@@ -213,6 +213,36 @@ describe("StripeClient", () => {
     expect(mock.requests).toHaveLength(3);
   });
 
+  it("reports a refund sent without an answer as outcome_unknown, never as failed", async () => {
+    const mock = mockFetch(() => networkError("ECONNRESET"));
+    const error = await client(mock)
+      .post(
+        "/v1/refunds",
+        { charge: "ch_1", amount: 4900 },
+        { idempotencyKey: IDEMPOTENCY, signal: undefined },
+      )
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiToolError);
+    expect(error).toMatchObject({ provider: "stripe", code: "outcome_unknown" });
+    expect((error as ApiToolError).message).toMatch(
+      /^Stripe did not answer after the request was sent/,
+    );
+    expect((error as ApiToolError).message).toContain(
+      "may already have been made. Do not repeat it",
+    );
+    // Never retried: a second POST could refund twice.
+    expect(mock.requests).toHaveLength(1);
+    // Refused before sending: plainly a network error.
+    const refused = mockFetch(() => networkError("ECONNREFUSED"));
+    await expect(
+      client(refused).post(
+        "/v1/refunds",
+        { charge: "ch_1" },
+        { idempotencyKey: IDEMPOTENCY, signal: undefined },
+      ),
+    ).rejects.toMatchObject({ code: "network_error" });
+  });
+
   it("rejects a success body that is not a JSON object", async () => {
     const mock = mockFetch(() => ({ text: "ok" }));
     await expect(client(mock).get("/v1/balance", {}, undefined)).rejects.toMatchObject({

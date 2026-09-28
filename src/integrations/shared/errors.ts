@@ -4,12 +4,34 @@
 
 import type { ProbeResult, ToolFailure } from "../../contracts/integration.js";
 import { ApiToolError } from "../../gateway/api-server.js";
+import { OUTCOME_UNKNOWN, outcomeUnknownMessage } from "../../gateway/types.js";
 import { TransportError } from "./http.js";
 
 export { ApiToolError };
 
-/** An ApiToolError for a request that got no HTTP response. */
+const PROVIDER_LABELS: Readonly<Record<string, string>> = {
+  stripe: "Stripe",
+  quickbooks: "QuickBooks",
+  slack: "Slack",
+  hubspot: "HubSpot",
+};
+
+/**
+ * An ApiToolError for a request that got no HTTP response. A write that may
+ * have reached the provider is `outcome_unknown`: it may have been applied,
+ * so the model is told to check before anything is retried.
+ */
 export function transportFailure(provider: string, error: TransportError): ApiToolError {
+  if (error.outcomeUnknown) {
+    const label = PROVIDER_LABELS[provider] ?? provider;
+    return new ApiToolError(
+      provider,
+      outcomeUnknownMessage(
+        `${label} did not answer after the request was sent (${error.message})`,
+      ),
+      { code: OUTCOME_UNKNOWN },
+    );
+  }
   const code =
     error.kind === "aborted" ? "cancelled" : error.kind === "timeout" ? "timeout" : "network_error";
   return new ApiToolError(provider, error.message, { code });

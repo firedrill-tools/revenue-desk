@@ -563,6 +563,49 @@ describe("POST /api/runs/:id/stop", () => {
   });
 });
 
+describe("a Stop while a write is executing", () => {
+  it("keeps the run open past the grace period until the write settles, then records it", async () => {
+    let settle: () => void = () => {};
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const core: RunTurn = async function* (input) {
+      yield ev.started(input);
+      yield { type: "step.start" };
+      yield* ev.toolInput(REFUND_CALL);
+      yield { type: "step.finish" };
+      // The gateway started the refund; Stripe has not answered yet.
+      yield { type: "tool.progress", toolCallId: REFUND_CALL.id, elapsedMs: 0 };
+      await settled;
+      yield ev.output(REFUND_CALL.id, { id: "re_1", amount: 4900 });
+      yield ev.finished("cancelled", { stopReason: "user" });
+    };
+    const server = createTestServer({ runTurn: core, stopGraceMs: 30 });
+    const conversationId = await server.createConversation();
+    const response = await server.request("POST", "/api/chat", {
+      conversationId,
+      message: userMessage("u1", "Refund it"),
+    });
+    const run = server.services.registry.forConversation(conversationId);
+    if (run === undefined) throw new Error("no active run");
+    await waitFor(() => run.writes.count === 1);
+    expect((await server.request("POST", `/api/runs/${run.runId}/stop`)).status).toBe(202);
+    // Well past the 30 ms grace period, the run is still open: the refund is at Stripe.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(run.finished).toBe(false);
+    expect(server.services.registry.size).toBe(1);
+    settle();
+    const { chunks } = await readSse(response);
+    expect(chunks.some((chunk) => chunk.type === "tool-output-available")).toBe(true);
+    await run.done;
+    expect(server.logs.join("\n")).not.toMatch(/did not stop in time/);
+    expect(getToolCallByToolUseId(server.services.db, REFUND_CALL.id)).toMatchObject({
+      status: "succeeded",
+      idempotencyKey: "idem_1",
+    });
+  });
+});
+
 describe("limits", () => {
   it("allows one active run per conversation (409) and four at once (429)", async () => {
     const held = heldScript();

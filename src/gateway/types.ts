@@ -60,6 +60,8 @@ export type GatewayCall = {
   readonly toolUseId: string | null;
   readonly idempotencyKey: string | null;
   readonly arguments: JsonObject;
+  /** False for a write: once started it runs to its own deadline, whatever happens to the run. */
+  readonly readOnly: boolean;
 };
 
 /** A settled call, as the model received it (compacted and redacted). */
@@ -99,3 +101,20 @@ export function notify(callback: () => void): void {
     // Observation must never change a tool result.
   }
 }
+
+/**
+ * The error code of a write that may have been applied: it was sent (or may
+ * have been) and no answer came back. Retrying it could apply it twice.
+ */
+export const OUTCOME_UNKNOWN = "outcome_unknown";
+
+/** The model- and log-facing text of an outcome_unknown write. */
+export function outcomeUnknownMessage(cause: string): string {
+  return `${cause.replace(/[.\s]+$/, "")}. This change may already have been made. Do not repeat it: check the record first (for example list the charge's refunds, or read the invoice or payment) and report what you find.`;
+}
+
+/**
+ * How long a started write may run before it is aborted: the HTTP layer's
+ * per-attempt limit (60 s; writes are never retried) plus a margin.
+ */
+export const WRITE_DEADLINE_MS = 65_000;

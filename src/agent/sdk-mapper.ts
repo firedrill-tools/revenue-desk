@@ -21,6 +21,7 @@ import type { Redactor } from "../config/redact.js";
 import type { AgentEvent, ToolMetadata } from "../contracts/events.js";
 import type { JsonObject, JsonValue } from "../contracts/json.js";
 import { compactJson, DEFAULT_MAX_OUTPUT_CHARS } from "../gateway/compact.js";
+import { OUTCOME_UNKNOWN, outcomeUnknownMessage } from "../gateway/types.js";
 import type { ToolCallLedger } from "./tool-calls.js";
 
 /** How the mapper names and classifies tools (backed by the run's registry). */
@@ -55,6 +56,10 @@ export const RUN_ENDED_REASON = "The run ended before this call ran.";
  * neither true nor useful to a person reading the action log.
  */
 export const STOPPED_BEFORE_RUN_REASON = "Not run: the run was stopped before this call ran.";
+/** A call still executing when the run ended: it may have been applied. */
+export const ENDED_WHILE_RUNNING = outcomeUnknownMessage(
+  "The run ended while this call was running, before its result arrived",
+);
 const UNKNOWN_TOOL = /No such tool available/;
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -428,8 +433,10 @@ export class SdkMessageMapper {
 
   /**
    * At the end of the run: closes an open step, gives every call without an
-   * outcome one (stopped), after making its input available, and releases
-   * every held event.
+   * outcome one, after making its input available, and releases every held
+   * event. A call that never started is stopped; one the gateway was still
+   * executing may have been applied, so it is an outcome_unknown error that
+   * keeps the call's idempotency key, never "stopped before it ran".
    */
   finish(): void {
     this.#closeStep();
@@ -448,6 +455,10 @@ export class SdkMessageMapper {
         }
         this.#makeAvailable(call.toolCallId, this.#ledger.toolNameOf(call.toolCallId) ?? "", input);
       }
+      if (call.executing) {
+        this.#endedWhileRunning(call.toolCallId);
+        continue;
+      }
       if (!this.#ledger.settle(call.toolCallId, "stopped")) continue;
       this.#ledger.emitFor(call.toolCallId, {
         type: "tool.denied",
@@ -457,5 +468,36 @@ export class SdkMessageMapper {
       });
     }
     this.#ledger.releaseAll();
+  }
+
+  #endedWhileRunning(toolCallId: string): void {
+    const decision = this.#ledger.decisionOf(toolCallId);
+    if (
+      !this.#ledger.settle(
+        toolCallId,
+        decision === null || decision === "pending" ? "auto" : decision,
+      )
+    )
+      return;
+    const execution = this.#ledger.executionOf(toolCallId);
+    this.#ledger.emitFor(toolCallId, {
+      type: "tool.output",
+      toolCallId,
+      output: ENDED_WHILE_RUNNING,
+      truncated: false,
+      isError: true,
+      error: { provider: null, status: null, code: OUTCOME_UNKNOWN, message: ENDED_WHILE_RUNNING },
+      durationMs: 0,
+      execution:
+        execution === null
+          ? null
+          : {
+              upstreamTool: execution.upstreamTool,
+              httpStatus: null,
+              // An API write sent this key (or was about to): the provider can be asked about it.
+              idempotencyKey:
+                execution.apiKind && !execution.readOnly ? execution.idempotencyKey : null,
+            },
+    });
   }
 }

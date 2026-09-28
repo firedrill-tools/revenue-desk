@@ -79,8 +79,16 @@ export interface FaultRule {
   readonly name?: string;
   /** Wait before answering (a slow provider). */
   readonly delayMs?: number;
-  /** The response, or "drop" to destroy the connection without a reply. */
-  readonly respond: FakeResponse | "drop" | ((request: FakeRequest) => FakeResponse | "drop");
+  /**
+   * The response, "drop" to destroy the connection without a reply, or
+   * "pass" to answer normally after `delayMs` (a slow provider that still
+   * applies the request).
+   */
+  readonly respond:
+    | FakeResponse
+    | "drop"
+    | "pass"
+    | ((request: FakeRequest) => FakeResponse | "drop");
 }
 
 export interface FaultHandle {
@@ -315,10 +323,15 @@ export class FakeHttpServer {
     }
 
     const fault = this.takeFault(method, path);
-    if (fault !== null) {
+    let passed: string | null = null;
+    if (fault !== null && fault.rule.respond === "pass") {
+      if (fault.rule.delayMs !== undefined) await delay(fault.rule.delayMs);
+      passed = fault.name;
+    } else if (fault !== null) {
       const { rule, name } = fault;
       if (rule.delayMs !== undefined) await delay(rule.delayMs);
-      const reply = typeof rule.respond === "function" ? rule.respond(fakeRequest) : rule.respond;
+      const respond = rule.respond as Exclude<FaultRule["respond"], "pass">;
+      const reply = typeof respond === "function" ? respond(fakeRequest) : respond;
       if (reply === "drop") {
         record(0, undefined, name);
         request.socket.destroy();
@@ -339,10 +352,10 @@ export class FakeHttpServer {
     const result = await match.handler({ ...fakeRequest, params: match.params });
     if ("raw" in result) {
       await result.raw(request, response, bodyResult.text);
-      record(response.statusCode, parseJsonRpc(bodyResult.text), null);
+      record(response.statusCode, parseJsonRpc(bodyResult.text), passed);
       return;
     }
-    record(result.status, result.body, null);
+    record(result.status, result.body, passed);
     send(response, result);
   }
 

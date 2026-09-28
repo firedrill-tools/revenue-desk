@@ -21,10 +21,12 @@ import {
   markToolCallAwaitingApproval,
   markToolCallDecided,
   markToolCallDenied,
+  markToolCallExecuting,
   markToolCallFinished,
   type ToolCallKey,
 } from "../db/repos/tool-calls.js";
 import type { DbExecutor } from "../db/repos/types.js";
+import { idempotencyKeyFor } from "../gateway/context.js";
 import { type Redact, redactJson, redactJsonObject } from "./redaction.js";
 
 export type RunRecorderOptions = {
@@ -40,6 +42,10 @@ export class RunRecorder {
   readonly #options: RunRecorderOptions;
   /** Base metadata from tool.input.start, for calls whose input cannot be classified. */
   readonly #baseMetadata = new Map<string, ToolMetadata | null>();
+  /** The classified metadata of each call, from tool.input.available. */
+  readonly #metadata = new Map<string, ToolMetadata | null>();
+  /** Calls whose start (the first tool.progress) was recorded. */
+  readonly #started = new Set<string>();
 
   constructor(options: RunRecorderOptions) {
     this.#options = options;
@@ -80,6 +86,9 @@ export class RunRecorder {
           finishedAt: this.#now(),
         });
         return;
+      case "tool.progress":
+        this.#toolStarted(event.toolCallId);
+        return;
       case "tool.output":
         this.#toolOutput(event);
         return;
@@ -100,6 +109,7 @@ export class RunRecorder {
     // rejected) keeps its integration, kind, operation and base class; only an
     // unknown tool is recorded without them.
     const tool = event.tool ?? this.#baseMetadata.get(event.toolCallId) ?? null;
+    this.#metadata.set(event.toolCallId, tool);
     insertToolCall(db, {
       id: this.#options.newId(),
       runId,
@@ -114,6 +124,24 @@ export class RunRecorder {
       input: redactJsonObject(event.input, redact),
       startedAt: this.#now(),
     });
+  }
+
+  /**
+   * The gateway started the call. An API write carries its idempotency key
+   * from now on (derived from the run and the tool_use id, as the gateway
+   * derives it), so a run that ends before its answer records which request
+   * may have been applied.
+   */
+  #toolStarted(toolCallId: string): void {
+    if (this.#started.has(toolCallId)) return;
+    this.#started.add(toolCallId);
+    const tool = this.#metadata.get(toolCallId) ?? null;
+    if (tool === null || tool.connectionKind !== "api" || tool.actionClass === "read") return;
+    markToolCallExecuting(
+      this.#options.db,
+      this.#key(toolCallId),
+      idempotencyKeyFor(this.#options.runId, toolCallId),
+    );
   }
 
   #toolOutput(event: AgentEventOf<"tool.output">): void {

@@ -8,6 +8,15 @@
 //
 // Build a fresh instance for every query(): an instance holds one transport,
 // and a second concurrent query() silently gets no tools from a shared one.
+//
+// A write, once started, is not cancelled with the MCP request. Stop, a time
+// limit or the end of the query cancel the request (the SDK interrupts, then
+// closes the transport), but a refund or invoice POST may already have
+// reached the provider: cancelling it locally would only lose its real
+// outcome and log it as failed. A write therefore runs with its own signal,
+// which aborts only at WRITE_DEADLINE_MS, and its result is still reported
+// to the observer (the action log) after the model stopped listening. Reads
+// follow the request's signal.
 
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -33,6 +42,7 @@ import {
   type GatewayTool,
   notify,
   type ToolExecution,
+  WRITE_DEADLINE_MS,
 } from "./types.js";
 
 export type GatewayServerOptions = {
@@ -49,6 +59,8 @@ export type GatewayServerOptions = {
   readonly progressIntervalMs?: number;
   /** MCP instructions for the model; upstream instructions are only forwarded when passed here. */
   readonly instructions?: string;
+  /** A started write's own deadline. Default WRITE_DEADLINE_MS. */
+  readonly writeDeadlineMs?: number;
 };
 
 export interface GatewayServer {
@@ -93,6 +105,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
       toolUseId,
       idempotencyKey,
       arguments: args,
+      readOnly: descriptor.readOnly,
     };
     const started = performance.now();
     let execution: ToolExecution;
@@ -118,12 +131,16 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
       }, progressIntervalMs);
       progress.unref();
       const contextId = toolUseId ?? untrackedToolUseId();
+      // A write keeps running when the request is cancelled; only its own deadline stops it.
+      const executionSignal = descriptor.readOnly
+        ? signal
+        : AbortSignal.timeout(options.writeDeadlineMs ?? WRITE_DEADLINE_MS);
       try {
         execution = await tool.execute(args, {
           runId: options.runId,
           toolUseId: contextId,
           idempotencyKey: idempotencyKey ?? idempotencyKeyFor(options.runId, contextId),
-          signal,
+          signal: executionSignal,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

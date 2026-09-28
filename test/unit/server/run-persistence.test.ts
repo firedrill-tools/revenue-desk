@@ -9,6 +9,7 @@ import { listMessages } from "../../../src/db/repos/messages.js";
 import { getRun, insertRun } from "../../../src/db/repos/runs.js";
 import { listToolCalls } from "../../../src/db/repos/tool-calls.js";
 import { seedDatabase } from "../../../src/db/seed.js";
+import { idempotencyKeyFor } from "../../../src/gateway/context.js";
 import { RunPersistence } from "../../../src/server/run-persistence.js";
 import { cleanupAll, openTestDatabase, TEST_SELF } from "../db/support.js";
 
@@ -72,6 +73,51 @@ const started: AgentEvent = {
 };
 
 describe("RunPersistence", () => {
+  it("records a started API write's idempotency key, so a forced end marks it outcome unknown", async () => {
+    const { db, persistence, apply } = setup();
+    apply(started);
+    apply({ type: "step.start" });
+    apply({
+      type: "tool.input.start",
+      toolCallId: "toolu_refund",
+      toolName: "mcp__stripe__create_refund",
+      title: "Refund charge in Stripe",
+      tool: REFUND,
+    });
+    apply({
+      type: "tool.input.available",
+      toolCallId: "toolu_refund",
+      toolName: "mcp__stripe__create_refund",
+      title: "Refund $490.00",
+      input: { charge: "ch_1", amount: 49_000 },
+      tool: REFUND,
+    });
+    apply({ type: "step.finish" });
+    // The gateway started it: the provider receives this key from now on.
+    apply({ type: "tool.progress", toolCallId: "toolu_refund", elapsedMs: 0 });
+    expect(listToolCalls(db, "r1")[0]).toMatchObject({
+      status: "running",
+      idempotencyKey: idempotencyKeyFor("r1", "toolu_refund"),
+    });
+    // The run is closed before Stripe answers (a forced stop).
+    apply({
+      type: "run.finished",
+      status: "cancelled",
+      finishedAt: T0,
+      stopReason: "user",
+      terminalReason: null,
+      reply: null,
+      error: null,
+    });
+    await persistence.end("cancelled");
+    expect(listToolCalls(db, "r1")[0]).toMatchObject({
+      status: "interrupted",
+      isError: true,
+      idempotencyKey: idempotencyKeyFor("r1", "toolu_refund"),
+      error: { code: "outcome_unknown" },
+    });
+  });
+
   it("records the action log and stores the assistant message the stream renders", async () => {
     const { db, persistence, apply } = setup();
     const chunks = [

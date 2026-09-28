@@ -416,7 +416,12 @@ persist from the events.
 - Stop: on `signal` abort the core calls `q.interrupt()` and settles pending
   approvals as denied with `interrupt:true`; `abortController.abort()` only
   after 3 seconds. The abort reason (`RunStopReason`: user, timeout, shutdown)
-  sets the finished status.
+  sets the finished status. A write the gateway has started is not cancelled
+  with the MCP request (its own signal aborts only at `WRITE_DEADLINE_MS`,
+  65 s): the core waits for executing writes up to `WRITE_DRAIN_MS` (70 s)
+  before its last events, the run registry and the CLI hold a stop open while
+  one executes, and a write that ends without an answer is `outcome_unknown`
+  with its idempotency key, never "not run".
 - The native Claude CLI comes from the SDK's optional per-platform package,
   resolved by the SDK itself. Tests **fail, not skip**, when it is missing.
 
@@ -1142,6 +1147,18 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
   allows no image source, and every response has a CSP. Reads need the
   session cookie, and `pnpm dev`'s Vite server sends no CORS headers and
   denies files outside the web app (it served the SQLite database before).
+
+- **A started write is never cancelled.** Stop, `--timeout-ms`, SIGTERM and
+  the end of a query used to abort an approved refund or invoice already at
+  the provider, logging it as failed or never run, and a retry would get a
+  new idempotency key. Now: writes get their own 65 s deadline; the core
+  announces each call as it starts (a `tool.progress` at 0 ms), and the
+  recorder stores an API write's idempotency key from that moment; the core,
+  the registry (not on shutdown) and the CLI wait for executing writes up to
+  70 s; the HTTP layer reports a write sent without an answer as
+  `outcome_unknown` (also upstream MCP writes that fail mid-call), and the
+  prompt tells the model to check, never to repeat, such a write; a call
+  the run ends while it executes is `outcome_unknown` with its key.
 
 **Integration follow-ups (open).**
 

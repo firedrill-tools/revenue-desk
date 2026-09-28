@@ -19,7 +19,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolDescriptor, ToolFailure } from "../contracts/integration.js";
 import type { JsonObject } from "../contracts/json.js";
-import { errorResult, type GatewayTool, type ToolExecution } from "./types.js";
+import {
+  errorResult,
+  type GatewayTool,
+  OUTCOME_UNKNOWN,
+  outcomeUnknownMessage,
+  type ToolExecution,
+} from "./types.js";
 
 /** Where an upstream MCP server lives. */
 export type UpstreamConfig =
@@ -206,12 +212,22 @@ export function upstreamGatewayTools(
           return { result, error, httpStatus: null, idempotencyKey: null };
         } catch (caught) {
           const message = caught instanceof Error ? caught.message : String(caught);
-          const failure: ToolFailure = {
-            provider: descriptor.integration,
-            status: null,
-            code: "upstream_error",
-            message: `The ${descriptor.integration} MCP server failed: ${message}`,
-          };
+          // A write the server may have received before the request failed may have been applied.
+          const failure: ToolFailure = descriptor.readOnly
+            ? {
+                provider: descriptor.integration,
+                status: null,
+                code: "upstream_error",
+                message: `The ${descriptor.integration} MCP server failed: ${message}`,
+              }
+            : {
+                provider: descriptor.integration,
+                status: null,
+                code: OUTCOME_UNKNOWN,
+                message: outcomeUnknownMessage(
+                  `The ${descriptor.integration} MCP server gave no result (${message})`,
+                ),
+              };
           return {
             result: errorResult(failure.message),
             error: failure,
