@@ -2,6 +2,8 @@
 //
 // Alias-free and DOM-free so the Node test suite can import it.
 
+import { INTEGRATION_IDS, type IntegrationId } from "../../../src/contracts/integration.js";
+
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 /**
@@ -20,4 +22,13 @@ export function safeRedirectUrl(value: string): string | null {
   if (url.protocol === "https:") return url.toString();
   if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return url.toString();
   return null;
+}
+
+/**
+ * The integration a Composio sign-in returned for: the server's Connect
+ * callback is `/connections?connected=<integration>`. Anything else is null.
+ */
+export function signInReturn(search: string): IntegrationId | null {
+  const value = new URLSearchParams(search).get("connected");
+  return INTEGRATION_IDS.find((id) => id === value) ?? null;
 }

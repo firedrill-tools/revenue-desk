@@ -1,5 +1,6 @@
 import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { navigate } from "@/app/router";
 import { useSession } from "@/app/session";
 import { useNotify } from "@/components/app/notices";
 import { ErrorState, Page, PageHeader, Panel } from "@/components/app/page";
@@ -22,7 +23,7 @@ import { api, errorMessage } from "@/lib/api";
 import type { ConnectionView, IntegrationId } from "@/lib/contracts";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { CONNECTION_STATE_LABELS } from "@/lib/labels";
-import { safeRedirectUrl } from "@/lib/urls";
+import { safeRedirectUrl, signInReturn } from "@/lib/urls";
 
 type RowActions = {
   checking: ReadonlySet<IntegrationId>;
@@ -241,13 +242,26 @@ export default function ConnectionsRoute() {
       ),
     );
 
-  const check = async (integration: IntegrationId) => {
+  /** A read-only check; `announce` says the outcome (after a sign-in). */
+  const check = async (integration: IntegrationId, announce = false) => {
     setChecking((current) => new Set(current).add(integration));
     try {
       const { connection } = await api.request("POST /api/connections/:integration/check", {
         params: { integration },
       });
       replace(connection);
+      // The app bar's summary and any other view of the connections follow.
+      invalidate("connections");
+      if (announce) {
+        notify(
+          connection.state === "connected"
+            ? { tone: "success", message: `${connection.label} is connected.` }
+            : {
+                tone: "warning",
+                message: `${connection.label} is not connected: ${CONNECTION_STATE_LABELS[connection.state].label.toLowerCase()}.`,
+              },
+        );
+      }
     } catch (checkError) {
       notify({ tone: "danger", message: errorMessage(checkError, "The check did not finish.") });
     } finally {
@@ -267,6 +281,35 @@ export default function ConnectionsRoute() {
     }
   };
 
+  // Back from Composio's sign-in: the server's callback opens this page as
+  // /connections?connected=<integration> in the sign-in tab. Check that
+  // integration once so the page says whether sign-in worked.
+  const checkRef = useRef(check);
+  checkRef.current = check;
+  useEffect(() => {
+    const integration = signInReturn(window.location.search);
+    if (integration === null) return;
+    navigate("/connections", { replace: true });
+    void checkRef.current(integration, true);
+  }, []);
+
+  // The tab that started a sign-in checks again when the person comes back to it.
+  const [awaitingSignIn, setAwaitingSignIn] = useState<IntegrationId | null>(null);
+  useEffect(() => {
+    if (awaitingSignIn === null) return;
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      setAwaitingSignIn(null);
+      void checkRef.current(awaitingSignIn, true);
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [awaitingSignIn]);
+
   const connect = async (integration: IntegrationId) => {
     // Opened synchronously in the click, so the browser does not block it,
     // then pointed at Composio's sign-in once the server returns the link.
@@ -284,7 +327,8 @@ export default function ConnectionsRoute() {
       } else {
         window.open(url, "_blank", "noopener,noreferrer");
       }
-      notify({ message: "Finish signing in in the new tab, then check the connection." });
+      setAwaitingSignIn(integration);
+      notify({ message: "Finish signing in in the new tab, then come back here." });
     } catch (connectError) {
       tab?.close();
       notify({
