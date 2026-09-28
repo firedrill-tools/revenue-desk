@@ -24,6 +24,7 @@
     "test:watch": "vitest",
     "test:e2e-cli": "vitest run --config vitest.e2e-cli.config.ts",
     "test:e2e": "playwright test",
+    "test:live": "vitest run --config test/live/vitest.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",

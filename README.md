@@ -313,6 +313,38 @@ generated migration in `src/db/migrations`.
 | `pnpm test:e2e` | Playwright UI tests of the built app in the sandbox (started by the suite on port 4320, which must be free) in the installed Google Chrome, on desktop and phone viewports, with an accessibility check. Run `pnpm build` first. |
 | `pnpm typecheck`, `pnpm lint` | TypeScript and Biome. |
 | `pnpm verify` | Typecheck, lint, `pnpm test`, the build, then the CLI and UI end-to-end suites. |
+| `LIVE_E2E=1 pnpm test:live` | Opt-in, against real services, and not part of `pnpm verify`: see [Live tests](#live-tests). |
+
+### Live tests
+
+Both refuse to start unless `LIVE_E2E=1` is set, because they call the real
+Anthropic API and cost money. Keys are read at run time from files outside
+the tracked tree and are never printed.
+
+- **`LIVE_E2E=1 pnpm test:live`** runs `test/live`. The Gmail test asks the
+  headless CLI (from source) to summarise the three most recent emails in the
+  connected inbox, with every class except `read` denied (so the Composio
+  session is read-only and offers no write tool) and
+  `AGENT_MAX_BUDGET_USD=0.50`. It first checks the connections read-only, as
+  **Check** does, then asserts that the run completed, only Gmail reads ran,
+  nothing was drafted, sent or labelled, and the cost stayed under the cap.
+  `COMPOSIO_API_KEY` and `COMPOSIO_USER_ID` come from `DOTENV_PATH` (default
+  `../gmail-agent/.env`), `ANTHROPIC_API_KEY` from `LIVE_MODEL_ENV` (default
+  `.env`, which git ignores). The reply holds real email, so the test prints
+  only counts and tool names; set `LIVE_OUT_DIR` to a directory outside the
+  repository to keep the run's database and summary there for review.
+  `test/live` also checks the live script's approval rules offline.
+- **`LIVE_E2E=1 node --import tsx scripts/live-e2e.ts --out <dir>`** plays the
+  five jobs with the real model against the sandbox fakes, through the HTTP
+  API with the production build (`pnpm build` first), then three headless CLI
+  runs, one of them without QuickBooks configuration. Each approval is decided
+  by the job's rules (the correct refund, invoice or call is approved; a wrong
+  charge, an unrequested payment or refund, or an email the user asked only to
+  draft is denied), and every card is checked against the call's input. The
+  key comes from `--key-file` (default `.env`). Transcripts, the database and
+  a summary go to `<dir>`, which must be outside the repository; spend is kept
+  in `<dir>/spend.json`, and a run that could take it past `--budget-usd`
+  (default 8) is not started. `--jobs j1,j3` and `--no-cli` narrow the run.
 
 Real-SDK tests run the Claude CLI with `ANTHROPIC_BASE_URL` pointing at the
 scripted API and proxies that refuse any non-loopback connection. They fail,
