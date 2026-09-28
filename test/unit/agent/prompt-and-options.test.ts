@@ -98,7 +98,11 @@ describe("buildSystemPrompt", () => {
       "nothing you write (drafts, notes, Slack posts, your reply) may say or imply that it happened or will happen",
     );
     expect(STABLE_RULES).toContain(
-      "Never promise a customer a refund, credit, payment or date that has not been approved and done.",
+      "Never promise a customer a refund, credit, payment or date that has not been approved and done",
+    );
+    // J1 rerun: "I've flagged the duplicate for a refund … our team will process it shortly".
+    expect(STABLE_RULES).toContain(
+      "do not say one is flagged, pending, being arranged or on its way",
     );
   });
 

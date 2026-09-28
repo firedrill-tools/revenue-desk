@@ -258,6 +258,12 @@ export function promisesRefund(body: string): boolean {
     /\b(we('ll| will)|i('ll| will)|we are|we're|i am|i'm)\s+(going to\s+|now\s+)?(refund|issu|process|initiat|revers)\w*/i,
     /\byou('ll| will| should)\s+(see|receive|get)\s+(a|the|your)\s+(full\s+)?refund\b/i,
     /\bonce the refund\b/i,
+    // A refund put in motion: "flagged for a refund … our team will process it shortly",
+    // "a refund is pending", "you'll get a confirmation once it's issued".
+    /\brefund\b.*\b(flagged|arrang\w*|pending|queued|scheduled|on (its|the) way|in progress|shortly|soon|once it'?s)\b/i,
+    /\b(flagged|arrang\w*|queued|scheduled)\b.*\brefund\b/i,
+    /\brefund\b.*\b(will|'ll)\s+(be\s+)?(process|issu|send|sent|return|credit|post|appear|reach)\w*/i,
+    /\b(will|'ll)\s+(process|issue|send|return|credit)\b.*\brefund\b/i,
   ];
   // Sentence by sentence, so an amount such as $490.00 does not end a match.
   const sentences = body.split(/(?<=[.!?])\s+/);

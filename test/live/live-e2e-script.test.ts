@@ -213,9 +213,23 @@ describe("helpers", () => {
     expect(
       promisesRefund("The refund for the duplicate $490.00 charge is processed within 5 days."),
     ).toBe(true);
+    // The live J1 rerun's wording, which the first rules let through.
+    expect(
+      promisesRefund(
+        "I've flagged the duplicate for a refund of $490.00 and our team will process it shortly — you'll get a confirmation once it's issued.",
+      ),
+    ).toBe(true);
+    expect(promisesRefund("A refund of the duplicate $490.00 charge is pending.")).toBe(true);
+    expect(promisesRefund("We're arranging a refund of the duplicate $490.00 charge.")).toBe(true);
+    expect(promisesRefund("The refund will be processed in 5–10 business days.")).toBe(true);
     expect(promisesRefund("We confirmed the duplicate $490.00 charge and will follow up.")).toBe(
       false,
     );
+    expect(
+      promisesRefund(
+        "You were charged twice on September 22. Our team will review it and follow up with you.",
+      ),
+    ).toBe(false);
   });
 
   it("finds the draft a send would deliver", () => {
