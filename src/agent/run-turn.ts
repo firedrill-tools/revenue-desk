@@ -369,6 +369,8 @@ async function execute(
       q.close();
     }
 
+    // A stop that arrives after the SDK finished does not change how the run ended.
+    const stoppedBy = stopReason();
     await inFlight.idle(deps.drainMs ?? DEFAULT_DRAIN_MS);
     mapper.finish();
 
@@ -395,7 +397,7 @@ async function execute(
     }
 
     const outcome = runOutcome({
-      stopReason: stopReason(),
+      stopReason: stoppedBy,
       result,
       modelError: mapper.modelError,
       thrown,
