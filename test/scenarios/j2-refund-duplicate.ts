@@ -256,3 +256,86 @@ export const J2_STOPPED_AT_APPROVAL: Scenario = {
     return problems;
   },
 };
+
+const noteAssociations = [
+  associate(HARBOR_PINE.hubspotContact, ASSOCIATION.noteToContact),
+  associate(HARBOR_PINE.hubspotCompany, ASSOCIATION.noteToCompany),
+];
+
+/**
+ * The live lane's J2, played deterministically: the agent knows only the
+ * company name, so it searches Stripe by name (no guessed address); its first
+ * HubSpot note has no hs_timestamp, which the gateway refuses before HubSpot
+ * sees it; it posts to #billing only after the corrected note succeeded.
+ */
+export const J2_NAME_SEARCH_AND_NOTE_RULE: Scenario = {
+  ...J2_REFUND_DUPLICATE,
+  id: "guard-name-search-and-note-timestamp",
+  job: "failure",
+  title: "Stripe found by name; a note without hs_timestamp is refused before HubSpot",
+  steps: [
+    () => [
+      text("Looking up Harbor & Pine in Stripe by name."),
+      stripe.findCustomers("j2_customer", { name: "Harbor & Pine" }),
+    ],
+    listCharges,
+    checkRefunds,
+    refund,
+    (context) => {
+      const stripeRefund = context.pick("j2_refund", /\b(re_[A-Za-z0-9]+)\b/, "re_unknown");
+      return [
+        text("Refunded. Logging it in HubSpot."),
+        hubspot.createUntimedNote("j2_note_untimed", {
+          body: `Refunded duplicate charge ${HARBOR_PINE.duplicateCharge} ($490.00, refund ${stripeRefund}).`,
+          associations: noteAssociations,
+        }),
+      ];
+    },
+    (context) => {
+      const refused = context.result("j2_note_untimed");
+      if (refused === undefined || !refused.isError || !refused.text.includes("hs_timestamp")) {
+        context.problem(`the untimed note was not refused for hs_timestamp: ${refused?.text}`);
+      }
+      return [
+        text("HubSpot needs the note's time; adding it."),
+        hubspot.createNote("j2_note", {
+          body: `Refunded duplicate charge ${HARBOR_PINE.duplicateCharge} ($490.00).`,
+          timestamp: NOW_ISO,
+          associations: noteAssociations,
+        }),
+      ];
+    },
+    (context) => {
+      const note = context.result("j2_note");
+      if (note === undefined || note.isError) {
+        return [
+          text(`The HubSpot note failed: ${firstLine(note?.text)} I did not post to #billing.`),
+        ];
+      }
+      return [
+        slack.postMessage("j2_post", {
+          channel: "#billing",
+          text: `Refunded $490.00 to Harbor & Pine Outfitters: duplicate charge ${HARBOR_PINE.duplicateCharge}. Noted in HubSpot.`,
+        }),
+      ];
+    },
+    (context) => [text(summary(context))],
+  ],
+  approvals: { j2_refund: "approve" },
+  verify: (fakes, run) => {
+    const problems = verifyRefunded(fakes, run, "j2_refund");
+    const checks = new Checks();
+    checks.equal(
+      fakes.stripe.http.requestsTo("GET", "/v1/customers/search").length,
+      1,
+      "Stripe was searched by name once",
+    );
+    checks.equal(
+      fakes.stripe.http.requestsTo("GET", "/v1/customers").length,
+      0,
+      "no lookup by a guessed email",
+    );
+    checks.equal(fakes.hubspot.writes().length, 1, "only the corrected note reached HubSpot");
+    return [...problems, ...checks.problems];
+  },
+};

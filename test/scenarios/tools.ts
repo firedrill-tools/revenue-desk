@@ -122,6 +122,12 @@ export const hubspot = {
         },
       ],
     }),
+  /** A note as a model writes it before it learns HubSpot's rules: no hs_timestamp. */
+  createUntimedNote: (id: string, args: { body: string; associations: Association[] }) =>
+    call(id, "mcp__hubspot__hubspot-batch-create-objects", {
+      objectType: "notes",
+      inputs: [{ properties: { hs_note_body: args.body }, associations: args.associations }],
+    }),
   createTask: (
     id: string,
     args: {
@@ -173,7 +179,7 @@ export function associate(id: string, typeId: number): Association {
 // --- Stripe --------------------------------------------------------------------------
 
 export const stripe = {
-  findCustomers: (id: string, args: { email: string }): ScriptedCall =>
+  findCustomers: (id: string, args: { email: string } | { name: string }): ScriptedCall =>
     call(id, "mcp__stripe__find_customers", input(args)),
   listCharges: (
     id: string,

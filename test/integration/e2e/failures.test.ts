@@ -8,6 +8,7 @@
  * Fails, never skips, without the native Claude CLI.
  */
 import { describe, expect, it } from "vitest";
+import type { ApprovalDescriptor } from "../../../src/contracts/events.js";
 import {
   FAIL_COMPOSIO_SESSION,
   FAIL_HUBSPOT_DOWN,
@@ -16,6 +17,7 @@ import {
   FAIL_SLACK_NOT_OK,
   FAIL_STRIPE_429,
   J2_INVALID_ARGUMENTS,
+  J2_NAME_SEARCH_AND_NOTE_RULE,
   J2_STRIPE_DECLINE,
 } from "../../scenarios/index.js";
 import { runScenarioOverHttp } from "../../scenarios/run-over-http.js";
@@ -185,6 +187,41 @@ describe("full stack: failures, with the database checked against what happened"
       expect(rows.approvals.map((approval) => approval.tool_use_id)).toEqual(["toolu_j2_refund"]);
       expect(rows.call("j2_refund")).toMatchObject({ decision: "approved", status: "succeeded" });
       expect(harness.fakes.stripe.http.requestsTo("POST", "/v1/refunds")).toHaveLength(1);
+    });
+  });
+
+  it("A HubSpot note without hs_timestamp is refused before HubSpot; the corrected note runs first, then the post", {
+    timeout: TIMEOUT,
+  }, async () => {
+    await playScenario(J2_NAME_SEARCH_AND_NOTE_RULE, ({ harness, rows }) => {
+      // Stripe was searched by the company's name; no address was guessed.
+      const search = harness.fakes.stripe.http.requestsTo("GET", "/v1/customers/search");
+      expect(search.map((entry) => entry.query.query?.[0])).toEqual(['name~"Harbor & Pine"']);
+      expect(rows.call("j2_customer")).toMatchObject({ decision: "auto", status: "succeeded" });
+
+      expect(rows.call("j2_note_untimed")).toMatchObject({
+        integration: "hubspot",
+        operation: "hubspot.notes.create",
+        decision: "rejected",
+        status: "failed",
+        is_error: 1,
+      });
+      expect(rows.call("j2_note_untimed").output_json).toContain("hs_timestamp");
+      expect(rows.call("j2_note")).toMatchObject({ decision: "auto", status: "succeeded" });
+      expect(harness.fakes.hubspot.writes()).toHaveLength(1);
+      // The post came after the note it mentions had succeeded.
+      const order = rows.toolCalls.map((row) => row.tool_use_id);
+      expect(order.indexOf("toolu_j2_post")).toBeGreaterThan(order.indexOf("toolu_j2_note"));
+
+      // The refund card names the customer the run found, not only the charge id.
+      const card = JSON.parse(rows.approval("j2_refund").descriptor_json) as ApprovalDescriptor;
+      expect(card.consequence).toBe(
+        "Refund $490.00 to Harbor & Pine Outfitters on Stripe charge ch_KAhp_0922b",
+      );
+      expect(card.facts).toContainEqual({
+        label: "Customer",
+        value: "Harbor & Pine Outfitters (cus_KAharborpine)",
+      });
     });
   });
 
