@@ -36,7 +36,35 @@ import {
 } from "../core/http.js";
 import { IdSequence, requestIdFactory } from "../core/ids.js";
 import type { StripeFixture } from "../fixtures.js";
-import { canonical, type FormObject, type FormValue, parseStripeParams } from "./form.js";
+import { invalid, missing, StripeError } from "./errors.js";
+import { canonical, type FormObject, parseStripeParams } from "./form.js";
+import {
+  boolParam,
+  enumParam,
+  expandParam,
+  INVOICE_STATUSES,
+  intParam,
+  LIST_PARAMS,
+  metadataParam,
+  money,
+  newestFirst,
+  objectName,
+  REFUND_REASONS,
+  rangeParam,
+  SUBSCRIPTION_STATUSES,
+  stringParam,
+  subscriptionStatusMatches,
+} from "./params.js";
+import {
+  balanceJson,
+  chargeJson,
+  customerJson,
+  invoiceJson,
+  paymentIntentJson,
+  refundJson,
+  subscriptionJson,
+} from "./render.js";
+import { type Charge, type Refund, StripeState } from "./state.js";
 
 export interface StripeFakeOptions {
   readonly fixture: StripeFixture;
@@ -47,137 +75,12 @@ export interface StripeFakeOptions {
   readonly prefix?: string;
 }
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
-interface Customer {
-  readonly id: string;
-  readonly created: number;
-  email: string | null;
-  name: string;
-  description: string | null;
-  delinquent: boolean;
-  metadata: Record<string, string>;
-}
-
-interface Card {
-  readonly brand: string;
-  readonly last4: string;
-  readonly exp_month: number;
-  readonly exp_year: number;
-}
-
-interface Charge {
-  readonly id: string;
-  readonly created: number;
-  readonly customer: string;
-  readonly amount: number;
-  readonly currency: string;
-  readonly status: "succeeded" | "failed" | "pending";
-  readonly description: string | null;
-  readonly invoice: string | null;
-  readonly paymentIntent: string;
-  readonly card: Card;
-  readonly metadata: Record<string, string>;
-  amountRefunded: number;
-  readonly failureCode: string | null;
-  readonly failureMessage: string | null;
-  readonly declineCode: string | null;
-}
-
-interface Refund {
-  readonly id: string;
-  readonly created: number;
-  readonly charge: string;
-  readonly paymentIntent: string;
-  readonly amount: number;
-  readonly currency: string;
-  readonly reason: "duplicate" | "fraudulent" | "requested_by_customer" | null;
-  readonly status: "pending" | "succeeded" | "failed" | "canceled";
-  readonly metadata: Record<string, string>;
-}
-
-type Invoice = StripeFixture["invoices"][number];
-
-interface Subscription {
-  readonly id: string;
-  readonly created: number;
-  readonly customer: string;
-  status: StripeFixture["subscriptions"][number]["status"];
-  readonly price: StripeFixture["subscriptions"][number]["price"];
-  readonly quantity: number;
-  readonly currentPeriodStart: number;
-  readonly currentPeriodEnd: number;
-  readonly latestInvoice: string | null;
-  canceledAt: number | null;
-  endedAt: number | null;
-  cancellation: { comment: string | null; feedback: string | null; reason: string | null };
-}
-
-interface Balance {
-  available: Map<string, number>;
-  pending: Map<string, number>;
-}
-
 interface IdempotentResult {
   readonly fingerprint: string;
   readonly requestId: string;
   readonly status: number;
   readonly body: JsonValue;
 }
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
-type StripeErrorType = "api_error" | "card_error" | "idempotency_error" | "invalid_request_error";
-
-class StripeError extends Error {
-  constructor(
-    readonly status: number,
-    readonly type: StripeErrorType,
-    message: string,
-    readonly details: {
-      readonly code?: string;
-      readonly param?: string;
-      readonly declineCode?: string;
-      /** Whether an idempotent result is saved (false for parameter validation). */
-      readonly saved?: boolean;
-    } = {},
-  ) {
-    super(message);
-  }
-
-  envelope(): JsonObject {
-    const { code, param, declineCode } = this.details;
-    return {
-      error: {
-        ...(code === undefined ? {} : { code }),
-        ...(declineCode === undefined ? {} : { decline_code: declineCode }),
-        ...(code === undefined
-          ? {}
-          : { doc_url: `https://stripe.com/docs/error-codes/${code.replaceAll("_", "-")}` }),
-        message: this.message,
-        ...(param === undefined ? {} : { param }),
-        type: this.type,
-      },
-    };
-  }
-}
-
-const invalid = (message: string, details: StripeError["details"] = {}) =>
-  new StripeError(400, "invalid_request_error", message, details);
-
-const missing = (kind: string, id: string, param: string, status = 404) =>
-  new StripeError(status, "invalid_request_error", `No such ${kind}: '${id}'`, {
-    code: "resource_missing",
-    param,
-  });
-
-// ---------------------------------------------------------------------------
-// The fake
-// ---------------------------------------------------------------------------
 
 type Handler = (context: {
   readonly request: FakeRequest;
@@ -192,31 +95,11 @@ interface RouteSpec {
   readonly handler: Handler;
 }
 
-const LIST_PARAMS = ["limit", "starting_after", "ending_before", "created"] as const;
-const REFUND_REASONS = ["duplicate", "fraudulent", "requested_by_customer"] as const;
-const SUBSCRIPTION_STATUSES = [
-  "active",
-  "past_due",
-  "unpaid",
-  "canceled",
-  "incomplete",
-  "incomplete_expired",
-  "trialing",
-  "paused",
-  "all",
-  "ended",
-] as const;
-const INVOICE_STATUSES = ["draft", "open", "paid", "uncollectible", "void"] as const;
 const STRIPE_VERSION = /^\d{4}-\d{2}-\d{2}(\.[a-z]+)?$/;
 
 export class StripeFake {
   readonly http: FakeHttpServer;
-  private readonly customers = new Map<string, Customer>();
-  private readonly charges = new Map<string, Charge>();
-  private readonly invoicesById = new Map<string, Invoice>();
-  private readonly subscriptions = new Map<string, Subscription>();
-  private readonly refundsById = new Map<string, Refund>();
-  private readonly balance: Balance;
+  private readonly state: StripeState;
   private readonly idempotency = new Map<string, IdempotentResult>();
   private readonly ids = new IdSequence();
   private readonly requestId = requestIdFactory("req_RDstripe");
@@ -228,78 +111,7 @@ export class StripeFake {
     this.clock = options.clock;
     this.secretKey = options.secretKey;
     this.defaultVersion = options.fixture.account.apiVersion;
-    const fixture = options.fixture;
-    for (const customer of fixture.customers) {
-      this.customers.set(customer.id, {
-        id: customer.id,
-        created: customer.created,
-        email: customer.email,
-        name: customer.name,
-        description: customer.description ?? null,
-        delinquent: customer.delinquent ?? false,
-        metadata: { ...customer.metadata },
-      });
-    }
-    for (const charge of fixture.charges) {
-      this.charges.set(charge.id, {
-        id: charge.id,
-        created: charge.created,
-        customer: charge.customer,
-        amount: charge.amount,
-        currency: charge.currency,
-        status: charge.status,
-        description: charge.description,
-        invoice: charge.invoice,
-        paymentIntent: charge.payment_intent,
-        card: charge.card,
-        metadata: { ...charge.metadata },
-        amountRefunded: charge.amount_refunded ?? 0,
-        failureCode: charge.failure_code ?? null,
-        failureMessage: charge.failure_message ?? null,
-        declineCode: charge.decline_code ?? null,
-      });
-    }
-    for (const invoice of fixture.invoices)
-      this.invoicesById.set(invoice.id, structuredClone(invoice));
-    for (const subscription of fixture.subscriptions) {
-      this.subscriptions.set(subscription.id, {
-        id: subscription.id,
-        created: subscription.created,
-        customer: subscription.customer,
-        status: subscription.status,
-        price: subscription.price,
-        quantity: subscription.quantity,
-        currentPeriodStart: subscription.current_period_start,
-        currentPeriodEnd: subscription.current_period_end,
-        latestInvoice: subscription.latest_invoice,
-        canceledAt: subscription.canceled_at ?? null,
-        endedAt: subscription.ended_at ?? null,
-        cancellation: {
-          comment: null,
-          feedback: null,
-          reason: subscription.status === "canceled" ? "cancellation_requested" : null,
-        },
-      });
-    }
-    for (const refund of fixture.refunds) {
-      const charge = this.charges.get(refund.charge);
-      if (charge === undefined) throw new Error(`Refund ${refund.id} names unknown charge`);
-      this.refundsById.set(refund.id, {
-        id: refund.id,
-        created: refund.created,
-        charge: refund.charge,
-        paymentIntent: charge.paymentIntent,
-        amount: refund.amount,
-        currency: charge.currency,
-        reason: refund.reason,
-        status: refund.status,
-        metadata: { ...refund.metadata },
-      });
-    }
-    this.balance = {
-      available: new Map(fixture.balance.available.map((entry) => [entry.currency, entry.amount])),
-      pending: new Map(fixture.balance.pending.map((entry) => [entry.currency, entry.amount])),
-    };
+    this.state = new StripeState(options.fixture);
 
     const router = new Router();
     for (const spec of this.routes()) {
@@ -343,26 +155,26 @@ export class StripeFake {
 
   /** Every refund as the API would return it, newest first. */
   refunds(filter: { readonly charge?: string } = {}): JsonObject[] {
-    return [...this.refundsById.values()]
+    return [...this.state.refunds.values()]
       .filter((refund) => filter.charge === undefined || refund.charge === filter.charge)
       .sort(newestFirst)
-      .map((refund) => this.refundJson(refund));
+      .map((refund) => refundJson(refund));
   }
 
   /** A charge as the API would return it, or undefined. */
   charge(id: string): JsonObject | undefined {
-    const charge = this.charges.get(id);
-    return charge === undefined ? undefined : this.chargeJson(charge);
+    const charge = this.state.charges.get(id);
+    return charge === undefined ? undefined : chargeJson(this.state, charge);
   }
 
   subscription(id: string): JsonObject | undefined {
-    const subscription = this.subscriptions.get(id);
-    return subscription === undefined ? undefined : this.subscriptionJson(subscription);
+    const subscription = this.state.subscriptions.get(id);
+    return subscription === undefined ? undefined : subscriptionJson(subscription);
   }
 
   /** Available balance in minor units for a currency. */
   availableBalance(currency = "usd"): number {
-    return this.balance.available.get(currency) ?? 0;
+    return this.state.balance.available.get(currency) ?? 0;
   }
 
   /** Writes (POST, DELETE) that reached a route, in order, with their Idempotency-Key. */
@@ -624,9 +436,9 @@ export class StripeFake {
           return this.list(
             "/v1/customers",
             params,
-            [...this.customers.values()],
+            [...this.state.customers.values()],
             (customer) => (email === undefined ? true : customer.email === email),
-            (customer) => this.customerJson(customer),
+            (customer) => customerJson(customer),
           );
         },
       },
@@ -636,7 +448,7 @@ export class StripeFake {
         allowed: [],
         handler: ({ request, params }) =>
           this.expand(
-            this.customerJson(this.find(this.customers, "customer", request.params.id)),
+            customerJson(this.find(this.state.customers, "customer", request.params.id)),
             params,
           ),
       },
@@ -650,11 +462,11 @@ export class StripeFake {
           return this.list(
             "/v1/charges",
             params,
-            [...this.charges.values()],
+            [...this.state.charges.values()],
             (charge) =>
               (customer === undefined || charge.customer === customer) &&
               (paymentIntent === undefined || charge.paymentIntent === paymentIntent),
-            (charge) => this.chargeJson(charge),
+            (charge) => chargeJson(this.state, charge),
           );
         },
       },
@@ -664,7 +476,7 @@ export class StripeFake {
         allowed: [],
         handler: ({ request, params }) =>
           this.expand(
-            this.chargeJson(this.find(this.charges, "charge", request.params.id)),
+            chargeJson(this.state, this.find(this.state.charges, "charge", request.params.id)),
             params,
           ),
       },
@@ -674,7 +486,7 @@ export class StripeFake {
         allowed: [...LIST_PARAMS, "customer"],
         handler: ({ params }) => {
           const customer = stringParam(params, "customer");
-          const intents = [...this.charges.values()].map((charge) => ({
+          const intents = [...this.state.charges.values()].map((charge) => ({
             id: charge.paymentIntent,
             created: charge.created,
             charge,
@@ -684,7 +496,7 @@ export class StripeFake {
             params,
             intents,
             (intent) => customer === undefined || intent.charge.customer === customer,
-            (intent) => this.paymentIntentJson(intent.charge),
+            (intent) => paymentIntentJson(intent.charge),
           );
         },
       },
@@ -693,12 +505,10 @@ export class StripeFake {
         pattern: "/v1/payment_intents/:id",
         allowed: [],
         handler: ({ request, params }) => {
-          const charge = [...this.charges.values()].find(
-            (entry) => entry.paymentIntent === request.params.id,
-          );
-          if (charge === undefined)
-            throw missing("payment_intent", request.params.id ?? "", "intent");
-          return this.expand(this.paymentIntentJson(charge), params);
+          const id = request.params.id ?? "";
+          const charge = this.state.chargeOfIntent(id);
+          if (charge === undefined) throw missing("payment_intent", id, "intent");
+          return this.expand(paymentIntentJson(charge), params);
         },
       },
       {
@@ -719,12 +529,12 @@ export class StripeFake {
           return this.list(
             "/v1/invoices",
             params,
-            [...this.invoicesById.values()],
+            [...this.state.invoices.values()],
             (invoice) =>
               (customer === undefined || invoice.customer === customer) &&
               (status === undefined || invoice.status === status) &&
               (subscription === undefined || invoice.subscription === subscription),
-            (invoice) => this.invoiceJson(invoice),
+            (invoice) => invoiceJson(this.state, invoice),
           );
         },
       },
@@ -734,7 +544,7 @@ export class StripeFake {
         allowed: [],
         handler: ({ request, params }) =>
           this.expand(
-            this.invoiceJson(this.find(this.invoicesById, "invoice", request.params.id)),
+            invoiceJson(this.state, this.find(this.state.invoices, "invoice", request.params.id)),
             params,
           ),
       },
@@ -757,12 +567,12 @@ export class StripeFake {
           return this.list(
             "/v1/subscriptions",
             params,
-            [...this.subscriptions.values()],
+            [...this.state.subscriptions.values()],
             (subscription) =>
               (customer === undefined || subscription.customer === customer) &&
               (price === undefined || subscription.price.id === price) &&
               subscriptionStatusMatches(subscription.status, status),
-            (subscription) => this.subscriptionJson(subscription),
+            (subscription) => subscriptionJson(subscription),
           );
         },
       },
@@ -772,7 +582,9 @@ export class StripeFake {
         allowed: [],
         handler: ({ request, params }) =>
           this.expand(
-            this.subscriptionJson(this.find(this.subscriptions, "subscription", request.params.id)),
+            subscriptionJson(
+              this.find(this.state.subscriptions, "subscription", request.params.id),
+            ),
             params,
           ),
       },
@@ -792,11 +604,11 @@ export class StripeFake {
           return this.list(
             "/v1/refunds",
             params,
-            [...this.refundsById.values()],
+            [...this.state.refunds.values()],
             (refund) =>
               (charge === undefined || refund.charge === charge) &&
               (paymentIntent === undefined || refund.paymentIntent === paymentIntent),
-            (refund) => this.refundJson(refund),
+            (refund) => refundJson(refund),
           );
         },
       },
@@ -806,7 +618,7 @@ export class StripeFake {
         allowed: [],
         handler: ({ request, params }) =>
           this.expand(
-            this.refundJson(this.find(this.refundsById, "refund", request.params.id)),
+            refundJson(this.find(this.state.refunds, "refund", request.params.id)),
             params,
           ),
       },
@@ -832,7 +644,7 @@ export class StripeFake {
         method: "GET",
         pattern: "/v1/balance",
         allowed: [],
-        handler: () => this.balanceJson(),
+        handler: () => balanceJson(this.state),
       },
     ];
   }
@@ -850,7 +662,7 @@ export class StripeFake {
     }
     let charge: Charge | undefined;
     if (chargeId !== undefined) {
-      charge = this.charges.get(chargeId);
+      charge = this.state.charges.get(chargeId);
       if (charge === undefined) throw missing("charge", chargeId, "charge", 400);
       if (intentId !== undefined && charge.paymentIntent !== intentId) {
         throw invalid(`Charge ${chargeId} does not belong to PaymentIntent ${intentId}.`, {
@@ -858,7 +670,7 @@ export class StripeFake {
         });
       }
     } else if (intentId !== undefined) {
-      charge = [...this.charges.values()].find((entry) => entry.paymentIntent === intentId);
+      charge = this.state.chargeOfIntent(intentId);
       if (charge === undefined) throw missing("payment_intent", intentId, "payment_intent", 400);
     }
     if (charge === undefined) throw invalid("No charge to refund.");
@@ -897,17 +709,17 @@ export class StripeFake {
       status: "succeeded",
       metadata,
     };
-    this.refundsById.set(refund.id, refund);
+    this.state.refunds.set(refund.id, refund);
     charge.amountRefunded += refundAmount;
-    this.balance.available.set(
+    this.state.balance.available.set(
       charge.currency,
-      (this.balance.available.get(charge.currency) ?? 0) - refundAmount,
+      (this.state.balance.available.get(charge.currency) ?? 0) - refundAmount,
     );
-    return this.refundJson(refund);
+    return refundJson(refund);
   }
 
   private cancelSubscription(id: string, params: FormObject): JsonValue {
-    const subscription = this.find(this.subscriptions, "subscription", id);
+    const subscription = this.find(this.state.subscriptions, "subscription", id);
     boolParam(params, "invoice_now");
     boolParam(params, "prorate");
     const details = params.cancellation_details;
@@ -929,7 +741,7 @@ export class StripeFake {
       feedback: typeof details?.feedback === "string" ? details.feedback : null,
       reason: "cancellation_requested",
     };
-    return this.subscriptionJson(subscription);
+    return subscriptionJson(subscription);
   }
 
   // --- Lists and expansion ------------------------------------------------------
@@ -1022,24 +834,24 @@ export class StripeFake {
 
   private lookup(id: string): JsonObject | undefined {
     if (id.startsWith("cus_")) {
-      const customer = this.customers.get(id);
-      return customer && this.customerJson(customer);
+      const customer = this.state.customers.get(id);
+      return customer && customerJson(customer);
     }
     if (id.startsWith("ch_")) {
-      const charge = this.charges.get(id);
-      return charge && this.chargeJson(charge);
+      const charge = this.state.charges.get(id);
+      return charge && chargeJson(this.state, charge);
     }
     if (id.startsWith("pi_")) {
-      const charge = [...this.charges.values()].find((entry) => entry.paymentIntent === id);
-      return charge && this.paymentIntentJson(charge);
+      const charge = this.state.chargeOfIntent(id);
+      return charge && paymentIntentJson(charge);
     }
     if (id.startsWith("in_")) {
-      const invoice = this.invoicesById.get(id);
-      return invoice && this.invoiceJson(invoice);
+      const invoice = this.state.invoices.get(id);
+      return invoice && invoiceJson(this.state, invoice);
     }
     if (id.startsWith("sub_")) {
-      const subscription = this.subscriptions.get(id);
-      return subscription && this.subscriptionJson(subscription);
+      const subscription = this.state.subscriptions.get(id);
+      return subscription && subscriptionJson(subscription);
     }
     return undefined;
   }
@@ -1051,471 +863,4 @@ export class StripeFake {
   }
 
   // --- Renderers ----------------------------------------------------------------
-
-  private customerJson(customer: Customer): JsonObject {
-    return {
-      id: customer.id,
-      object: "customer",
-      address: null,
-      balance: 0,
-      created: customer.created,
-      currency: "usd",
-      default_source: null,
-      delinquent: customer.delinquent,
-      description: customer.description,
-      discount: null,
-      email: customer.email,
-      invoice_prefix: customer.id.slice(4, 12).toUpperCase(),
-      invoice_settings: { custom_fields: null, default_payment_method: null, footer: null },
-      livemode: false,
-      metadata: customer.metadata,
-      name: customer.name,
-      phone: null,
-      preferred_locales: [],
-      shipping: null,
-      tax_exempt: "none",
-      test_clock: null,
-    };
-  }
-
-  private chargeJson(charge: Charge): JsonObject {
-    const succeeded = charge.status === "succeeded";
-    const customer = this.customers.get(charge.customer);
-    return {
-      id: charge.id,
-      object: "charge",
-      amount: charge.amount,
-      amount_captured: succeeded ? charge.amount : 0,
-      amount_refunded: charge.amountRefunded,
-      application: null,
-      application_fee: null,
-      application_fee_amount: null,
-      balance_transaction: succeeded ? `txn_${charge.id.slice(3)}` : null,
-      billing_details: {
-        address: null,
-        email: customer?.email ?? null,
-        name: customer?.name ?? null,
-        phone: null,
-      },
-      calculated_statement_descriptor: "KESTREL ANALYTICS",
-      captured: succeeded,
-      created: charge.created,
-      currency: charge.currency,
-      customer: charge.customer,
-      description: charge.description,
-      disputed: false,
-      failure_balance_transaction: null,
-      failure_code: charge.failureCode,
-      failure_message: charge.failureMessage,
-      fraud_details: {},
-      invoice: charge.invoice,
-      livemode: false,
-      metadata: charge.metadata,
-      on_behalf_of: null,
-      outcome: succeeded
-        ? {
-            network_status: "approved_by_network",
-            reason: null,
-            risk_level: "normal",
-            seller_message: "Payment complete.",
-            type: "authorized",
-          }
-        : {
-            network_status: "declined_by_network",
-            reason: charge.declineCode ?? "generic_decline",
-            risk_level: "normal",
-            seller_message: "The bank did not return any further details with this decline.",
-            type: "issuer_declined",
-          },
-      paid: succeeded,
-      payment_intent: charge.paymentIntent,
-      payment_method: `pm_${charge.id.slice(3)}`,
-      payment_method_details: {
-        card: { ...charge.card, country: "US", funding: "credit", network: charge.card.brand },
-        type: "card",
-      },
-      receipt_email: customer?.email ?? null,
-      receipt_number: null,
-      refunded: charge.amountRefunded >= charge.amount,
-      review: null,
-      shipping: null,
-      source: null,
-      statement_descriptor: null,
-      status: charge.status,
-    };
-  }
-
-  private paymentIntentJson(charge: Charge): JsonObject {
-    const succeeded = charge.status === "succeeded";
-    return {
-      id: charge.paymentIntent,
-      object: "payment_intent",
-      amount: charge.amount,
-      amount_capturable: 0,
-      amount_received: succeeded ? charge.amount : 0,
-      canceled_at: null,
-      cancellation_reason: null,
-      capture_method: "automatic",
-      client_secret: `${charge.paymentIntent}_secret_RDfake`,
-      confirmation_method: "automatic",
-      created: charge.created,
-      currency: charge.currency,
-      customer: charge.customer,
-      description: charge.description,
-      invoice: charge.invoice,
-      last_payment_error: succeeded
-        ? null
-        : {
-            charge: charge.id,
-            code: charge.failureCode ?? "card_declined",
-            decline_code: charge.declineCode ?? "generic_decline",
-            message: charge.failureMessage ?? "Your card was declined.",
-            type: "card_error",
-          },
-      latest_charge: charge.id,
-      livemode: false,
-      metadata: charge.metadata,
-      payment_method: succeeded ? `pm_${charge.id.slice(3)}` : null,
-      payment_method_types: ["card"],
-      status: succeeded ? "succeeded" : "requires_payment_method",
-    };
-  }
-
-  private invoiceJson(invoice: Invoice): JsonObject {
-    const customer = this.customers.get(invoice.customer);
-    const subtotal = invoice.lines.reduce((sum, line) => sum + line.amount, 0);
-    const paid = invoice.status === "paid";
-    return {
-      id: invoice.id,
-      object: "invoice",
-      account_country: "US",
-      account_name: "Kestrel Analytics, Inc.",
-      amount_due: invoice.amount_due,
-      amount_paid: invoice.amount_paid,
-      amount_remaining: invoice.amount_due - invoice.amount_paid,
-      attempt_count: invoice.attempt_count ?? (paid ? 1 : 0),
-      attempted: (invoice.attempt_count ?? (paid ? 1 : 0)) > 0,
-      auto_advance: !paid,
-      billing_reason: "subscription_cycle",
-      charge: invoice.charge,
-      collection_method: "charge_automatically",
-      created: invoice.created,
-      currency: invoice.currency,
-      customer: invoice.customer,
-      customer_email: customer?.email ?? null,
-      customer_name: customer?.name ?? null,
-      description: null,
-      due_date: null,
-      ending_balance: 0,
-      hosted_invoice_url: null,
-      invoice_pdf: null,
-      lines: {
-        object: "list",
-        data: invoice.lines.map((line, index) => ({
-          id: `il_${invoice.id.slice(3)}_${index + 1}`,
-          object: "line_item",
-          amount: line.amount,
-          currency: invoice.currency,
-          description: line.description,
-          period: { start: invoice.period_start, end: invoice.period_end },
-          price: line.price,
-          quantity: line.quantity,
-          type: "subscription",
-        })),
-        has_more: false,
-        total_count: invoice.lines.length,
-        url: `/v1/invoices/${invoice.id}/lines`,
-      },
-      livemode: false,
-      metadata: {},
-      next_payment_attempt: invoice.next_payment_attempt ?? null,
-      number: invoice.number,
-      paid,
-      payment_intent: invoice.payment_intent,
-      period_end: invoice.period_end,
-      period_start: invoice.period_start,
-      status: invoice.status,
-      status_transitions: {
-        finalized_at: invoice.created,
-        marked_uncollectible_at: null,
-        paid_at: paid ? (this.charges.get(invoice.charge ?? "")?.created ?? invoice.created) : null,
-        voided_at: null,
-      },
-      subscription: invoice.subscription,
-      subtotal,
-      total: subtotal,
-    };
-  }
-
-  private subscriptionJson(subscription: Subscription): JsonObject {
-    const price = {
-      id: subscription.price.id,
-      object: "price",
-      active: true,
-      currency: subscription.price.currency,
-      nickname: subscription.price.nickname,
-      product: subscription.price.product,
-      recurring: { interval: subscription.price.interval, interval_count: 1 },
-      type: "recurring",
-      unit_amount: subscription.price.unit_amount,
-    };
-    return {
-      id: subscription.id,
-      object: "subscription",
-      billing_cycle_anchor: subscription.created,
-      cancel_at: null,
-      cancel_at_period_end: false,
-      canceled_at: subscription.canceledAt,
-      cancellation_details: subscription.cancellation,
-      collection_method: "charge_automatically",
-      created: subscription.created,
-      currency: subscription.price.currency,
-      current_period_end: subscription.currentPeriodEnd,
-      current_period_start: subscription.currentPeriodStart,
-      customer: subscription.customer,
-      days_until_due: null,
-      default_payment_method: null,
-      ended_at: subscription.endedAt,
-      items: {
-        object: "list",
-        data: [
-          {
-            id: `si_${subscription.id.slice(4)}`,
-            object: "subscription_item",
-            price,
-            quantity: subscription.quantity,
-            subscription: subscription.id,
-          },
-        ],
-        has_more: false,
-        total_count: 1,
-        url: `/v1/subscription_items?subscription=${subscription.id}`,
-      },
-      latest_invoice: subscription.latestInvoice,
-      livemode: false,
-      metadata: {},
-      quantity: subscription.quantity,
-      start_date: subscription.created,
-      status: subscription.status,
-      trial_end: null,
-      trial_start: null,
-    };
-  }
-
-  private refundJson(refund: Refund): JsonObject {
-    return {
-      id: refund.id,
-      object: "refund",
-      amount: refund.amount,
-      balance_transaction: `txn_${refund.id.slice(3)}`,
-      charge: refund.charge,
-      created: refund.created,
-      currency: refund.currency,
-      metadata: refund.metadata,
-      payment_intent: refund.paymentIntent,
-      reason: refund.reason,
-      receipt_number: null,
-      source_transfer_reversal: null,
-      status: refund.status,
-      transfer_reversal: null,
-    };
-  }
-
-  private balanceJson(): JsonObject {
-    const entries = (map: ReadonlyMap<string, number>) =>
-      [...map.entries()].map(([currency, amount]) => ({
-        amount,
-        currency,
-        source_types: { card: amount },
-      }));
-    return {
-      object: "balance",
-      available: entries(this.balance.available),
-      connect_reserved: [...this.balance.available.keys()].map((currency) => ({
-        amount: 0,
-        currency,
-      })),
-      livemode: false,
-      pending: entries(this.balance.pending),
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Parameter helpers
-// ---------------------------------------------------------------------------
-
-function newestFirst(
-  a: { readonly created: number; readonly id: string },
-  b: { readonly created: number; readonly id: string },
-): number {
-  return b.created - a.created || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-}
-
-function objectName(url: string): string {
-  const resource = url.split("/").at(-1) ?? "object";
-  return resource.endsWith("s") ? resource.slice(0, -1) : resource;
-}
-
-function stringParam(params: FormObject, name: string): string | undefined {
-  const value = params[name];
-  if (value === undefined) return undefined;
-  if (typeof value !== "string")
-    throw invalid(`Invalid string: ${name}`, { param: name, saved: false });
-  return value;
-}
-
-function intParam(
-  params: FormObject,
-  name: string,
-  bounds: { readonly min?: number; readonly max?: number } = {},
-): number | undefined {
-  const value = params[name];
-  if (value === undefined) return undefined;
-  if (typeof value !== "string" || !/^-?\d+$/.test(value)) {
-    throw invalid(`Invalid integer: ${typeof value === "string" ? value : "[object]"}`, {
-      code: "parameter_invalid_integer",
-      param: name,
-      saved: false,
-    });
-  }
-  const number = Number(value);
-  if (
-    (bounds.min !== undefined && number < bounds.min) ||
-    (bounds.max !== undefined && number > bounds.max)
-  ) {
-    const range =
-      bounds.max === undefined
-        ? `greater than or equal to ${bounds.min}`
-        : `between ${bounds.min ?? 0} and ${bounds.max}`;
-    throw invalid(`This value must be ${range}.`, {
-      code: "parameter_invalid_integer",
-      param: name,
-      saved: false,
-    });
-  }
-  return number;
-}
-
-function boolParam(params: FormObject, name: string): boolean | undefined {
-  const value = params[name];
-  if (value === undefined) return undefined;
-  if (value === "true") return true;
-  if (value === "false") return false;
-  throw invalid(`Invalid boolean: ${typeof value === "string" ? value : "[object]"}`, {
-    param: name,
-    saved: false,
-  });
-}
-
-function enumParam<const T extends readonly string[]>(
-  params: FormObject,
-  name: string,
-  values: T,
-): T[number] | undefined {
-  const value = stringParam(params, name);
-  if (value === undefined) return undefined;
-  if (!values.includes(value)) {
-    const list =
-      values.length > 1 ? `${values.slice(0, -1).join(", ")}, or ${values.at(-1)}` : values[0];
-    throw invalid(`Invalid ${name}: must be one of ${list}`, { param: name, saved: false });
-  }
-  return value;
-}
-
-function metadataParam(params: FormObject): Record<string, string> {
-  const value = params.metadata;
-  if (value === undefined || value === "") return {};
-  if (typeof value === "string" || Array.isArray(value)) {
-    throw invalid("Invalid object", { param: "metadata", saved: false });
-  }
-  const out: Record<string, string> = {};
-  const entries = Object.entries(value);
-  if (entries.length > 50)
-    throw invalid("You can specify up to 50 metadata keys.", { param: "metadata", saved: false });
-  for (const [key, entry] of entries) {
-    if (typeof entry !== "string")
-      throw invalid("Invalid object", { param: `metadata[${key}]`, saved: false });
-    if (key.length > 40)
-      throw invalid("Metadata keys can be up to 40 characters long.", {
-        param: `metadata[${key}]`,
-        saved: false,
-      });
-    if (entry.length > 500)
-      throw invalid("Metadata values can be up to 500 characters long.", {
-        param: `metadata[${key}]`,
-        saved: false,
-      });
-    out[key] = entry;
-  }
-  return out;
-}
-
-/** `created=123` or `created[gte]=…&created[lt]=…` as a predicate. */
-function rangeParam(params: FormObject, name: string): (value: number) => boolean {
-  const value = params[name];
-  if (value === undefined) return () => true;
-  const asInt = (raw: FormValue | undefined, param: string): number | undefined => {
-    if (raw === undefined) return undefined;
-    if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
-      throw invalid(`Invalid integer: ${typeof raw === "string" ? raw : "[object]"}`, {
-        code: "parameter_invalid_integer",
-        param,
-        saved: false,
-      });
-    }
-    return Number(raw);
-  };
-  if (typeof value === "string") {
-    const exact = asInt(value, name);
-    return (candidate) => candidate === exact;
-  }
-  if (Array.isArray(value)) throw invalid("Invalid hash", { param: name, saved: false });
-  for (const key of Object.keys(value)) {
-    if (!["gt", "gte", "lt", "lte"].includes(key)) {
-      throw invalid(`Received unknown parameter: ${name}[${key}]`, {
-        code: "parameter_unknown",
-        param: `${name}[${key}]`,
-        saved: false,
-      });
-    }
-  }
-  const gt = asInt(value.gt, `${name}[gt]`);
-  const gte = asInt(value.gte, `${name}[gte]`);
-  const lt = asInt(value.lt, `${name}[lt]`);
-  const lte = asInt(value.lte, `${name}[lte]`);
-  return (candidate) =>
-    (gt === undefined || candidate > gt) &&
-    (gte === undefined || candidate >= gte) &&
-    (lt === undefined || candidate < lt) &&
-    (lte === undefined || candidate <= lte);
-}
-
-function expandParam(params: FormObject): string[] {
-  const value = params.expand;
-  if (value === undefined) return [];
-  if (typeof value === "string") return [value];
-  if (!Array.isArray(value)) throw invalid("Invalid array", { param: "expand", saved: false });
-  return value.map((entry) => {
-    if (typeof entry !== "string")
-      throw invalid("Invalid array", { param: "expand", saved: false });
-    return entry;
-  });
-}
-
-function subscriptionStatusMatches(
-  status: Subscription["status"],
-  filter: (typeof SUBSCRIPTION_STATUSES)[number] | undefined,
-): boolean {
-  if (filter === undefined) return status !== "canceled";
-  if (filter === "all") return true;
-  if (filter === "ended") return status === "canceled";
-  return status === filter;
-}
-
-function money(amount: number, currency: string): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(amount / 100);
 }
