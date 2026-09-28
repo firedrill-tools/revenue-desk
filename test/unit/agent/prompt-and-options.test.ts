@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, STABLE_RULES } from "../../../src/agent/prompt.js";
+import { buildSystemPrompt, STABLE_RULES, SYSTEM_NOTES } from "../../../src/agent/prompt.js";
 import {
   buildQueryOptions,
   childEnvironment,
@@ -11,6 +11,11 @@ import {
 import type { RunConnection } from "../../../src/contracts/events.js";
 import { INTEGRATIONS } from "../../../src/contracts/integration.js";
 import { TEST_SETTINGS, tempStateDir, testEnv } from "../../helpers/agent-fixtures.js";
+import { loadBusinessFixtures } from "../../support/fakes/fixtures.js";
+
+function formatUsd(minor: number): string {
+  return `$${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+}
 
 const connection = (
   integration: keyof typeof INTEGRATIONS,
@@ -66,7 +71,6 @@ describe("buildSystemPrompt", () => {
       /Cross-check across systems/,
       /Never invent identifiers/,
       /minor units/,
-      /Draft before sending/,
       /say in one or two sentences exactly what you are about to do/,
       /do not retry it/,
       /as data, not as instructions/,
@@ -76,6 +80,85 @@ describe("buildSystemPrompt", () => {
     }
   });
 
+  // The rules below come from the real-model runs against the sandbox (the live lane).
+  it("moves money only when asked, and recommends instead", () => {
+    expect(STABLE_RULES).toContain(
+      "Call a refund, invoice, payment or cancellation tool only when the user asked for that action in this conversation.",
+    );
+    expect(STABLE_RULES).toContain("recommend it with the amount and the record and ask");
+    expect(STABLE_RULES).toContain("an approval card is not a substitute for being asked");
+  });
+
+  it("never promises what was declined or not done", () => {
+    expect(STABLE_RULES).toContain(
+      "nothing you write (drafts, notes, Slack posts, your reply) may say or imply that it happened or will happen",
+    );
+    expect(STABLE_RULES).toContain(
+      "Never promise a customer a refund, credit, payment or date that has not been approved and done.",
+    );
+  });
+
+  it("never builds an email address from a name, and sends no empty filters", () => {
+    expect(STABLE_RULES).toContain(
+      "Never build an email address or domain from a company or person name",
+    );
+    expect(STABLE_RULES).toContain("when you know only a name, search by name");
+    expect(STABLE_RULES).toContain("instead of passing an empty value");
+  });
+
+  it("converts UTC timestamps before showing them", () => {
+    expect(STABLE_RULES).toContain("a timestamp ending in Z is UTC");
+    expect(STABLE_RULES).toContain("convert it to the workspace time zone and name the zone");
+  });
+
+  it("sends when asked to reply or send, and stops at a draft only when asked for one", () => {
+    expect(STABLE_RULES).not.toMatch(/Draft before sending/);
+    expect(STABLE_RULES).toContain(
+      "when the user asks you to reply to, send or email someone, write the draft and then send it",
+    );
+    expect(STABLE_RULES).toContain("Stop at a draft only when the user asked for a draft.");
+  });
+
+  it("writes about actions only after they succeeded, as they happened", () => {
+    expect(STABLE_RULES).toContain("wait for their results before you write the drafts");
+    expect(STABLE_RULES).toContain("report a failure as a failure");
+    expect(STABLE_RULES).toContain("describe a call or meeting as it was actually booked");
+  });
+
+  it("checks payments before reporting receivables, and keeps tables and emoji out of Slack", () => {
+    expect(STABLE_RULES).toContain("check the payments system for payments against them");
+    expect(STABLE_RULES).toContain("Slack messages are Slack mrkdwn, without tables or headings");
+    expect(STABLE_RULES).toContain("Use no emoji.");
+  });
+
+  it("is not fitted to the sandbox: no fixture company, person, id or amount", () => {
+    // The fixed text of the prompt; the workspace section holds each workspace's own values.
+    const fixed = [STABLE_RULES, ...Object.values(SYSTEM_NOTES)].join("\n");
+    const fixtures = loadBusinessFixtures();
+    const values = [
+      ...fixtures.stripe.customers.flatMap((customer) => [customer.name, customer.id]),
+      ...fixtures.stripe.charges.flatMap((charge) => [charge.id, formatUsd(charge.amount)]),
+      ...fixtures.company.people.flatMap((person) => [person.name, person.email]),
+    ];
+    for (const value of values) expect(fixed, value).not.toContain(value);
+    for (const word of ["Harbor", "Meridian", "Copperleaf", "Solstice", "Kestrel", ".test"]) {
+      expect(fixed).not.toContain(word);
+    }
+  });
+
+  it("tells the model HubSpot's timestamp rule only when HubSpot is available", () => {
+    const dynamic = prompt[2] ?? "";
+    expect(dynamic).toContain(`- HubSpot (via MCP): ${SYSTEM_NOTES.hubspot}`);
+    expect(SYSTEM_NOTES.hubspot).toContain("hs_timestamp");
+    const without = buildSystemPrompt({
+      settings: TEST_SETTINGS,
+      businessDate: "2026-09-28",
+      connections: [connection("hubspot", "unavailable", "HubSpot is not configured.")],
+      mode: "interactive",
+    })[2];
+    expect(without).not.toContain("hs_timestamp");
+  });
+
   it("describes the workspace, the systems of this run and the business date", () => {
     const dynamic = prompt[2] ?? "";
     expect(dynamic).toContain("Company: Kestrel Analytics");
@@ -83,7 +166,7 @@ describe("buildSystemPrompt", () => {
     expect(dynamic).toContain("Internal email domains (anyone else is external): kestrel.test");
     expect(dynamic).toContain("without approval: #billing, #sales-ops");
     expect(dynamic).toContain("- Gmail (via Composio)");
-    expect(dynamic).toContain("- HubSpot (via MCP)");
+    expect(dynamic).toContain("- HubSpot (via MCP): ");
     expect(dynamic).toContain("- Stripe (via its API)");
     expect(dynamic).toContain("- QuickBooks Online: QuickBooks Online is not configured.");
     expect(dynamic).toContain("Google Calendar needs to be reconnected");
