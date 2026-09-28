@@ -274,6 +274,34 @@ describe("ComposioSessionManager", () => {
     const ws = fakeClient(() => fakeSession("s", { mcp: { type: "ws" as never } }));
     await expect(manager(ws.client).mcpEndpoint()).rejects.toMatchObject({ code: "upstream" });
   });
+
+  it("accepts a plain-http session endpoint only on loopback behind a loopback base URL", async () => {
+    const loopbackMcp = "http://127.0.0.1:4450/tool_router/trs_fake/mcp";
+    const withBase = (baseURL: string | undefined, url: string) => {
+      const { client } = fakeClient(() => fakeSession("s", { mcp: { url } }));
+      return new ComposioSessionManager({
+        apiKey: API_KEY,
+        userId: USER_ID,
+        client,
+        ...(baseURL === undefined ? {} : { baseURL }),
+      }).mcpEndpoint();
+    };
+    await expect(withBase("http://127.0.0.1:4450", loopbackMcp)).resolves.toMatchObject({
+      url: loopbackMcp,
+    });
+    await expect(withBase("http://localhost:4450/api", loopbackMcp)).resolves.toMatchObject({
+      type: "http",
+    });
+    // A loopback base URL does not allow plain http to another host.
+    await expect(
+      withBase("http://127.0.0.1:4450", "http://backend.composio.test/mcp"),
+    ).rejects.toMatchObject({ code: "destination" });
+    // The production base URL never allows plain http, even to loopback.
+    await expect(withBase("https://backend.composio.dev", loopbackMcp)).rejects.toMatchObject({
+      code: "destination",
+    });
+    await expect(withBase(undefined, loopbackMcp)).rejects.toMatchObject({ code: "destination" });
+  });
 });
 
 describe("connection status", () => {
