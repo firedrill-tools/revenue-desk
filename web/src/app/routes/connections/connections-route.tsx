@@ -108,19 +108,18 @@ function Actions({ connection, actions }: { connection: ConnectionView; actions:
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>
-            {/* A disabled button gets no pointer events; its wrapper carries the tooltip. */}
-            <span tabIndex={0} className="inline-flex rounded-md">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled
-                aria-label={`Check ${connection.label}`}
-                className="pointer-events-none"
-              >
-                <RefreshCwIcon />
-                Check
-              </Button>
-            </span>
+            {/* aria-disabled, not disabled: it stays focusable so its tooltip says why. */}
+            <Button
+              size="sm"
+              variant="outline"
+              aria-disabled="true"
+              aria-label={`Check ${connection.label}: configure it first`}
+              className="cursor-not-allowed opacity-50 hover:bg-transparent"
+              onClick={(event) => event.preventDefault()}
+            >
+              <RefreshCwIcon />
+              Check
+            </Button>
           </TooltipTrigger>
           <TooltipContent>Configure it first</TooltipContent>
         </Tooltip>
