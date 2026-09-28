@@ -58,25 +58,45 @@ export function toToolFailure(error: unknown, provider: string | null = null): T
   };
 }
 
+/** How a provider's refusal of its credential is judged and explained. */
+export type CredentialRules = {
+  /** The failure says the credential expired. */
+  readonly expired?: (failure: ToolFailure) => boolean;
+  /** The failure says the credential was refused. Default: HTTP 401 or 403. */
+  readonly rejected?: (failure: ToolFailure) => boolean;
+  /** The configuration variable that holds it, e.g. "QBO_ACCESS_TOKEN". */
+  readonly variable?: string;
+  /** What it is, in words: "the access token (it expires hourly)". */
+  readonly credential?: string;
+};
+
+/** The provider's own words, kept as a second line under the plain sentence. */
+function providerLine(label: string, failure: ToolFailure): string {
+  return `\n${label} said: ${failure.message}`;
+}
+
 /**
  * A failed read-only check as a ProbeResult: rejected credentials make the
  * integration unavailable (needs_auth, or expired when the provider says so);
- * anything else is a transient error.
+ * anything else is a transient error. The detail's first line is a plain
+ * sentence with the next step; the provider's own text follows on a second
+ * line (the Connections screen shows it muted).
  */
 export function probeFailure(
   label: string,
   error: unknown,
-  rules: {
-    readonly expired?: (failure: ToolFailure) => boolean;
-    /** Default: HTTP 401 or 403. */
-    readonly rejected?: (failure: ToolFailure) => boolean;
-  } = {},
+  rules: CredentialRules = {},
 ): ProbeResult {
   const failure = toToolFailure(error);
+  const credential = rules.credential ?? "the configured credentials";
+  const fix =
+    rules.variable === undefined
+      ? "Update them in your configuration file and restart Revenue Desk."
+      : `Put a new ${rules.variable} in your configuration file and restart Revenue Desk.`;
   if (rules.expired?.(failure) === true) {
     return {
       state: "expired",
-      detail: `${label} credentials have expired: ${failure.message}`,
+      detail: `${label} rejected ${credential}. ${fix}${providerLine(label, failure)}`,
       accountHint: null,
     };
   }
@@ -84,9 +104,37 @@ export function probeFailure(
   if (rejected(failure)) {
     return {
       state: "needs_auth",
-      detail: `${label} rejected the configured credentials: ${failure.message}`,
+      detail: `${label} rejected ${credential}. ${fix}${providerLine(label, failure)}`,
       accountHint: null,
     };
   }
-  return { state: "error", detail: `${label} check failed: ${failure.message}`, accountHint: null };
+  const status = failure.status === null ? "" : ` (HTTP ${failure.status})`;
+  return {
+    state: "error",
+    detail: `${label} did not answer the check${status}. Try Check again later.${providerLine(label, failure)}`,
+    accountHint: null,
+  };
+}
+
+/**
+ * What a failed tool call says about its connection: the provider refused
+ * the credential itself (expired or rejected, by `rules`), so the
+ * connection is recorded as a check would record it and the next run leaves
+ * the integration out. Any other failure (a declined card, a missing record,
+ * a 500) says nothing about the connection: null.
+ */
+export function credentialFailure(
+  label: string,
+  failure: ToolFailure,
+  rules: CredentialRules,
+): ProbeResult | null {
+  const result = probeFailure(
+    label,
+    new ApiToolError(failure.provider ?? label, failure.message, {
+      ...(failure.status === null ? {} : { status: failure.status }),
+      ...(failure.code === null ? {} : { code: failure.code }),
+    }),
+    rules,
+  );
+  return result.state === "error" ? null : result;
 }

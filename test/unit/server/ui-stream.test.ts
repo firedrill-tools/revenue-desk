@@ -10,12 +10,14 @@ import {
 } from "ai";
 import { describe, expect, it } from "vitest";
 import type { ChatUIMessage } from "../../../src/contracts/api.js";
-import type { AgentEvent } from "../../../src/contracts/events.js";
+import type { AgentEvent, RunConnection } from "../../../src/contracts/events.js";
+import { INTEGRATIONS } from "../../../src/contracts/integration.js";
 import {
   automaticApprovalId,
   type ChatUIChunk,
   INTERRUPTED_TOOL_TEXT,
   isTransientChunk,
+  noticeFor,
   UIStreamMapper,
   UNDECIDED_APPROVAL_TEXT,
 } from "../../../src/server/ui-stream.js";
@@ -203,7 +205,8 @@ describe("UIStreamMapper: the approved refund (S1 sequence)", () => {
           level: "info",
           code: "connection_unavailable",
           integration: "slack",
-          message: "Not configured. Set SLACK_BOT_TOKEN.",
+          // The notice names its system.
+          message: "Slack is not configured: set SLACK_BOT_TOKEN. Its tools are not offered.",
         },
       },
       {
@@ -619,6 +622,72 @@ describe("UIStreamMapper: ordering guards", () => {
     expect(chunks.filter(isTransientChunk).map((chunk) => chunk.type)).toEqual([
       "data-status",
       "data-progress",
+    ]);
+  });
+});
+
+describe("connection notices", () => {
+  const connection = (
+    integration: RunConnection["integration"],
+    state: RunConnection["state"],
+    detail: string | null,
+  ): RunConnection => ({
+    integration,
+    kind: INTEGRATIONS[integration].kind,
+    profile: INTEGRATIONS[integration].profile,
+    availability: "unavailable",
+    state,
+    detail,
+    endpointLabel: null,
+  });
+
+  it("name their system, so Gmail's and Calendar's read differently", () => {
+    const missing = "Not configured. Set COMPOSIO_API_KEY and COMPOSIO_USER_ID.";
+    expect(noticeFor(connection("gmail", "not_configured", missing)).message).toBe(
+      "Gmail is not configured: set COMPOSIO_API_KEY and COMPOSIO_USER_ID. Its tools are not offered.",
+    );
+    expect(noticeFor(connection("google_calendar", "not_configured", missing)).message).toBe(
+      "Google Calendar is not configured: set COMPOSIO_API_KEY and COMPOSIO_USER_ID. Its tools are not offered.",
+    );
+    // A check's detail already naming the system is kept; its provider line is not.
+    expect(
+      noticeFor(
+        connection(
+          "quickbooks",
+          "expired",
+          "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.\nQuickBooks said: 401",
+        ),
+      ).message,
+    ).toBe(
+      "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.",
+    );
+    expect(noticeFor(connection("hubspot", "error", "could not connect")).message).toBe(
+      "HubSpot: could not connect",
+    );
+    expect(noticeFor(connection("slack", "unknown", null)).message).toBe(
+      "Slack is unavailable for this run.",
+    );
+  });
+
+  it("become one line when three or more systems are unavailable", () => {
+    const ids = ["gmail", "google_calendar", "hubspot", "stripe", "quickbooks", "slack"] as const;
+    const chunks = mapper().map({
+      ...(RUN_STARTED as Extract<AgentEvent, { type: "run.started" }>),
+      connections: ids.map((id) => connection(id, "not_configured", "Not configured. Set X.")),
+    });
+    const notices = chunks.filter((chunk) => chunk.type === "data-notice");
+    expect(notices).toEqual([
+      {
+        type: "data-notice",
+        id: "notice-connections",
+        data: {
+          level: "warning",
+          code: "connection_unavailable",
+          integration: "gmail",
+          message:
+            "Not available for this run: Gmail, Google Calendar, HubSpot, Stripe, QuickBooks Online, Slack. See Connections.",
+        },
+      },
     ]);
   });
 });

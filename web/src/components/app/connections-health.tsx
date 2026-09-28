@@ -5,6 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useConnections } from "@/hooks/use-api";
+import { invalidate } from "@/hooks/use-resource";
+import { api } from "@/lib/api";
+import { staleConnections } from "@/lib/connections";
 import type { ConnectionView } from "@/lib/contracts";
 import { CONNECTION_STATE_LABELS, type Tone } from "@/lib/labels";
 import { KindChip, StatusDot, StatusText } from "./status";
@@ -25,8 +28,22 @@ export function ConnectionsHealth() {
   const tone = error ? "danger" : overallTone(connections);
   const [open, setOpen] = useState(false);
 
+  // Opening the popover re-checks connections whose last check is over 30
+  // minutes old: a token can expire between checks.
+  const onOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next || data === undefined) return;
+    const stale = staleConnections(data, Date.now());
+    if (stale.length === 0) return;
+    void Promise.allSettled(
+      stale.map((integration) =>
+        api.request("POST /api/connections/:integration/check", { params: { integration } }),
+      ),
+    ).then(() => invalidate("connections"));
+  };
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"

@@ -67,12 +67,22 @@ test("every connection state reads plainly: connected, sign-in, not configured, 
   const slack = connection(page, "Slack", phone);
   await expect(slack).toContainText("Not configured");
   await expect(slack.getByText("SLACK_BOT_TOKEN", { exact: true })).toBeVisible();
-  // Nothing to check until the server has a token.
-  await expect(slack.getByRole("button", { name: "Check Slack" })).toBeDisabled();
+  await expect(slack).toContainText(
+    "Add these to the file DOTENV_PATH names, then restart Revenue Desk.",
+  );
+  // Nothing to check until the server has a token; the button says why.
+  await expect(
+    slack.getByRole("button", { name: "Check Slack: configure it first" }),
+  ).toBeDisabled();
 
   const quickbooks = connection(page, "QuickBooks Online", phone);
   await expect(quickbooks).toContainText("Error");
-  await expect(quickbooks).toContainText("QuickBooks check failed");
+  // A plain sentence with the next step, then QuickBooks' own words.
+  await expect(quickbooks).toContainText("QuickBooks did not answer the check");
+  await expect(quickbooks).toContainText("Try Check again later.");
+
+  // The three connection kinds are explained on the page.
+  await expect(page.getByText("Google sign-in held by Composio")).toBeVisible();
 
   // The app bar summarises the same states.
   await expect(page.getByRole("button", { name: "Connections: 3 of 6 connected" })).toBeVisible();

@@ -231,6 +231,26 @@ describe("buildSystemPrompt", () => {
     expect(dynamic).toContain("Mode: interactive");
   });
 
+  it("gives an unavailable system's plain reason, not the provider's words", () => {
+    const dynamic =
+      buildSystemPrompt({
+        settings: TEST_SETTINGS,
+        businessDate: "2026-09-28",
+        connections: [
+          connection(
+            "quickbooks",
+            "unavailable",
+            "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.\nQuickBooks said: message=AuthenticationFailed; errorCode=003200",
+          ),
+        ],
+        mode: "interactive",
+      })[2] ?? "";
+    expect(dynamic).toContain(
+      "- QuickBooks Online: QuickBooks Online rejected the access token (it expires hourly).",
+    );
+    expect(dynamic).not.toContain("AuthenticationFailed");
+  });
+
   it("never names a tool", () => {
     const text = prompt.join("\n");
     for (const name of ["mcp__", "GMAIL_", "create_refund", "hubspot-", "list_charges"]) {

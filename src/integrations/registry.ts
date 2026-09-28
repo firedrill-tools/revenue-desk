@@ -23,6 +23,7 @@ import {
   type ResolvedConnection,
   sdkToolName,
   type ToolDescriptor,
+  type ToolFailure,
   type ToolProfile,
 } from "../contracts/integration.js";
 import type { JsonObject } from "../contracts/json.js";
@@ -36,15 +37,19 @@ import { GOOGLE_CALENDAR_PROFILE } from "./google-calendar/profile.js";
 import { createHubSpotIntegration, type HubSpotIntegration } from "./hubspot/definition.js";
 import type { HubSpotProbeDeps } from "./hubspot/probe.js";
 import { HUBSPOT_PROFILE } from "./hubspot/profile.js";
-import { createQuickBooksIntegration } from "./quickbooks/definition.js";
+import {
+  createQuickBooksIntegration,
+  QUICKBOOKS_CREDENTIAL_RULES,
+} from "./quickbooks/definition.js";
 import { QUICKBOOKS_PROFILE } from "./quickbooks/profile.js";
 import type { ApiIntegration } from "./shared/definition.js";
+import { type CredentialRules, credentialFailure } from "./shared/errors.js";
 import type { HttpDeps } from "./shared/http.js";
 import { specOf } from "./shared/profile.js";
 import { listOf, sentence } from "./shared/text.js";
-import { createSlackIntegration } from "./slack/definition.js";
+import { createSlackIntegration, SLACK_CALL_CREDENTIAL_RULES } from "./slack/definition.js";
 import { SLACK_PROFILE } from "./slack/profile.js";
-import { createStripeIntegration } from "./stripe/definition.js";
+import { createStripeIntegration, STRIPE_CALL_CREDENTIAL_RULES } from "./stripe/definition.js";
 import { STRIPE_PROFILE } from "./stripe/profile.js";
 
 // ---------------------------------------------------------------------------
@@ -230,6 +235,36 @@ export function available(set: IntegrationSet, env: AgentEnv): readonly Resolved
 function baseStatus(id: IntegrationId) {
   const info = INTEGRATIONS[id];
   return { integration: id, kind: info.kind, profile: info.profile } as const;
+}
+
+/**
+ * The rules by which a failed call says its integration's credential is
+ * dead (the ones its check uses, narrowed to failures that concern the whole
+ * connection). Composio reports sign-in problems through its own check.
+ */
+const CALL_CREDENTIAL_RULES: { readonly [I in IntegrationId]?: CredentialRules } = {
+  stripe: STRIPE_CALL_CREDENTIAL_RULES,
+  quickbooks: QUICKBOOKS_CREDENTIAL_RULES,
+  slack: SLACK_CALL_CREDENTIAL_RULES,
+  hubspot: {
+    variable: "HUBSPOT_ACCESS_TOKEN",
+    credential: "the private-app token",
+    rejected: (failure) => failure.status === 401,
+  },
+};
+
+/**
+ * What a failed tool call says about its integration's connection: expired
+ * or needs_auth when the provider refused the credential itself, recorded as
+ * a check would record it; null for any other failure.
+ */
+export function connectionFromFailure(
+  integration: IntegrationId,
+  failure: ToolFailure,
+): ProbeResult | null {
+  const rules = CALL_CREDENTIAL_RULES[integration];
+  if (rules === undefined) return null;
+  return credentialFailure(INTEGRATIONS[integration].label, failure, rules);
 }
 
 /** The status known without contacting the system. */

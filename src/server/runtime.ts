@@ -19,6 +19,7 @@ import type { IntegrationDefinition } from "../contracts/integration.js";
 import { databasePath, openDatabase } from "../db/client.js";
 import type { DbExecutor } from "../db/repos/types.js";
 import { seedDatabase } from "../db/seed.js";
+import { connectionFromFailure } from "../integrations/registry.js";
 import { createApprovalGate } from "../policy/approvals.js";
 import { createApp } from "./app.js";
 import { createApprovalStore } from "./approval-store.js";
@@ -86,6 +87,8 @@ export function createApiServices(
     newId,
     ...(deps.maxConcurrentRuns === undefined ? {} : { maxConcurrentRuns: deps.maxConcurrentRuns }),
     ...(deps.stopGraceMs === undefined ? {} : { stopGraceMs: deps.stopGraceMs }),
+    // A call whose provider refused the credential marks the connection as a check would.
+    connectionFromFailure,
   });
   const orphans = new OrphanSweeper({
     db: deps.db,

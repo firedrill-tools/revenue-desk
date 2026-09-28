@@ -424,10 +424,10 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 |---|---|
 | The CLI exits 3 with "ANTHROPIC_API_KEY is not set" | The key is in neither the environment nor the `DOTENV_PATH` file. Check that `DOTENV_PATH` is exported in the shell that runs the command. |
 | "DOTENV_PATH names …, which could not be read" | The path is wrong or the file is not readable by you. A relative path resolves against the current directory. |
-| An integration shows **Not configured** | Connections lists the missing variable names. Set them and restart the server. |
+| An integration shows **Not configured** | Connections lists the missing variable names. Add them to the file `DOTENV_PATH` names and restart the server: configuration is read only at start. |
 | Stripe shows **Invalid** | A live key (`sk_live_`, `rk_live_`) is configured. Use a test key. |
 | Gmail or Google Calendar needs sign-in or has expired | Click **Connect** in Connections, finish the Composio sign-in, then **Check**. Until then its tools are not offered and the agent says so. |
-| QuickBooks calls fail with 401 | The access token expired (after an hour). Set a new `QBO_ACCESS_TOKEN` and restart. A 403 usually means `QBO_REALM_ID` does not match the token's company. |
+| QuickBooks calls fail with 401 | The access token expired (after an hour). The first failing call marks QuickBooks **Expired** in Connections, and later runs leave it out. Set a new `QBO_ACCESS_TOKEN` and restart. A 403 usually means `QBO_REALM_ID` does not match the token's company. |
 | HubSpot is unavailable at the start of a run | The stdio MCP server could not start or rejected the token, or `HUBSPOT_MCP_URL` is unreachable. Check `HUBSPOT_ACCESS_TOKEN`, or the URL and `HUBSPOT_MCP_TOKEN`, then **Check** in Connections. |
 | A run fails with `model_error` | The model id is wrong or unavailable to your key, or the API failed. Revenue Desk never switches models; set `AGENT_MODEL` or `--model`. |
 | A run fails with `max_turns` or `budget_exceeded` | Raise `AGENT_MAX_TURNS` or `AGENT_MAX_BUDGET_USD`, or `--max-turns` and `--max-budget-usd` for one CLI run. |

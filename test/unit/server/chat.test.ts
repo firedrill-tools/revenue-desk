@@ -819,11 +819,18 @@ describe("the agent core's input and its failures", () => {
     const first = await sendTurn(server, conversationId, "Refund it", (approvalId) =>
       decide(server, approvalId, true),
     );
+    // Five systems are unavailable: one notice names them all.
     expect(
-      first.final.parts
-        .filter((part) => part.type === "data-notice")
-        .map((part) => part.data.integration),
-    ).toEqual(["gmail", "google_calendar", "hubspot", "quickbooks", "slack"]);
+      first.final.parts.filter((part) => part.type === "data-notice").map((part) => part.data),
+    ).toEqual([
+      {
+        level: "warning",
+        code: "connection_unavailable",
+        integration: "gmail",
+        message:
+          "Not available for this run: Gmail, Google Calendar, HubSpot, QuickBooks Online, Slack. See Connections.",
+      },
+    ]);
     await activeRunDone(server);
     await sendTurn(server, conversationId, "And the second one?", (approvalId) =>
       decide(server, approvalId, false),

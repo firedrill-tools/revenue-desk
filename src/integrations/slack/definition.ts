@@ -6,7 +6,7 @@ import {
   type SlackConnection,
 } from "../../contracts/integration.js";
 import type { ApiIntegration, ApiIntegrationDeps } from "../shared/definition.js";
-import { probeFailure } from "../shared/errors.js";
+import { type CredentialRules, probeFailure } from "../shared/errors.js";
 import type { HttpDeps } from "../shared/http.js";
 import { str } from "../shared/json.js";
 import { maskIdentifier, sentence } from "../shared/text.js";
@@ -51,7 +51,7 @@ export async function probeSlack(
     };
   } catch (error) {
     return probeFailure("Slack", error, {
-      expired: (failure) => failure.code === "token_expired",
+      ...SLACK_CALL_CREDENTIAL_RULES,
       rejected: (failure) =>
         failure.status === 401 ||
         failure.status === 403 ||
@@ -59,6 +59,18 @@ export async function probeSlack(
     });
   }
 }
+
+/**
+ * A call that says the bot token itself is dead. A missing scope on one
+ * method (reactions, private channels) is not: the other tools still work.
+ */
+export const SLACK_CALL_CREDENTIAL_RULES: CredentialRules = {
+  variable: "SLACK_BOT_TOKEN",
+  credential: "the bot token",
+  expired: (failure) => failure.code === "token_expired",
+  rejected: (failure) =>
+    failure.status === 401 || (failure.code !== null && REJECTED.has(failure.code)),
+};
 
 export function createSlackIntegration(deps: ApiIntegrationDeps = {}): ApiIntegration<"slack"> {
   return {

@@ -6,7 +6,7 @@ import {
   type QuickBooksConnection,
 } from "../../contracts/integration.js";
 import type { ApiIntegration, ApiIntegrationDeps } from "../shared/definition.js";
-import { probeFailure } from "../shared/errors.js";
+import { type CredentialRules, probeFailure } from "../shared/errors.js";
 import type { HttpDeps } from "../shared/http.js";
 import { obj, str } from "../shared/json.js";
 import { maskIdentifier, sentence } from "../shared/text.js";
@@ -50,9 +50,16 @@ export async function probeQuickBooks(
       accountHint: maskIdentifier(connection.api.realmId),
     };
   } catch (error) {
-    return probeFailure("QuickBooks", error, { expired: (failure) => failure.status === 401 });
+    return probeFailure("QuickBooks", error, QUICKBOOKS_CREDENTIAL_RULES);
   }
 }
+
+/** QuickBooks access tokens expire hourly: a 401 is an expired token; a 403, a refused one. */
+export const QUICKBOOKS_CREDENTIAL_RULES: CredentialRules = {
+  variable: "QBO_ACCESS_TOKEN",
+  credential: "the access token (it expires hourly)",
+  expired: (failure) => failure.status === 401,
+};
 
 export function createQuickBooksIntegration(
   deps: ApiIntegrationDeps = {},

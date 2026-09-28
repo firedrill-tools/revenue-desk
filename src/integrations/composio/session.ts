@@ -298,7 +298,7 @@ export function toConnectionStatus(
       state: "needs_auth",
       accountStatus: null,
       accountHint: null,
-      detail: `${label} is not connected`,
+      detail: `${label} is not connected. Click Connect in Connections to sign in.`,
     };
   }
   const accountStatus = account.status.toLowerCase();
@@ -318,7 +318,7 @@ export function toConnectionStatus(
       state: "expired",
       accountStatus,
       accountHint,
-      detail: `${label} sign-in expired; reconnect to continue`,
+      detail: `${label}'s Google sign-in expired. Click Connect in Connections to sign in again.`,
     };
   }
   return {
@@ -326,7 +326,7 @@ export function toConnectionStatus(
     state: "needs_auth",
     accountStatus,
     accountHint,
-    detail: `${label} connection is ${accountStatus}; finish sign-in`,
+    detail: `${label}'s Google sign-in is ${accountStatus}. Click Connect in Connections to finish it.`,
   };
 }
 

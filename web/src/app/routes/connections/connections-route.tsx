@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useConnections } from "@/hooks/use-api";
 import { invalidate } from "@/hooks/use-resource";
 import { api, errorMessage } from "@/lib/api";
+import { connectionDetail, KIND_EXPLANATIONS, staleConnections } from "@/lib/connections";
 import type { ConnectionView, IntegrationId } from "@/lib/contracts";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { CONNECTION_STATE_LABELS } from "@/lib/labels";
@@ -48,16 +49,28 @@ function Missing({ connection }: { connection: ConnectionView }) {
   );
 }
 
+/** The plain sentence, then the provider's own words, muted. */
+function DetailText({ connection, wide = false }: { connection: ConnectionView; wide?: boolean }) {
+  if (!connection.detail || connection.state === "connected") return null;
+  const { summary, provider } = connectionDetail(connection);
+  return (
+    <div className={wide ? "space-y-0.5" : "max-w-[18rem] space-y-0.5"}>
+      <p className="whitespace-normal text-meta text-foreground">{summary}</p>
+      {provider ? (
+        <p className="whitespace-normal break-words font-mono text-[11px] text-muted-foreground">
+          {provider}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function StatusCell({ connection }: { connection: ConnectionView }) {
   const status = CONNECTION_STATE_LABELS[connection.state];
   return (
     <div className="min-w-0 space-y-0.5">
       <StatusText status={status} />
-      {connection.detail && connection.state !== "connected" ? (
-        <p className="max-w-[18rem] whitespace-normal text-meta text-muted-foreground">
-          {connection.detail}
-        </p>
-      ) : null}
+      <DetailText connection={connection} />
     </div>
   );
 }
@@ -81,17 +94,70 @@ function Actions({ connection, actions }: { connection: ConnectionView; actions:
           Connect
         </Button>
       ) : null}
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={checking || !configured}
-        onClick={() => actions.onCheck(connection.integration)}
-        aria-label={`Check ${connection.label}`}
-      >
-        {checking ? <Spinner aria-hidden="true" className="size-3.5" /> : <RefreshCwIcon />}
-        Check
-      </Button>
+      {configured ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={checking}
+          onClick={() => actions.onCheck(connection.integration)}
+          aria-label={`Check ${connection.label}`}
+        >
+          {checking ? <Spinner aria-hidden="true" className="size-3.5" /> : <RefreshCwIcon />}
+          Check
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {/* A disabled button gets no pointer events; its wrapper carries the tooltip. */}
+            <span tabIndex={0} className="inline-flex rounded-md">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled
+                aria-label={`Check ${connection.label}`}
+                className="pointer-events-none"
+              >
+                <RefreshCwIcon />
+                Check
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Configure it first</TooltipContent>
+        </Tooltip>
+      )}
     </div>
+  );
+}
+
+/** The kind chip, with the profile the integration runs as in its tooltip. */
+function KindWithProfile({ connection }: { connection: ConnectionView }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-default">
+          <KindChip kind={connection.kind} />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        Profile <span className="font-mono">{connection.profile}</span>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** One line per connection kind, under the page header. */
+function KindLegend() {
+  return (
+    <dl className="mb-5 grid gap-x-3 gap-y-1.5 text-body-sm sm:grid-cols-[auto_1fr]">
+      {KIND_EXPLANATIONS.map(([kind, text]) => (
+        <div key={kind} className="contents">
+          <dt>
+            <KindChip kind={kind} />
+          </dt>
+          <dd className="text-muted-foreground">{text}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -135,11 +201,8 @@ function ConnectionsTable({
             <TableCell className="py-3 pl-4 align-top">
               <div className="flex items-center gap-2">
                 <span className="font-medium">{connection.label}</span>
-                <KindChip kind={connection.kind} />
+                <KindWithProfile connection={connection} />
               </div>
-              <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-                {connection.profile}
-              </p>
             </TableCell>
             <TableCell className="py-3 align-top">
               <StatusCell connection={connection} />
@@ -180,16 +243,14 @@ function ConnectionsList({
           <div className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-2">
               <span className="font-medium text-body">{connection.label}</span>
-              <KindChip kind={connection.kind} />
+              <KindWithProfile connection={connection} />
             </span>
             <StatusText
               status={CONNECTION_STATE_LABELS[connection.state]}
               className="text-body-sm"
             />
           </div>
-          {connection.detail && connection.state !== "connected" ? (
-            <p className="text-body-sm text-muted-foreground">{connection.detail}</p>
-          ) : null}
+          <DetailText connection={connection} wide />
           {/* The actions sit beside the facts when they fit, so each item is a line shorter. */}
           <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2.5">
             <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-meta">
@@ -346,6 +407,16 @@ export default function ConnectionsRoute() {
     }
   };
 
+  // A check older than 30 minutes (or none) runs again when the page opens:
+  // a token can expire between checks.
+  const staleChecked = useRef(false);
+  useEffect(() => {
+    if (data === undefined || staleChecked.current) return;
+    staleChecked.current = true;
+    for (const integration of staleConnections(data, Date.now()))
+      void checkRef.current(integration);
+  }, [data]);
+
   const actions: RowActions = {
     checking,
     connecting,
@@ -358,7 +429,7 @@ export default function ConnectionsRoute() {
     <Page>
       <PageHeader
         title="Connections"
-        description="How Revenue Desk reaches each system. Checks are read-only; configuration comes from the server's environment."
+        description="How Revenue Desk reaches each system. Checks are read-only; configuration comes from the server's environment, and a changed variable needs a restart."
         actions={
           <>
             {session?.mode === "sandbox" ? <MetaChip>Local sandbox</MetaChip> : null}
@@ -378,6 +449,7 @@ export default function ConnectionsRoute() {
           </>
         }
       />
+      <KindLegend />
       <Panel className="overflow-hidden">
         {loading ? <ListSkeleton /> : null}
         {error ? (

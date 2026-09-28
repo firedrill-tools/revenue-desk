@@ -1,6 +1,7 @@
 // Last known status of each integration (docs/ARCHITECTURE.md §8): written from
 // configuration at boot and from read-only probes. Never holds a secret.
 
+import { eq } from "drizzle-orm";
 import type { EnvVarName } from "../../contracts/env.js";
 import { INTEGRATIONS, type IntegrationId } from "../../contracts/integration.js";
 import { type ConnectionRow, connections } from "../schema.js";
@@ -46,5 +47,27 @@ export function saveConnectionStatus(
   db.insert(connections)
     .values({ integration: status.integration, ...values })
     .onConflictDoUpdate({ target: connections.integration, set: values })
+    .run();
+}
+
+/**
+ * A run's call found the credential dead (expired or refused): the row takes
+ * that state as a check would, so the next run leaves the integration out
+ * and the Connections screen says so. Only an existing row changes.
+ */
+export function recordConnectionFailure(
+  db: DbExecutor,
+  integration: IntegrationId,
+  failure: { readonly state: ConnectionRow["status"]; readonly detail: string },
+  now: IsoTime,
+): void {
+  db.update(connections)
+    .set({
+      status: failure.state,
+      statusDetail: failure.detail,
+      lastCheckedAt: now,
+      updatedAt: now,
+    })
+    .where(eq(connections.integration, integration))
     .run();
 }

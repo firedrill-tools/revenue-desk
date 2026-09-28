@@ -4,7 +4,8 @@
 // assistant message. The sequence is the one spike S1 proved against the
 // v7 reducer (useChat and readUIMessageStream):
 //
-//   run.started            start{messageId, metadata}, a persisted data-notice per unavailable connection
+//   run.started            start{messageId, metadata}, a persisted data-notice per unavailable
+//                          connection (one summary notice for three or more)
 //   status                 transient data-status
 //   step.start/.finish     start-step / finish-step
 //   text.*, reasoning.*    text-* / reasoning-*
@@ -191,8 +192,27 @@ export class UIStreamMapper {
     if (this.#started) return this.#drop("a second run.started");
     this.#metadata = { runId: event.runId, model: event.model, effort: event.effort };
     const chunks = this.#start();
-    for (const connection of event.connections) {
-      if (connection.availability !== "unavailable") continue;
+    const unavailable = event.connections.filter(
+      (connection) => connection.availability === "unavailable",
+    );
+    const [first] = unavailable;
+    if (unavailable.length >= NOTICES_BEFORE_SUMMARY && first !== undefined) {
+      // Many at once (a fresh install): one line instead of a wall of them.
+      chunks.push({
+        type: "data-notice",
+        id: "notice-connections",
+        data: {
+          level: "warning",
+          code: "connection_unavailable",
+          integration: first.integration,
+          message: `Not available for this run: ${unavailable
+            .map((connection) => INTEGRATIONS[connection.integration].label)
+            .join(", ")}. See Connections.`,
+        },
+      });
+      return chunks;
+    }
+    for (const connection of unavailable) {
       chunks.push({
         type: "data-notice",
         id: `notice-${connection.integration}`,
@@ -428,13 +448,35 @@ export class UIStreamMapper {
   }
 }
 
-function noticeFor(connection: RunConnection): NoticeData {
+/** From this many unavailable connections on, a run opens with one summary notice. */
+const NOTICES_BEFORE_SUMMARY = 3;
+
+/**
+ * One unavailable connection as a notice that names its system: "Gmail is
+ * not configured: set COMPOSIO_API_KEY and COMPOSIO_USER_ID. Its tools are
+ * not offered." Only the first line of a stored detail is used (a check's
+ * second line holds the provider's own words).
+ */
+export function noticeFor(connection: RunConnection): NoticeData {
   const label = INTEGRATIONS[connection.integration].label;
+  const detail = connection.detail?.split("\n")[0]?.trim() ?? "";
+  let message: string;
+  if (connection.state === "not_configured") {
+    const missing = /^Not configured\. Set (.+?)\.?$/.exec(detail)?.[1];
+    message =
+      missing === undefined
+        ? `${label} is not configured. Its tools are not offered.`
+        : `${label} is not configured: set ${missing}. Its tools are not offered.`;
+  } else if (detail === "") {
+    message = `${label} is unavailable for this run.`;
+  } else {
+    message = detail.startsWith(label) ? detail : `${label}: ${detail}`;
+  }
   return {
     level: connection.state === "not_configured" ? "info" : "warning",
     code: "connection_unavailable",
     integration: connection.integration,
-    message: connection.detail ?? `${label} is unavailable for this run.`,
+    message,
   };
 }
 

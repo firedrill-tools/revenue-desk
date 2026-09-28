@@ -96,7 +96,8 @@ function systemsSection(connections: readonly RunConnection[]): string {
   if (missing.length > 0) {
     lines.push("Unavailable in this run (their tools are not offered):");
     for (const connection of missing) {
-      const detail = connection.detail ?? connection.state.replace("_", " ");
+      // A check's detail may carry the provider's own words on a second line.
+      const detail = connection.detail?.split("\n")[0] ?? connection.state.replace("_", " ");
       lines.push(`- ${INTEGRATIONS[connection.integration].label}: ${detail}`);
     }
   }

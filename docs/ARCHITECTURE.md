@@ -1181,6 +1181,18 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
   message names the approvals holding the slots. Open for Kiran: whether runs
   parked on an approval should count toward `MAX_CONCURRENT_RUNS`.
 
+- **Connection health follows the runs.** A call whose provider refuses the
+  credential itself (QuickBooks 401, Stripe 401, Slack `invalid_auth` or
+  `token_expired`, HubSpot 401; never one call's 403, a missing scope or a
+  decline) records its connection as expired or needs_auth, as a check would
+  (`connectionFromFailure`, applied by the run recorder for the server and
+  the CLI), so the next run leaves the integration out. The client refreshes
+  connections when a run finishes and re-checks rows older than 30 minutes
+  when Connections or its popover opens. Check details start with a plain
+  sentence and the next step; the provider's own words follow on a second
+  line. Run notices name their system, and three or more unavailable systems
+  give one "Not available for this run" notice with a link to Connections.
+
 **Integration follow-ups (open).**
 
 - The approval card for `GMAIL_SEND_DRAFT` cannot name the recipients (the

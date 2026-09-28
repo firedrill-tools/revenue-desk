@@ -31,7 +31,7 @@ import type {
 import type { DbExecutor } from "../db/repos/types.js";
 import { describeError, type Redact } from "./redaction.js";
 import { RunChannel } from "./run-channel.js";
-import { RunPersistence } from "./run-persistence.js";
+import { RunPersistence, type RunPersistenceOptions } from "./run-persistence.js";
 
 export const DEFAULT_STOP_GRACE_MS = 10_000;
 /** After run.finished, how long the core has to end its event stream. */
@@ -51,6 +51,8 @@ export type RunRegistryOptions = {
   /** After Stop, how long the core has to finish before the server closes the run. */
   readonly stopGraceMs?: number;
   readonly newId?: () => string;
+  /** A failed call's credential problem, recorded on its connection (RunPersistence). */
+  readonly connectionFromFailure?: RunPersistenceOptions["connectionFromFailure"];
 };
 
 export type LaunchRequest = {
@@ -219,6 +221,9 @@ export class RunRegistry {
       now,
       log,
       newId: this.#options.newId ?? randomUUID,
+      ...(this.#options.connectionFromFailure === undefined
+        ? {}
+        : { connectionFromFailure: this.#options.connectionFromFailure }),
     });
 
     const handle = (event: AgentEvent): void => {

@@ -6,7 +6,7 @@ import {
   type StripeConnection,
 } from "../../contracts/integration.js";
 import type { ApiIntegration, ApiIntegrationDeps } from "../shared/definition.js";
-import { probeFailure } from "../shared/errors.js";
+import { type CredentialRules, probeFailure } from "../shared/errors.js";
 import type { HttpDeps } from "../shared/http.js";
 import { bool } from "../shared/json.js";
 import { classifyStripe } from "./classify.js";
@@ -49,9 +49,23 @@ export async function probeStripe(
       accountHint: null,
     };
   } catch (error) {
-    return probeFailure("Stripe", error);
+    return probeFailure("Stripe", error, STRIPE_CREDENTIAL);
   }
 }
+
+const STRIPE_CREDENTIAL: CredentialRules = {
+  variable: "STRIPE_SECRET_KEY",
+  credential: "the API key",
+};
+
+/**
+ * A call that says the key itself was refused: only 401. A 403 on one call
+ * is a restricted key without that permission, not a dead connection.
+ */
+export const STRIPE_CALL_CREDENTIAL_RULES: CredentialRules = {
+  ...STRIPE_CREDENTIAL,
+  rejected: (failure) => failure.status === 401,
+};
 
 export function createStripeIntegration(deps: ApiIntegrationDeps = {}): ApiIntegration<"stripe"> {
   return {

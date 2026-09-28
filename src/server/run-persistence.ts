@@ -21,7 +21,7 @@ import { upsertAssistantMessage } from "../db/repos/messages.js";
 import type { DbExecutor } from "../db/repos/types.js";
 import { ServerMessageReducer } from "./message-reducer.js";
 import { describeError, type Redact } from "./redaction.js";
-import { RunRecorder } from "./run-recorder.js";
+import { RunRecorder, type RunRecorderOptions } from "./run-recorder.js";
 import { type ChatUIChunk, UIStreamMapper } from "./ui-stream.js";
 
 export type RunPersistenceOptions = {
@@ -37,6 +37,8 @@ export type RunPersistenceOptions = {
   /** Operator lines (already redacted): dropped events, a message that could not be stored. */
   readonly log: (line: string) => void;
   readonly newId?: () => string;
+  /** How a failed call's credential problem is recorded on its connection (RunRecorder). */
+  readonly connectionFromFailure?: RunRecorderOptions["connectionFromFailure"];
 };
 
 export class RunPersistence {
@@ -53,6 +55,9 @@ export class RunPersistence {
       redact,
       now,
       newId: options.newId ?? randomUUID,
+      ...(options.connectionFromFailure === undefined
+        ? {}
+        : { connectionFromFailure: options.connectionFromFailure }),
     });
     this.#mapper = new UIStreamMapper({
       messageId: options.assistantMessageId,

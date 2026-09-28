@@ -36,6 +36,7 @@ import type { ConversationRow } from "../db/schema.js";
 import { seedDatabase } from "../db/seed.js";
 import { recordedUsageBaselines, stateDirUsageBaselines } from "../db/usage-baseline.js";
 import {
+  connectionFromFailure,
   connectionSnapshot,
   integrations,
   type KnownConnection,
@@ -199,6 +200,8 @@ function openCliWorkspace(
         now: options.now,
         log: options.log,
         newId: options.newId,
+        // The next run (app or CLI) leaves out an integration whose credential a call found dead.
+        connectionFromFailure,
       });
       return {
         async record(event) {

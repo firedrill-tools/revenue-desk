@@ -114,7 +114,10 @@ describe("ConnectionService over the production integrations", () => {
     const { plans, snapshot } = connections.plans();
     const expected = connectionSnapshot(catalog, env, {
       gmail: { state: "connected", detail: "Gmail connected" },
-      google_calendar: { state: "needs_auth", detail: "Google Calendar is not connected" },
+      google_calendar: {
+        state: "needs_auth",
+        detail: "Google Calendar is not connected. Click Connect in Connections to sign in.",
+      },
     });
     expect(plans).toEqual(expected.plans);
     expect(snapshot).toEqual(expected.connections);

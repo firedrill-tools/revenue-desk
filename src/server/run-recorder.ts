@@ -8,7 +8,9 @@
 
 import type { ConversationStatus } from "../contracts/api.js";
 import type { AgentEvent, AgentEventOf, ToolDecision, ToolMetadata } from "../contracts/events.js";
+import type { IntegrationId, ProbeResult, ToolFailure } from "../contracts/integration.js";
 import { countPendingApprovalsForRun } from "../db/repos/approvals.js";
+import { recordConnectionFailure } from "../db/repos/connections.js";
 import {
   addConversationUsage,
   setConversationSession,
@@ -36,7 +38,19 @@ export type RunRecorderOptions = {
   readonly redact: Redact;
   readonly now: () => Date;
   readonly newId: () => string;
+  /**
+   * What a failed call says about its integration's connection
+   * (connectionFromFailure in src/integrations/registry.ts): an expired or
+   * refused credential is recorded on the connections row, as a check would.
+   */
+  readonly connectionFromFailure?: (
+    integration: IntegrationId,
+    failure: ToolFailure,
+  ) => ProbeResult | null;
 };
+
+/** The longest connection detail stored (as ConnectionService stores a check's). */
+const MAX_CONNECTION_DETAIL = 300;
 
 export class RunRecorder {
   readonly #options: RunRecorderOptions;
@@ -147,6 +161,7 @@ export class RunRecorder {
   #toolOutput(event: AgentEventOf<"tool.output">): void {
     const { db, redact } = this.#options;
     const error = event.error;
+    this.#connectionFailure(event.toolCallId, error);
     markToolCallFinished(db, this.#key(event.toolCallId), {
       output: redactJson(event.output, redact),
       truncated: event.truncated,
@@ -159,6 +174,28 @@ export class RunRecorder {
       durationMs: event.durationMs,
       finishedAt: this.#now(),
     });
+  }
+
+  /** A call whose provider refused the credential marks its connection expired or needs_auth. */
+  #connectionFailure(toolCallId: string, error: ToolFailure | null): void {
+    const judge = this.#options.connectionFromFailure;
+    const integration = this.#metadata.get(toolCallId)?.integration;
+    if (judge === undefined || error === null || integration === undefined) return;
+    const result = judge(integration, error);
+    if (result === null) return;
+    const detail = this.#options.redact(result.detail);
+    recordConnectionFailure(
+      this.#options.db,
+      integration,
+      {
+        state: result.state,
+        detail:
+          detail.length <= MAX_CONNECTION_DETAIL
+            ? detail
+            : `${detail.slice(0, MAX_CONNECTION_DETAIL - 1)}…`,
+      },
+      this.#now(),
+    );
   }
 
   #usage(event: AgentEventOf<"usage">): void {

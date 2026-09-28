@@ -144,7 +144,8 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
   useLayoutEffect(() => {
     progressRef.current = reportProgress;
     finishedRef.current = (message) => {
-      invalidate("conversations", "runs");
+      // A run can find a credential dead (recorded on its connection): the app bar follows.
+      invalidate("conversations", "runs", "connections");
       const runId = message.metadata?.runId;
       if (runId) void refetch(runId);
     };

@@ -83,11 +83,26 @@ export type ThreadContext = {
   readonly onDecide: DecideApproval;
 };
 
+/** A run notice; a connection notice links to Connections, where it can be fixed. */
 function NoticeLine({ notice }: { notice: NoticeData }) {
+  const linked = notice.code === "connection_unavailable";
+  const pointsThere = linked && notice.message.endsWith("See Connections.");
+  const text = pointsThere ? notice.message.slice(0, -"Connections.".length) : notice.message;
   return (
     <p className="flex items-start gap-2 text-body-sm text-muted-foreground">
       <StatusDot tone={notice.level === "warning" ? "warning" : "neutral"} className="mt-[5px]" />
-      {notice.message}
+      <span>
+        {text}
+        {linked ? (
+          <>
+            {pointsThere ? null : " "}
+            <Link href="/connections" className="whitespace-nowrap">
+              Connections
+            </Link>
+            {pointsThere ? "." : null}
+          </>
+        ) : null}
+      </span>
     </p>
   );
 }
