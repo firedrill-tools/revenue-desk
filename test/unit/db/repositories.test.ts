@@ -569,8 +569,7 @@ describe("runs", () => {
     conversation(database, "c1");
     conversation(database, "c2");
     run(database, "r1", "c1", T0);
-    run(database, "r2", "c1", T1);
-    run(database, "r3", "c2", T2);
+    // A conversation runs one run at a time: r1 finished before r2 started.
     finishRun(database.db, "r1", {
       status: "completed",
       finishedAt: T1,
@@ -578,6 +577,8 @@ describe("runs", () => {
       terminalReason: "completed",
       error: null,
     });
+    run(database, "r2", "c1", T1);
+    run(database, "r3", "c2", T2);
     toolCall(database, "r2", "toolu_a", "api");
     toolCall(database, "r2", "toolu_b", "mcp");
     toolCall(database, "r2", "toolu_c", "mcp");
@@ -786,7 +787,8 @@ describe("tool calls", () => {
 
   it("never lets one run's events change another run's call with the same tool_use id", () => {
     const database = setup();
-    run(database, "r2", "c1", T1);
+    conversation(database, "c2");
+    run(database, "r2", "c2", T1);
     toolCall(database, "r1", "toolu_same");
     markToolCallAwaitingApproval(database.db, { runId: "r1", toolUseId: "toolu_same" }, "a1");
     insertToolCall(database.db, {

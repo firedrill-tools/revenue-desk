@@ -577,7 +577,11 @@ already decided), the timeout (deny, `timeout`), or Stop (deny with
     dev server has `cors: false` and serves only `web/`, `src/contracts` and
     `node_modules`.
   - One active run per conversation (409 `run_active`); at most 4 concurrent
-    runs (429 `too_many_runs`).
+    runs (429 `too_many_runs`). The server and the CLI each check for a
+    running run inside the immediate transaction that inserts theirs, and the
+    partial unique index `runs_one_running_per_conversation` (migration
+    `0005`) refuses a second running run whatever the path; the CLI answers
+    such a conflict with exit 2.
 
 ## 8. Database
 

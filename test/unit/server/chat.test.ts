@@ -18,10 +18,11 @@ import type {
   RunDetailView,
 } from "../../../src/contracts/api.js";
 import type { AgentEvent, RunTurn } from "../../../src/contracts/events.js";
+import { DEFAULT_POLICY } from "../../../src/contracts/integration.js";
 import { getApproval } from "../../../src/db/repos/approvals.js";
 import { getConversation } from "../../../src/db/repos/conversations.js";
 import { getMessageRow, listMessages, toChatMessage } from "../../../src/db/repos/messages.js";
-import { getRun } from "../../../src/db/repos/runs.js";
+import { getRun, insertRun, runningRunOf } from "../../../src/db/repos/runs.js";
 import { getToolCallByToolUseId } from "../../../src/db/repos/tool-calls.js";
 import { CORE_ENDED_EARLY_TEXT } from "../../../src/server/run-registry.js";
 import {
@@ -603,6 +604,47 @@ describe("a Stop while a write is executing", () => {
       status: "succeeded",
       idempotencyKey: "idem_1",
     });
+  });
+});
+
+describe("a run the CLI starts at the same moment", () => {
+  it("is seen under the server's write lock: 409, and nothing of this turn is written", async () => {
+    const server = createTestServer();
+    const conversationId = await server.createConversation();
+    const { db } = server.services;
+    const transaction = db.transaction.bind(db);
+    let raced = false;
+    // The CLI (another process) commits its run after the server's first check,
+    // just before the server's own transaction takes the write lock.
+    (db as { transaction: typeof db.transaction }).transaction = ((fn, config) => {
+      if (!raced) {
+        raced = true;
+        insertRun(db, {
+          id: "r_cli",
+          conversationId,
+          source: "cli",
+          mode: "headless",
+          model: "claude-sonnet-5",
+          effort: "medium",
+          userMessageId: null,
+          assistantMessageId: null,
+          policy: DEFAULT_POLICY,
+          connections: [],
+          startedAt: new Date().toISOString(),
+          owner: LIVE_OWNER,
+        });
+      }
+      return transaction(fn, config);
+    }) as typeof db.transaction;
+    const response = await server.request("POST", "/api/chat", {
+      conversationId,
+      message: userMessage("u1", "Refund it"),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "run_active" } });
+    expect(server.services.registry.size).toBe(0);
+    expect(getMessageRow(db, "u1")).toBeUndefined();
+    expect(runningRunOf(db, conversationId)?.id).toBe("r_cli");
   });
 });
 

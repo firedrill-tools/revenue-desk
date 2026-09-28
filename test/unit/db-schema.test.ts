@@ -203,17 +203,20 @@ describe("schema constraints", () => {
     const database = fileDatabase();
     seedConversationAndRun(database);
     const { db } = database;
+    // An earlier run of the same conversation (one run at a time is running).
     db.insert(runs)
       .values({
         id: "r2",
         conversationId: "c1",
         source: "ui",
         mode: "interactive",
+        status: "completed",
         model: "claude-sonnet-5",
         effort: "medium",
         policySnapshot: DEFAULT_POLICY,
         connectionsSnapshot: [],
         startedAt: NOW,
+        finishedAt: NOW,
       })
       .run();
     const call = {

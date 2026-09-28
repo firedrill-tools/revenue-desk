@@ -261,9 +261,10 @@ describe("recoverAfterRestart", () => {
     db.run(
       sql`UPDATE runs SET owner_pid = ${LIVE_CLI.pid}, owner_started_at = ${LIVE_CLI.startedAt} WHERE id = 'r_ui'`,
     );
+    insertConversation(db, { id: "c_done", title: "Done", source: "ui", now: T0 });
     insertRun(db, {
       id: "r_done",
-      conversationId: "c_ui",
+      conversationId: "c_done",
       source: "ui",
       mode: "interactive",
       model: "claude-sonnet-5",
@@ -285,7 +286,7 @@ describe("recoverAfterRestart", () => {
     insertPendingApproval(db, {
       id: "apr_dangling",
       runId: "r_done",
-      conversationId: "c_ui",
+      conversationId: "c_done",
       toolUseId: "toolu_other",
       descriptor: refundDescriptor(),
       requestedAt: T0,
@@ -325,26 +326,27 @@ describe("recoverOrphanedRuns", () => {
     expect(getApproval(db, "apr_1")?.status).toBe("pending");
   });
 
-  it("leaves the conversation busy while another of its runs is still going", () => {
+  it("never finds two running runs of one conversation: the database refuses the second", () => {
     const { db } = setup();
-    insertRun(db, {
-      id: "r_cli_2",
-      conversationId: "c_cli",
-      source: "cli",
-      mode: "headless",
-      model: "claude-sonnet-5",
-      effort: "medium",
-      userMessageId: null,
-      assistantMessageId: null,
-      policy: DEFAULT_POLICY,
-      connections: [],
-      startedAt: BOOT,
-      owner: OLD_SERVER,
-    });
-    // r_cli_2's owner is gone, r_cli's (the live CLI) is not.
-    expect(recoverOrphanedRuns(db, { now: BOOT, self: SELF, probe: CLI_ALIVE }).runs).toBe(2);
-    expect(getRun(db, "r_cli_2")?.status).toBe("failed");
-    expect(getConversation(db, "c_cli")?.status).toBe("running");
+    expect(() =>
+      insertRun(db, {
+        id: "r_cli_2",
+        conversationId: "c_cli",
+        source: "cli",
+        mode: "headless",
+        model: "claude-sonnet-5",
+        effort: "medium",
+        userMessageId: null,
+        assistantMessageId: null,
+        policy: DEFAULT_POLICY,
+        connections: [],
+        startedAt: BOOT,
+        owner: OLD_SERVER,
+      }),
+    ).toThrow(/UNIQUE constraint failed: runs\.conversation_id/);
+    // Once the first has ended, the conversation can run again.
+    expect(recoverOrphanedRuns(db, { now: BOOT, self: SELF, probe: NOTHING_ALIVE }).runs).toBe(2);
+    expect(getConversation(db, "c_cli")?.status).toBe("error");
   });
 });
 

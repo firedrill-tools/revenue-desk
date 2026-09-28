@@ -10,6 +10,7 @@ import {
   insertRun,
   recordedSessionUsage,
   recordRunUsage,
+  runningRunOf,
   setRunSession,
 } from "../../../src/db/repos/runs.js";
 import { seedDatabase } from "../../../src/db/seed.js";
@@ -40,6 +41,17 @@ function seeded(stateDir = tempStateDir()) {
   seedDatabase(db, T0);
   insertConversation(db, { id: "c1", title: "", source: "ui", now: T0 });
   const run = (id: string, session: string | null, spent: number | null) => {
+    // A conversation runs one run at a time: the previous one has ended.
+    const previous = runningRunOf(db, "c1");
+    if (previous !== undefined) {
+      finishRun(db, previous.id, {
+        status: "completed",
+        finishedAt: T0,
+        stopReason: null,
+        terminalReason: "completed",
+        error: null,
+      });
+    }
     insertRun(db, {
       id,
       conversationId: "c1",

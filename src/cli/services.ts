@@ -44,6 +44,7 @@ import {
 } from "../integrations/registry.js";
 import { titleFromMessage } from "../server/conversation-title.js";
 import { RunPersistence } from "../server/run-persistence.js";
+import { ActiveRunError, isRunningRunConflict } from "./errors.js";
 import type { AskServices, CliWorkspace, ConversationRecord, RunRecorder } from "./ports.js";
 import { packageVersion } from "./version.js";
 
@@ -147,44 +148,52 @@ function openCliWorkspace(
       const assistantMessageId = options.newId();
       const startedAt = options.now().toISOString();
       if (runningRunOf(db, input.conversationId) !== undefined) recover(input.conversationId);
-      db.transaction(
-        (tx) => {
-          if (runningRunOf(tx, input.conversationId) !== undefined) {
-            throw new Error(`Conversation ${input.conversationId} already has an active run.`);
-          }
-          const userMessageId = options.newId();
-          insertRun(tx, {
-            id: input.runId,
-            conversationId: input.conversationId,
-            source: "cli",
-            mode: "headless",
-            model: input.model.model,
-            effort: input.model.effort,
-            userMessageId,
-            assistantMessageId,
-            policy: input.policy,
-            connections: connectionSnapshot(integrations(), input.env, knownConnections(tx))
-              .connections,
-            startedAt,
-            owner: currentRunOwner(),
-          });
-          insertUserMessage(tx, {
-            id: userMessageId,
-            conversationId: input.conversationId,
-            runId: input.runId,
-            parts: [{ type: "text", text: input.prompt }],
-            now: startedAt,
-          });
-          nameConversationIfBlank(
-            tx,
-            input.conversationId,
-            titleFromMessage(input.prompt),
-            startedAt,
-          );
-          setConversationStatus(tx, input.conversationId, "running", startedAt);
-        },
-        { behavior: "immediate" },
-      );
+      const active = () =>
+        new ActiveRunError(
+          `Conversation ${input.conversationId} already has an active run; wait for it to finish or stop it.`,
+        );
+      try {
+        db.transaction(
+          (tx) => {
+            if (runningRunOf(tx, input.conversationId) !== undefined) throw active();
+            const userMessageId = options.newId();
+            insertRun(tx, {
+              id: input.runId,
+              conversationId: input.conversationId,
+              source: "cli",
+              mode: "headless",
+              model: input.model.model,
+              effort: input.model.effort,
+              userMessageId,
+              assistantMessageId,
+              policy: input.policy,
+              connections: connectionSnapshot(integrations(), input.env, knownConnections(tx))
+                .connections,
+              startedAt,
+              owner: currentRunOwner(),
+            });
+            insertUserMessage(tx, {
+              id: userMessageId,
+              conversationId: input.conversationId,
+              runId: input.runId,
+              parts: [{ type: "text", text: input.prompt }],
+              now: startedAt,
+            });
+            nameConversationIfBlank(
+              tx,
+              input.conversationId,
+              titleFromMessage(input.prompt),
+              startedAt,
+            );
+            setConversationStatus(tx, input.conversationId, "running", startedAt);
+          },
+          { behavior: "immediate" },
+        );
+      } catch (error) {
+        // The runs table refuses a second running run of a conversation, whoever started it.
+        if (isRunningRunConflict(error)) throw active();
+        throw error;
+      }
 
       const persistence = new RunPersistence({
         db,

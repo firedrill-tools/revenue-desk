@@ -4,9 +4,11 @@
  * src/contracts/events.ts, an in-memory workspace that records every event,
  * and connection plans. Test code only; product code never selects them.
  */
+
 import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { inspect } from "node:util";
+import { ActiveRunError } from "../../../../src/cli/errors.js";
 import type {
   AskServices,
   ConfigResult,
@@ -101,6 +103,8 @@ export type FakeOptions = {
   readonly failLoad?: boolean;
   /** Reject planConnections() with this message. */
   readonly failPlan?: string;
+  /** beginRun finds another process's active run on the conversation. */
+  readonly beginRunConflict?: boolean;
   /** planConnections() waits until its signal aborts. */
   readonly planWaitsForStop?: boolean;
   /** The recorder throws when it receives this event type. */
@@ -528,6 +532,12 @@ export function createFakeServices(options: FakeOptions): FakeServices {
           return record;
         },
         beginRun(input) {
+          if (options.beginRunConflict === true) {
+            // Another process started a run of the conversation first.
+            throw new ActiveRunError(
+              `Conversation ${input.conversationId} already has an active run; wait for it to finish or stop it.`,
+            );
+          }
           inputs.push(input);
           return {
             record(event) {

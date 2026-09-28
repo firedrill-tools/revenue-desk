@@ -283,6 +283,10 @@ export const runs = sqliteTable(
   },
   (t) => [
     index("runs_conversation_idx").on(t.conversationId, t.startedAt),
+    // One active run per conversation, whichever process (server or CLI) starts it.
+    uniqueIndex("runs_one_running_per_conversation")
+      .on(t.conversationId)
+      .where(sql`${t.status} = 'running'`),
     index("runs_status_idx").on(t.status),
     index("runs_started_idx").on(t.startedAt),
     check("runs_source", oneOf("source", DB_ENUMS.source)),

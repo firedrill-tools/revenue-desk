@@ -36,6 +36,13 @@
       "when": 1790632038717,
       "tag": "0004_internal_calendar_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790634937793,
+      "tag": "0005_one_running_run_per_conversation",
+      "breakpoints": true
     }
   ]
 }

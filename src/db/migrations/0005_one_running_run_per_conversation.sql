@@ -1,0 +1,3 @@
+-- A conversation that somehow has two running runs keeps the newest; the others fail as interrupted.
+UPDATE `runs` SET `status` = 'failed', `finished_at` = `started_at`, `error_code` = 'server_restart', `error_message` = 'Another run of this conversation was running at the same time.' WHERE `status` = 'running' AND `id` NOT IN (SELECT `id` FROM `runs` AS `newest` WHERE `newest`.`status` = 'running' AND `newest`.`started_at` = (SELECT MAX(`started_at`) FROM `runs` AS `latest` WHERE `latest`.`conversation_id` = `newest`.`conversation_id` AND `latest`.`status` = 'running'));--> statement-breakpoint
+CREATE UNIQUE INDEX `runs_one_running_per_conversation` ON `runs` (`conversation_id`) WHERE "runs"."status" = 'running';

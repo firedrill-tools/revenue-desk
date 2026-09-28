@@ -33,6 +33,7 @@ import type {
   RunTurnInput,
 } from "../contracts/events.js";
 import { buildEnvironment } from "./environment.js";
+import { isActiveRunError } from "./errors.js";
 import { ProgressPrinter } from "./human-output.js";
 import type { CliIo } from "./io.js";
 import type { AskServices, CliWorkspace, ConversationRecord, RunRecorder } from "./ports.js";
@@ -236,6 +237,8 @@ class AskInvocation {
     try {
       recorder = await workspace.beginRun(input);
     } catch (error) {
+      // Another run of this conversation started first (the app, another CLI): nothing ran.
+      if (isActiveRunError(error)) return this.#usageError(error.message);
       return this.#failBeforeRun("internal", `Could not start the run: ${this.#messageOf(error)}`);
     }
 

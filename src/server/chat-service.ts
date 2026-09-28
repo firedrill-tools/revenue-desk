@@ -1,7 +1,10 @@
 // Starting a chat turn (POST /api/chat, docs/ARCHITECTURE.md §6, §7): one
 // active run per conversation, at most MAX_CONCURRENT_RUNS at once. Checks,
 // rows and registration happen synchronously, so two requests can never both
-// pass the checks.
+// pass the checks. The database check and the inserts share one immediate
+// transaction, so a CLI run that another process commits in between is seen
+// (and the runs table's partial unique index refuses a second running run
+// whatever happens).
 
 import type { AgentEnv } from "../contracts/env.js";
 import {
@@ -45,6 +48,12 @@ export type ChatServiceOptions = {
   readonly newId: () => string;
 };
 
+const RUN_ACTIVE = {
+  ok: false,
+  code: "run_active",
+  message: "This conversation already has a run in progress. Wait for it or stop it.",
+} as const satisfies StartTurnResult;
+
 export class ChatService {
   readonly #options: ChatServiceOptions;
 
@@ -70,11 +79,7 @@ export class ChatService {
       registry.forConversation(conversationId) !== undefined ||
       runningRunOf(db, conversationId)
     ) {
-      return {
-        ok: false,
-        code: "run_active",
-        message: "This conversation already has a run in progress. Wait for it or stop it.",
-      };
+      return RUN_ACTIVE;
     }
     if (registry.size >= registry.maxConcurrentRuns) {
       return {
@@ -102,32 +107,39 @@ export class ChatService {
     const runId = this.#options.newId();
     const assistantMessageId = this.#options.newId();
 
-    db.transaction((tx) => {
-      insertRun(tx, {
-        id: runId,
-        conversationId,
-        source: "ui",
-        mode: "interactive",
-        model: context.model.model,
-        effort: context.model.effort,
-        userMessageId: turn.messageId,
-        assistantMessageId,
-        policy: context.policy,
-        connections: context.connectionSnapshot,
-        startedAt: now,
-        owner: this.#options.orphans.owner,
-      });
-      insertUserMessage(tx, {
-        id: turn.messageId,
-        conversationId,
-        runId,
-        parts: turn.texts.map((text) => ({ type: "text", text })),
-        now,
-      });
-      // A title the client gave (a suggestion's) stays; otherwise the message names the chat.
-      nameConversationIfBlank(tx, conversationId, titleFromMessage(prompt), now);
-      setConversationStatus(tx, conversationId, "running", now);
-    });
+    const started = db.transaction(
+      (tx) => {
+        // Checked again under the write lock: a CLI process may have started a run since.
+        if (runningRunOf(tx, conversationId)) return false;
+        insertRun(tx, {
+          id: runId,
+          conversationId,
+          source: "ui",
+          mode: "interactive",
+          model: context.model.model,
+          effort: context.model.effort,
+          userMessageId: turn.messageId,
+          assistantMessageId,
+          policy: context.policy,
+          connections: context.connectionSnapshot,
+          startedAt: now,
+          owner: this.#options.orphans.owner,
+        });
+        insertUserMessage(tx, {
+          id: turn.messageId,
+          conversationId,
+          runId,
+          parts: turn.texts.map((text) => ({ type: "text", text })),
+          now,
+        });
+        // A title the client gave (a suggestion's) stays; otherwise the message names the chat.
+        nameConversationIfBlank(tx, conversationId, titleFromMessage(prompt), now);
+        setConversationStatus(tx, conversationId, "running", now);
+        return true;
+      },
+      { behavior: "immediate" },
+    );
+    if (!started) return RUN_ACTIVE;
 
     const run = registry.launch({
       runId,

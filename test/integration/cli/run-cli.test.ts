@@ -353,6 +353,14 @@ describe("revenue-desk ask --conversation", () => {
     expect(h.stderr()).toContain("already has an active run");
     expect(h.fake.inputs).toEqual([]);
   });
+
+  it("exits 2, not 1, when another process starts a run of the conversation first", async () => {
+    const h = harness({ beginRunConflict: true });
+    expect(await h.run(["ask", "--json", "--conversation", EXISTING_CONVERSATION.id, "x"])).toBe(2);
+    expect(h.stdout()).toBe("");
+    expect(h.stderr()).toContain("already has an active run");
+    expect(h.stderr()).not.toContain("Could not start the run");
+  });
 });
 
 describe("revenue-desk ask: configuration", () => {
