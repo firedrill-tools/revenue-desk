@@ -128,11 +128,20 @@ CLI conversations and runs appear in the app with source `cli`.
 Composio services on loopback ports, then the server and the app with
 `AGENT_SANDBOX=1` and every integration pointed at the fakes through the
 ordinary base-URL variables. The fakes hold one fictional company on `*.test`
-domains. The model is the scripted test model unless you explicitly choose the
-real model when starting the script (keys then come from `DOTENV_PATH`). The
-app bar and the Connections screen show "Local sandbox" for the whole session,
-and the server refuses to start if any configured endpoint is not loopback.
-Sandbox data never replaces missing configuration in normal mode.
+domains. The model is the scripted test model, which plays the five jobs by
+prompt, unless `ANTHROPIC_API_KEY` is set in the environment of the script
+(it is never read from a file) or you pass `--model real`; `--model scripted`
+forces the scripted one. The app bar and the Connections screen show "Local
+sandbox" for the whole session, and the server refuses to start if any
+configured endpoint is not loopback. Sandbox data never replaces missing
+configuration in normal mode.
+
+Options: `--hubspot stdio|http` (the pinned vendor server over stdio, or the
+fake's HTTP MCP endpoint), `--state-dir <dir>` (keep the database between
+runs; the default is a temporary directory), `--no-web` (API only) and
+`--built`, which runs the production build (`pnpm build` first): the server
+then serves the built app itself on http://127.0.0.1:4320 and Vite is not
+started.
 
 ## Command line
 
@@ -299,11 +308,11 @@ generated migration in `src/db/migrations`.
 
 | Command | What it covers |
 |---|---|
-| `pnpm test` | Vitest unit and integration tests, no network: contracts and schema, configuration, clients, classifiers, policy, redaction, the event-to-stream mapping, database repositories, the CLI, and the real Claude Agent SDK against a scripted Messages API on loopback with contract-faithful local fakes of every integration. |
-| `pnpm test:e2e` | Playwright UI tests of the built app against the fakes and the scripted model, on desktop and phone viewports, with an accessibility check. Run `pnpm build` first, and install Chromium once with `pnpm exec playwright install chromium`. |
-| `pnpm test:live` | Optional live test: real Anthropic and the connected Gmail, read-only. It needs `LIVE_E2E=1` and keys from `DOTENV_PATH`; every non-read class is denied and the budget is $0.50. |
+| `pnpm test` | Vitest unit and integration tests, no network: contracts and schema, configuration, clients, classifiers, policy, redaction, the event-to-stream mapping, database repositories, the CLI, and the real Claude Agent SDK against a scripted Messages API on loopback with contract-faithful local fakes of every integration. The full-stack suite (`test/integration/e2e`) plays the jobs, decisions and failures over the HTTP API of the real server and checks the database rows against what happened in each fake. |
+| `pnpm test:e2e-cli` | The built CLI (`dist/cli/main.js`) as a separate process against the fakes and the scripted model: human and `--json` output, exit codes, SIGTERM, parallel runs with separate state directories. Run `pnpm build` first. |
+| `pnpm test:e2e` | Playwright UI tests of the built app in the sandbox (started by the suite on port 4320, which must be free) in the installed Google Chrome, on desktop and phone viewports, with an accessibility check. Run `pnpm build` first. |
 | `pnpm typecheck`, `pnpm lint` | TypeScript and Biome. |
-| `pnpm verify` | Typecheck, lint, tests and build. |
+| `pnpm verify` | Typecheck, lint, `pnpm test`, the build, then the CLI and UI end-to-end suites. |
 
 Real-SDK tests run the Claude CLI with `ANTHROPIC_BASE_URL` pointing at the
 scripted API and proxies that refuse any non-loopback connection. They fail,
@@ -375,6 +384,6 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | Dates or aging are off by a day | The business date is today in the Settings time zone. Set the time zone, or `AGENT_BUSINESS_DATE` for a fixed date. |
 | "address already in use" on 4320 or 4321 | Another process holds the port. Stop it, or set `PORT` (the Vite proxy expects 4320). |
 | Tests fail with "No native Claude Agent SDK binary" | Optional dependencies were skipped. Run `pnpm install` again without `--no-optional`. |
-| `pnpm test:e2e` cannot find a browser | Run `pnpm exec playwright install chromium`, and `pnpm build` before the suite. |
+| `pnpm test:e2e` cannot find a browser, or port 4320 is in use | The suite uses the installed Google Chrome; stop any Revenue Desk server on 4320 first (it never reuses one), and run `pnpm build` before the suite. |
 
 This repository is private and local-only. It has no licence file yet.

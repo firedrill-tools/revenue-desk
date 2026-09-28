@@ -6,11 +6,12 @@ scope change applied (see the decisions log at the end). Where this document
 and the code disagree, the code is the current state and this document is the
 target; implementation status is tracked in §13, not implied by the text.
 
-Current state: **spikes S1–S4 passed; shared contracts frozen.** The
-repository builds, type-checks, serves `GET /api/health`, a static app shell
-and the S1 spike routes. The contracts in `src/contracts/`, the database
-schema with its first migration and the database client are in place.
-Everything else below is specified, not implemented.
+Current state (2026-09-29): **integrated.** The six workstreams are built and
+wired: `pnpm start` and `pnpm dev` serve the full `/api` and the app, the CLI
+runs against the shared database, and `pnpm verify` (typecheck, lint, unit,
+integration and full-stack tests, build, CLI and UI end-to-end suites) is
+green. §13 has the status and what is still open; the optional live
+read-only E2E has not been built or run.
 
 ## 0. Ground rules
 
@@ -589,12 +590,15 @@ enum column has a CHECK constraint equal to its contract list
 | `conversations` | id, title, source `ui`/`cli`, status (`idle`, `running`, `awaiting_approval`, `error`), sdk_session_id, total_cost_usd, input_tokens, output_tokens, archived_at, created_at, updated_at |
 | `messages` | id (UIMessage id), conversation_id FK cascade, run_id FK set null, role `user`/`assistant`, parts_json (the rendered parts, transient data parts excluded), metadata_json, text (plain, for search), seq (unique per conversation), created_at, updated_at |
 | `runs` | id, conversation_id FK cascade, source, mode, status (CHECK: `running` exactly when finished_at is null), stop_reason, terminal_reason, model, effort, user_message_id, assistant_message_id, num_turns, model_requests, cost_usd, input/output/cache_read/cache_creation tokens, duration_ms, duration_api_ms, error_code, error_message, policy_snapshot json, connections_snapshot json (`RunConnection[]`), started_at, finished_at |
-| `tool_calls` | id, run_id FK cascade, conversation_id FK cascade, tool_use_id UNIQUE, integration, connection_kind, tool_name (as the model saw it), upstream_tool, operation, action_class (all four null only for a rejected unknown tool), title, status (`ToolCallStatus`), decision (`ToolDecision`), input_json (redacted), output_json (compacted), truncated, is_error, error_code, error_message, http_status, idempotency_key, approval_id, started_at, finished_at, duration_ms |
-| `approvals` | id, run_id FK cascade, conversation_id FK cascade, tool_use_id UNIQUE, integration, action_class, operation, consequence, descriptor_json (`ApprovalDescriptor`), status (`pending`, `approved`, `denied`, `expired`, `cancelled`; CHECK: pending exactly when undecided), decided_by (`user`, `timeout`, `stop`, `restart`), reason, requested_at, decided_at, expires_at |
+| `tool_calls` | id, run_id FK cascade, conversation_id FK cascade, tool_use_id (UNIQUE with run_id), integration, connection_kind, tool_name (as the model saw it), upstream_tool, operation, action_class (all four null only for a rejected unknown tool), title, status (`ToolCallStatus`), decision (`ToolDecision`), input_json (redacted), output_json (compacted), truncated, is_error, error_code, error_message, http_status, idempotency_key, approval_id, started_at, finished_at, duration_ms |
+| `approvals` | id, run_id FK cascade, conversation_id FK cascade, tool_use_id (UNIQUE with run_id), integration, action_class, operation, consequence, descriptor_json (`ApprovalDescriptor`), status (`pending`, `approved`, `denied`, `expired`, `cancelled`; CHECK: pending exactly when undecided), decided_by (`user`, `timeout`, `stop`, `restart`), reason, requested_at, decided_at, expires_at |
 
 `approvals.tool_use_id` and `tool_calls.approval_id` are plain references,
 not foreign keys: the gate writes the approval row from `canUseTool` while the
-event consumer may not yet have written the tool-call row.
+event consumer may not yet have written the tool-call row. A tool_use id is
+unique only within its run (migration `0001`), and every tool-call write is
+keyed by run and tool_use id, so one run's events can never change another
+run's rows (a scripted model repeats ids).
 
 `pnpm db:seed` (idempotent, W3) writes only the default workspace settings
 (company name blank, which Settings prompts for) and `DEFAULT_POLICY`. There
@@ -778,10 +782,9 @@ approval card → approve → final answer; deny; Stop; reload mid-approval with
 card still actionable; Connections (configured, not configured, error); a policy
 change affecting the next run; keyboard-only approval. Checks: axe with no
 serious violations, `scrollWidth <= clientWidth` at 390px, dark mode, reduced
-motion, screenshots saved as artifacts (not pixel-gated). Playwright 1.63
-needs Chromium build 1243, which is not installed; W5 either installs it
-(`pnpm exec playwright install chromium`, a download) or uses the installed
-Chrome with `channel: 'chrome'`, and the web server needs `pnpm build` first.
+motion, screenshots saved as artifacts (not pixel-gated). The suite uses the
+installed Chrome (`channel: 'chrome'`) rather than downloading Playwright's
+Chromium, and needs `pnpm build` first.
 
 **Sandbox demo mode (`pnpm dev:sandbox`).** Ships as an explicit, clearly
 labelled demo: `scripts/dev-sandbox.ts` starts the fakes, then the server and
@@ -801,20 +804,27 @@ with access `read`), `AGENT_MAX_BUDGET_USD=0.50`; asserts that only read-class
 tools ran and nothing was sent. Stripe, HubSpot, QuickBooks and Slack live tests
 run only with sandbox credentials from Kiran and are read-only by default.
 
-**`pnpm verify`** currently runs typecheck, lint, unit and integration tests
-and the build; the CLI E2E and Playwright suites join it as they land.
+**Where the suites live.** Full-stack E2E: `test/integration/e2e` (in
+`pnpm test`; the in-process server and a real loopback port, with every run's
+`runs`, `tool_calls` and `approvals` rows read with plain SQL and compared
+with what each fake recorded). CLI E2E: `test/e2e-cli` (`pnpm test:e2e-cli`,
+the built `dist/cli/main.js`). Playwright: `test/e2e-ui` (`pnpm test:e2e`,
+the sandbox on the production build, `scripts/dev-sandbox.ts --built --model
+scripted`, in the installed Chrome; a server already on 4320 is never
+reused). Scripted scenarios and their fake checks: `test/scenarios`.
+
+**`pnpm verify`** runs typecheck, lint, `pnpm test`, the build, then
+`pnpm test:e2e-cli` and `pnpm test:e2e`.
 
 ## 12. Repository layout
 
-Present now: toolchain config, `.env.example`, `src/contracts/*`,
-`src/db/{schema,client,seed}.ts` and `src/db/migrations/`,
-`src/gateway/{types,api-server,mcp-proxy}.ts`,
-`src/integrations/composio/session.ts`, `src/integrations/hubspot/launch.ts`,
-`src/server/{main,app,ui-stream}.ts` (ui-stream holds the S1 spike routes),
-`scripts/surfaces/capture-{composio-direct,hubspot-mcp}.ts`, the web shell
-with the S1 spike page, and `test/{unit,integration,e2e-ui,support,fixtures}`.
-
-Target:
+The layout below is in place. Differences: the approval gate is
+`src/policy/approvals.ts` (the server supplies its SQLite store in
+`src/server/approval-store.ts`); `src/server/run-persistence.ts` is what one
+run writes, shared by the server's run registry and the CLI; the in-process
+CLI tests are in `test/integration/cli` and the full-stack E2E in
+`test/integration/e2e`; test helpers of the core are in `test/helpers`;
+`test/live` does not exist yet.
 
 ```
 revenue-desk/
@@ -854,7 +864,22 @@ revenue-desk/
 | S2: SDK 0.3.283 accepts a hand-built `McpServer` with raw JSON-schema handlers; API and proxy servers | passed (`cd8d940`) |
 | S3: Composio 0.21 `direct_tools` session MCP through the proxy (listing only) | passed (`20ba5c2`) |
 | S4: offline capture of `@hubspot/mcp-server` 0.4.0 and the stdio launch | passed (`c8a52fb`) |
-| Shared contracts, database schema, first migration and client | frozen (this commit) |
+| Shared contracts, database schema, first migration and client | frozen (`b85746c`; `RunDetailView` fixed in `549d6c7`) |
+| W1 config, policy, gateway, agent core (`runTurn`) | done (`d2f68a0`…`5daa5dd`) |
+| W2 six integrations and the registry | done (`d3797c3`…`73569a5`) |
+| W3 repositories, seed, boot recovery, `/api` routes, run registry, stream mapping | done (`50f9f1b`, `be1224b`) |
+| W4 web app: chat, approvals, runs, connections, settings | done (`e5ce069`, `80db8c5`) |
+| W5 fakes, fixtures, scripted J1–J5 and failure scenarios, harness, `pnpm dev:sandbox` | done (`7555ce0`…`ec67453`) |
+| W6 `revenue-desk ask` CLI and README | done (`dc6c6a8`, `46af4ac`) |
+| Integration: server entry point and CLI composition root wired; spike leftovers removed | done (`3462c6c`, `7427bc1`) |
+| Integration fixes: run-scoped tool_use ids, plain reason for stopped calls, rejected known tools keep their integration, MCP connect error cause, composer dimming | done (`95a23ac`, `d2c99e9`, `a283b65`, `e89d965`, `9ea3b02`) |
+| Full-stack E2E (jobs, decisions, failures, resume, HTTP layer) and CLI E2E | done (`e0f07ff`, `7427bc1`) |
+| Playwright UI E2E: empty chat with axe, approve, reload mid-approval then deny, Stop; desktop and phone | done (`8097654`); the Connections, policy-change, keyboard-only, dark-mode and reduced-motion flows of §11 are not written yet |
+| `pnpm verify` green | done |
+| Optional live read-only E2E (`pnpm test:live`) | not built: needs Kiran's go-ahead on the open questions below |
+
+Milestones M1 and M2 are met. M3 needs the live read-only E2E and a round of
+polish (see "Integration follow-ups" in the decisions log).
 
 Workstreams build in parallel against `src/contracts`. Shared files are
 lead-only: `src/contracts/**`, `docs/ARCHITECTURE.md`, `package.json`,
@@ -872,10 +897,8 @@ there (a dependency, a script, a column) asks the lead.
 | W5 test infrastructure | `test/support/**`, `test/fixtures/business`, `test/scenarios`, `test/e2e-ui`, `scripts/dev-sandbox.ts` | §2 tables, §11, `RunTurn` |
 | W6 CLI and README | `src/cli/**`, `test/e2e-cli`, `README.md` | `src/contracts/cli.ts`, `RunTurn`, repositories |
 
-W3 removes `/api/spike/*`, the `/spike/approvals` page and its lazy import
-once `/api/chat` and the chat screen land; W3 and W4 then delete the duplicated
-stream types in `src/server/ui-stream.ts` and `web/src/lib/chat.ts` in favour
-of `src/contracts`.
+The S1 spike routes, the spike page, its Playwright spec and the duplicated
+stream types are gone; the server and the web client share `src/contracts`.
 
 Milestones: M1: core, integrations, database and CLI green on unit,
 integration and CLI E2E. M2: server and UI green on full-stack and Playwright.
@@ -897,8 +920,7 @@ and live read-only E2E has run.
   concurrent `query()` calls silently yields no tools; build per query.
 - **In-memory approvals** are lost on restart (mitigated by boot expiry and the
   approval gate persisting the pending snapshot); CSRF, Origin and Host checks
-  are mandatory even on loopback. The S1 spike routes lack the CSRF cookie and
-  are mounted unconditionally until W3 removes them.
+  are mandatory even on loopback.
 - **HubSpot MCP 0.4.0** is a stale beta (June 2025); legacy private-app
   creation ends 2026-10-26; Service Key compatibility is unverified. It imports
   `zod-to-json-schema` without declaring it, resolving only through pnpm
@@ -1032,6 +1054,94 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
 - Conversation ids are created by the server (`POST /api/conversations`).
 - `src/db/migrations` is generated and excluded from Biome.
 
+**2026-09-29, lead: integration decisions.**
+
+- **Per-run usage of a resumed session.** A resumed session's SDK result
+  reports running totals for the whole session (`total_cost_usd`,
+  `modelUsage`, `duration_api_ms`; `duration_ms` stays per query; verified on
+  SDK 0.3.283), so summing runs would double-count. `runTurn` keeps each
+  session's totals in `<state>/claude/revenue-desk/usage/<sessionId>.json`
+  and reports the difference; without a baseline it reports the run's own
+  stream tokens and a pro-rated cost. Kept inside the core; no contract change.
+- **`run.finished.stopReason`** is the `RunStopReason` (user, timeout,
+  shutdown) when the run's signal stopped the run, otherwise null. It is not
+  the SDK result's `stop_reason`. Stored as `runs.stop_reason` and
+  `RunSummary.stopReason`.
+- **The system prompt** is passed as `{type:'custom', snapshot:false}`, so a
+  resumed conversation gets today's business date and systems list, not the
+  prompt recorded with the session.
+- **SDK 0.3.283 facts.** The model sees a `PreToolUse` denial as
+  `PreToolUse:<tool> hook error: <reason>`. Names that were never offered,
+  and built-in tools, reach neither the hook nor `canUseTool`; the CLI
+  answers "No such tool available" and the call is `rejected`. An API error
+  produces a `<synthetic>` assistant message with `error`, then a result with
+  `is_error`, then `query()` throws. When the budget runs out the SDK can run
+  a tool and stop without its `tool_result`; the gateway observer still
+  emits `tool.output`, so the action log stays complete.
+- **Calls stopped before they ran.** The SDK refuses calls queued behind a
+  pending approval when the run stops, with the Claude CLI's instruction to
+  the model ("The user doesn't want to proceed…"). They are `stopped` with
+  "Not run: the run was stopped before this call ran." instead.
+- **tool_use ids are unique per run** (migration `0001`); every tool-call
+  write is keyed by run and tool_use id (§8). Found when the scripted sandbox
+  model repeated ids in one state directory.
+- **A schema-invalid call to a known tool** keeps its integration, kind,
+  operation and base class in the action log; only an unknown tool has them
+  null (§8).
+- **Action-log details.** `http_status` holds a failure's provider status;
+  a successful API call records null (`ApiCallContext` has no way to report a
+  2xx). `idempotency_key` is recorded for every call (it is derived from the
+  run and the tool_use id) and sent to a provider only by writes.
+- **One persistence path.** `src/server/run-persistence.ts` (recorder,
+  stream mapper and message reducer) is shared by the server's run registry
+  and the CLI, so a CLI run is stored exactly like an app run.
+- **CLI connection plans** come from the configuration and the last checks
+  the app stored in `connections`; the CLI runs no probes. An upstream it
+  cannot reach is reported by the gateway at run time.
+- **Server semantics inside the frozen types (W3), accepted.**
+  `RunSummaryView.approvals.denied` counts denied, expired and cancelled.
+  `PolicyView.source` is `default` when the saved mode equals
+  `DEFAULT_POLICY`, `saved` otherwise, `environment` when `AGENT_POLICY` sets
+  it. `GET /api/chat/:id/stream` answers 204 for an unknown conversation as
+  well as an idle one.
+- **CLI (W6), accepted.** A configuration error, or a stop before the run
+  starts, still prints the `--json` summary, with the ids the invocation
+  reserved; nothing is recorded under them.
+- **Sandbox on the build.** `pnpm dev:sandbox --built` runs
+  `dist/server/main.js`, which serves the built app itself. The Playwright
+  suite starts it with `--model scripted` and never reuses a server on 4320.
+- **Dependencies removed** (the web no longer imports them):
+  `@streamdown/cjk`, `@streamdown/code`, `@streamdown/math`,
+  `@streamdown/mermaid`, tokenlens, motion.
+- **Contract changes during the build:** `549d6c7` (W3) made `RunDetailView`
+  `Omit<RunSummaryView, 'approvals'> & {…}`: the intersection with the
+  summary's approval counts was unsatisfiable. No other contract changed.
+
+**Integration follow-ups (open).**
+
+- The approval card for `GMAIL_SEND_DRAFT` cannot name the recipients (the
+  input has only the draft id) and says "to the recipients saved in it". The
+  core should fill them in from the run's earlier `GMAIL_CREATE_EMAIL_DRAFT`
+  call: "no email to the wrong customer" is a J1 guarantee.
+- A CLI process killed with SIGKILL leaves its run `running`, and the app then
+  refuses that conversation (409). Boot recovery covers `ui` runs only; this
+  needs an ownership marker (for example a pid column) or CLI-side recovery.
+- No SSE heartbeat while an approval waits (up to 15 minutes): fine for
+  browsers and the Vite proxy, not for a proxy with an idle timeout.
+- Upstream MCP connections are opened per run (HubSpot over stdio spawns its
+  server per run); pooling is a later optimisation. Composio sessions are
+  cached for 30 minutes.
+- `ConnectionService` (server) and `connectionSnapshot`/`checkConnection`
+  (registry) apply the same availability rule twice, and Connect builds its
+  own Composio session manager; consolidate.
+- Unconfirmed against real accounts: QuickBooks accepting a 64-character
+  `requestid`, and Stripe's handling of `Idempotency-Key` on DELETE. Stripe
+  refund cards show the workspace currency (single-currency assumption).
+- Assistant text and user prompts are stored and streamed as written; tool
+  outputs and errors are redacted before the model or the stream sees them.
+- Vitest has no `@/` alias or jsdom, so there are no component tests; UI
+  behaviour is covered by the web lib unit tests and the Playwright suite.
+
 ## Open questions (Kiran's)
 
 - Credentials: a Stripe sandbox `sk_test_` key; a HubSpot developer test-account
@@ -1064,8 +1174,10 @@ class merger), class-variance-authority 0.7.1, tw-animate-css 1.4.0, cmdk
 1.1.1. Added by the AI Elements registry items: `@radix-ui/react-use-controllable-state`
 1.2.6, `@streamdown/cjk` 1.0.3, `@streamdown/code` 1.1.1, `@streamdown/math`
 1.0.2, `@streamdown/mermaid` 1.0.2, motion 13.4.4, nanoid 6.0.1, shiki 4.4.3,
-tokenlens 1.3.1, use-stick-to-bottom 1.1.6. (Trimming Streamdown to the code
-plugin removes cjk, math and mermaid in W4.)
+tokenlens 1.3.1, use-stick-to-bottom 1.1.6. On 2026-09-29 the web stopped
+importing the Streamdown plugins, tokenlens and motion, and
+`@streamdown/{cjk,code,math,mermaid}`, tokenlens and motion were removed;
+shiki is used directly through `shiki/core`.
 
 **Dev dependencies:** typescript 7.0.2, tsx 4.23.15, vite 8.3.1,
 `@vitejs/plugin-react` 6.1.1, tailwindcss and `@tailwindcss/vite` 4.3.3,
@@ -1122,8 +1234,21 @@ each marked `revenue-desk patch`:
 - `tool.tsx` (#490, S1): `ToolInput` returns null for undefined input and uses
   `JSON.stringify(...) ?? ''`.
 
-Pending owned patches (W4): `tool.tsx` restyle; `prompt-input.tsx` #439;
-`reasoning.tsx` #496; `message.tsx` Streamdown plugins trimmed to code only.
+Owned patches added by W4 (each marked `revenue-desk patch`): `tool.tsx`
+restyle (#490 kept); `confirmation.tsx` polite live region instead of
+`role="alert"` (#484); `prompt-input.tsx` Enter ignored while streaming
+(#439); `reasoning.tsx` #496 and the "Thought for a moment" fix;
+`message.tsx` and `reasoning.tsx` use only the app's code highlighter;
+`context.tsx` takes the server's `costUsd` instead of tokenlens;
+`shimmer.tsx` is CSS-only; `code-block.tsx` uses `web/src/lib/highlight.ts`
+(one shiki core build, JS regex engine, two themes, seven lazily loaded
+languages). shadcn: the `Sheet` overlay has no blur; every `ui` component
+imports `cn` from `@/lib/utils` (`web/src/lib/cn.ts`, which maps the
+`text-body`, `text-body-sm` and `text-meta` sizes around tailwind-merge), so
+after a future `shadcn add` re-point `import { cn } from "cn"`. Added by the
+lead: `input-group.tsx` dims the group only when its input control is
+disabled (upstream's `has-disabled` also matched the disabled Send button and
+rendered the composer at half opacity).
 
 **Adding more AI Elements:** because `src/` exists (the server), the shadcn CLI
 resolves registry targets to `src/components/ai-elements/`. After each add, move
