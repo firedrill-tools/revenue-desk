@@ -22,12 +22,14 @@
  * the built app on the API port) instead of the sources, and no Vite: run
  * `pnpm build` first.
  */
+
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { EnvVarName } from "../src/contracts/env.js";
 import { JOB_SCENARIOS } from "../test/scenarios/index.js";
 import type { HubSpotMode } from "../test/support/fakes/index.js";
 import { type Harness, REPOSITORY_ROOT, startHarness } from "../test/support/harness.js";
@@ -198,7 +200,12 @@ async function waitForHttp(url: string, child: ChildProcess): Promise<void> {
  */
 export async function startSandbox(
   options: SandboxOptions,
-  runtime: { readonly apiPort?: number; readonly onServerOutput?: (text: string) => void } = {},
+  runtime: {
+    readonly apiPort?: number;
+    readonly onServerOutput?: (text: string) => void;
+    /** Extra server variables, e.g. AGENT_MAX_BUDGET_USD for a live run's per-run cap. */
+    readonly env?: Readonly<Partial<Record<EnvVarName, string>>>;
+  } = {},
 ): Promise<{ readonly harness: Harness; readonly banner: string; stop(): Promise<void> }> {
   const apiPort = runtime.apiPort ?? API_PORT;
   if (!(await portIsFree(apiPort))) {
@@ -220,6 +227,7 @@ export async function startSandbox(
     hubspot: options.hubspot,
     ...(options.model === "real" ? { model: { real: { apiKey } } } : {}),
     ...(options.stateDir === null ? {} : { stateDir: options.stateDir }),
+    ...(runtime.env === undefined ? {} : { env: runtime.env }),
   });
   let vite: ChildProcess | null = null;
   const stopVite = async () => {

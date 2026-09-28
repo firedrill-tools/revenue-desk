@@ -89,8 +89,19 @@ describe("live-e2e options", () => {
         jobs: ["j2", "j4"],
         cli: false,
         budgetUsd: 8,
+        runCapUsd: null,
       },
     });
+    const capped = parseLiveArgs(
+      ["--out", OUTSIDE, "--budget-usd", "3.9", "--run-cap-usd", "0.5"],
+      live,
+    );
+    expect(capped).toMatchObject({ ok: true, options: { budgetUsd: 3.9, runCapUsd: 0.5 } });
+    for (const cap of ["0", "-1", "3", "x"]) {
+      expect(parseLiveArgs(["--out", OUTSIDE, "--run-cap-usd", cap], live), cap).toMatchObject({
+        ok: false,
+      });
+    }
   });
 });
 

@@ -6,6 +6,7 @@
  *
  *   LIVE_E2E=1 node --import tsx scripts/live-e2e.ts --out <dir>
  *       [--key-file <path>] [--jobs j1,j2,…] [--no-cli] [--budget-usd <usd>]
+ *       [--run-cap-usd <usd>]
  *
  * - The model key comes from --key-file (default: the repository's .env,
  *   which git ignores); only ANTHROPIC_API_KEY is read from it, and it goes
@@ -18,7 +19,10 @@
  *   call; deny a wrong charge, a premature promise to a customer, an email
  *   the user asked only to draft, or a payment nobody asked to record.
  * - Spend is kept in <out>/spend.json across invocations; a run that could
- *   take the total past --budget-usd (default 8) is not started.
+ *   take the total past --budget-usd (default 8) is not started. A run may
+ *   cost up to its cap: --run-cap-usd (default: the product's $2 per server
+ *   turn and $1 per CLI run), enforced through AGENT_MAX_BUDGET_USD and
+ *   --max-budget-usd, so a lower cap lets more runs fit a small budget.
  *
  * <out> must be outside the repository. Nothing written there contains a
  * key: the script checks every file it wrote before it exits.
@@ -51,6 +55,8 @@ export interface LiveOptions {
   readonly jobs: readonly string[];
   readonly cli: boolean;
   readonly budgetUsd: number;
+  /** Per-run spend limit for server turns and CLI runs; null keeps the defaults. */
+  readonly runCapUsd: number | null;
 }
 
 export type LiveArgs =
@@ -59,7 +65,7 @@ export type LiveArgs =
 
 export const LIVE_USAGE =
   "Usage: LIVE_E2E=1 node --import tsx scripts/live-e2e.ts --out <dir outside the repository> " +
-  "[--key-file <path>] [--jobs j1,j2,j3,j4,j5] [--no-cli] [--budget-usd <usd>]";
+  "[--key-file <path>] [--jobs j1,j2,j3,j4,j5] [--no-cli] [--budget-usd <usd>] [--run-cap-usd <usd>]";
 
 export function parseLiveArgs(
   argv: readonly string[],
@@ -78,6 +84,7 @@ export function parseLiveArgs(
   let jobs: string[] = LIVE_JOBS.map((job) => job.id);
   let cli = true;
   let budgetUsd = 8;
+  let runCapUsd: number | null = null;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] as string;
     const value = (): string | undefined => {
@@ -106,6 +113,14 @@ export function parseLiveArgs(
       if (!Number.isFinite(budget) || budget <= 0)
         return { ok: false, message: "--budget-usd must be a positive number" };
       budgetUsd = budget;
+    } else if (arg === "--run-cap-usd") {
+      const cap = Number(value());
+      if (!Number.isFinite(cap) || cap <= 0 || cap > SERVER_RUN_CAP_USD)
+        return {
+          ok: false,
+          message: `--run-cap-usd must be a positive number up to ${SERVER_RUN_CAP_USD}`,
+        };
+      runCapUsd = cap;
     } else {
       return { ok: false, message: `Unknown argument: ${arg}` };
     }
@@ -117,7 +132,7 @@ export function parseLiveArgs(
       message: "--out must be outside the repository (transcripts are never committed).",
     };
   }
-  return { ok: true, options: { out, keyFile, jobs, cli, budgetUsd } };
+  return { ok: true, options: { out, keyFile, jobs, cli, budgetUsd, runCapUsd } };
 }
 
 function isInside(parent: string, child: string): boolean {
@@ -798,6 +813,7 @@ async function playTurn(
 function runCli(
   run: CliRun,
   environment: Readonly<Record<string, string>>,
+  capUsd: number,
 ): Promise<{ code: number | null; stdout: string; stderr: string; wallMs: number }> {
   const env: Record<string, string> = { ...environment };
   if (run.withoutQuickBooks) for (const name of QUICKBOOKS_VARS) delete env[name];
@@ -809,7 +825,7 @@ function runCli(
       "ask",
       "--json",
       "--max-budget-usd",
-      String(CLI_RUN_CAP_USD),
+      String(capUsd),
       "--timeout-ms",
       String(TURN_TIMEOUT_MS),
       run.prompt,
@@ -900,10 +916,17 @@ async function main(): Promise<void> {
     return false;
   };
 
+  const serverCap = options.runCapUsd ?? SERVER_RUN_CAP_USD;
+  const cliCap = Math.min(options.runCapUsd ?? CLI_RUN_CAP_USD, CLI_RUN_CAP_USD);
   const serverLog: string[] = [];
   const sandbox = await startSandbox(
     { model: "real", hubspot: "stdio", stateDir: join(runDir, "state"), web: false, built: true },
-    { apiPort: await freePort(), onServerOutput: (chunk) => serverLog.push(chunk) },
+    {
+      apiPort: await freePort(),
+      onServerOutput: (chunk) => serverLog.push(chunk),
+      // The server stops a turn at its cap, so a turn never costs more than it reserved.
+      env: { AGENT_MAX_BUDGET_USD: String(serverCap) },
+    },
   );
   const turns: TurnRecord[] = [];
   const save = (name: string, value: unknown) =>
@@ -920,7 +943,7 @@ async function main(): Promise<void> {
       const jobTurns: TurnRecord[] = [];
       for (const [index, prompt] of job.turns.entries()) {
         const label = job.turns.length === 1 ? job.id : `${job.id}.${index + 1}`;
-        if (!affordable(SERVER_RUN_CAP_USD, label)) break;
+        if (!affordable(serverCap, label)) break;
         const turn = await playTurn(api, conversation.id, job, label, prompt, seen);
         spend(label, turn.detail?.usage?.costUsd ?? 0);
         jobTurns.push(turn);
@@ -932,8 +955,8 @@ async function main(): Promise<void> {
 
     if (options.cli) {
       for (const run of CLI_RUNS) {
-        if (!affordable(CLI_RUN_CAP_USD, run.id)) break;
-        const result = await runCli(run, sandbox.harness.env);
+        if (!affordable(cliCap, run.id)) break;
+        const result = await runCli(run, sandbox.harness.env, cliCap);
         let summary: RunSummary | null = null;
         const failures: string[] = [];
         try {
