@@ -8,18 +8,36 @@ const load = (file: string): unknown => JSON.parse(readFileSync(join(surfaces, f
 interface ToolEntry {
   name: string;
   inputSchema: { type?: string };
+  annotations?: { readOnlyHint?: boolean };
 }
+
+/**
+ * The tools of the hubspot-mcp-0.4 profile (docs/ARCHITECTURE.md §2): CRM
+ * reads plus creating and updating records. Notes and tasks are created with
+ * their associations inline in hubspot-batch-create-objects. The other 11
+ * tools (property and engagement administration, association batches,
+ * workflows, links, feedback) are not offered. W2's profile must stay equal
+ * to this list.
+ */
+const HUBSPOT_PROFILE_TOOLS = [
+  "hubspot-get-user-details",
+  "hubspot-list-objects",
+  "hubspot-search-objects",
+  "hubspot-batch-read-objects",
+  "hubspot-list-associations",
+  "hubspot-get-association-definitions",
+  "hubspot-list-properties",
+  "hubspot-get-property",
+  "hubspot-batch-create-objects",
+  "hubspot-batch-update-objects",
+];
+const HUBSPOT_PROFILE_WRITES = ["hubspot-batch-create-objects", "hubspot-batch-update-objects"];
 
 describe("hubspot-mcp-0.4.0.json", () => {
   const fixture = load("hubspot-mcp-0.4.0.json") as {
     capturedAt: string;
     source: { package: string; version: string; integrity: string };
     tools: ToolEntry[];
-    firedrillAliasComparison: {
-      aliases: string[];
-      aliasesNotInServer: string[];
-      matched: { name: string }[];
-    };
   };
 
   it("is a dated capture of the pinned package", () => {
@@ -35,53 +53,12 @@ describe("hubspot-mcp-0.4.0.json", () => {
     for (const tool of fixture.tools) expect(tool.inputSchema.type).toBe("object");
   });
 
-  it("contains every Firedrill HubSpot alias", () => {
-    const names = new Set(fixture.tools.map((tool) => tool.name));
-    const { aliases, aliasesNotInServer, matched } = fixture.firedrillAliasComparison;
-    expect(aliases).toHaveLength(11);
-    expect(aliasesNotInServer).toEqual([]);
-    expect(matched.map((entry) => entry.name)).toEqual(aliases);
-    for (const alias of aliases) expect(names.has(alias)).toBe(true);
-  });
-});
-
-describe("google-mcp.json", () => {
-  const fixture = load("google-mcp.json") as {
-    capturedAt: string;
-    source: { commit: string };
-    toolsets: {
-      key: string;
-      packageId: string;
-      aliases: (ToolEntry & { canonicalName: string })[];
-      canonicalOnly: ToolEntry[];
-    }[];
-  };
-
-  it("is dated and pinned to a firedrill-tools commit", () => {
-    expect(Number.isNaN(Date.parse(fixture.capturedAt))).toBe(false);
-    expect(fixture.source.commit).toMatch(/^[0-9a-f]{40}$/);
-  });
-
-  it("lists the Gmail and Calendar aliases with unique names across both Tools", () => {
-    const byKey = new Map(fixture.toolsets.map((toolset) => [toolset.key, toolset]));
-    expect(byKey.get("gmail")?.aliases).toHaveLength(12);
-    expect(byKey.get("google-calendar")?.aliases).toHaveLength(9);
-    const names = fixture.toolsets.flatMap((toolset) => [
-      ...toolset.aliases.flatMap((alias) => [alias.name, alias.canonicalName]),
-      ...toolset.canonicalOnly.map((tool) => tool.name),
-    ]);
-    expect(new Set(names).size).toBe(names.length);
-    for (const toolset of fixture.toolsets) {
-      for (const tool of [...toolset.aliases, ...toolset.canonicalOnly]) {
-        expect(tool.inputSchema.type).toBe("object");
-      }
+  it("contains every tool of Revenue Desk's HubSpot profile, reads annotated read-only", () => {
+    const byName = new Map(fixture.tools.map((tool) => [tool.name, tool]));
+    for (const name of HUBSPOT_PROFILE_TOOLS) {
+      const tool = byName.get(name);
+      expect(tool, name).toBeDefined();
+      expect(tool?.annotations?.readOnlyHint, name).toBe(!HUBSPOT_PROFILE_WRITES.includes(name));
     }
-  });
-
-  it("offers sending only under canonical Gmail names", () => {
-    const gmail = fixture.toolsets.find((toolset) => toolset.key === "gmail");
-    const canonical = gmail?.canonicalOnly.map((tool) => tool.name) ?? [];
-    expect(canonical).toEqual(expect.arrayContaining(["gmail.messages.send", "gmail.drafts.send"]));
-    expect(gmail?.aliases.some((alias) => /send/.test(alias.name))).toBe(false);
   });
 });

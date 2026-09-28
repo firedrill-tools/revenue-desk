@@ -112,16 +112,13 @@ describe("HubSpot MCP server launched over stdio", () => {
   it("lists exactly the captured 0.4.0 tool surface without any network attempt", async () => {
     const fixture = JSON.parse(
       readFileSync(join(repoRoot, "test/fixtures/surfaces/hubspot-mcp-0.4.0.json"), "utf8"),
-    ) as { tools: Tool[]; firedrillAliasComparison: { aliases: string[] } };
+    ) as { tools: Tool[] };
     const launch = buildHubSpotStdioLaunch({ accessToken: TOKEN });
     const session = await start(launch);
     try {
       const listed = await session.client.listTools();
       expect(listed.nextCursor).toBeUndefined();
       expect(listed.tools).toEqual(fixture.tools);
-      const names = new Set(listed.tools.map((tool) => tool.name));
-      for (const alias of fixture.firedrillAliasComparison.aliases)
-        expect(names.has(alias)).toBe(true);
     } finally {
       await session.close();
     }

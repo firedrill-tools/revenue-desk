@@ -128,9 +128,9 @@ describe("buildHubSpotStdioLaunch", () => {
   it("maps apiBaseUrl to BASE_URL_OVERRIDE, keeping a path prefix and dropping trailing slashes", () => {
     const launch = buildHubSpotStdioLaunch({
       accessToken: TOKEN,
-      apiBaseUrl: "http://127.0.0.1:4555/v1/wire/",
+      apiBaseUrl: "http://127.0.0.1:4555/hubspot/",
     });
-    expect(launch.env.BASE_URL_OVERRIDE).toBe("http://127.0.0.1:4555/v1/wire");
+    expect(launch.env.BASE_URL_OVERRIDE).toBe("http://127.0.0.1:4555/hubspot");
     expect(
       buildHubSpotStdioLaunch({ accessToken: TOKEN, apiBaseUrl: "https://api.hubapi.com" }).env
         .BASE_URL_OVERRIDE,
