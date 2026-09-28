@@ -10,7 +10,7 @@ import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-
 import type { ConnectionPlan, RunConnection } from "../contracts/events.js";
 import {
   type ClassifierSettings,
-  type ComposioConnection,
+  COMPOSIO_TOOLKIT_OF,
   composioAccessFor,
   INTEGRATION_IDS,
   INTEGRATIONS,
@@ -31,12 +31,6 @@ import {
 import { type RegisteredTool, registerTool, ToolRegistry } from "./registry.js";
 import { createGatewayServer, type GatewayServer } from "./server.js";
 import type { GatewayObserver, GatewayTool } from "./types.js";
-import {
-  type ComposioEndpointSource,
-  composioToolkitOf,
-  createComposioEndpointSource,
-  hubspotUpstreamConfig,
-} from "./upstreams.js";
 
 export type RunGatewayOptions = {
   readonly runId: string;
@@ -48,7 +42,6 @@ export type RunGatewayOptions = {
   readonly observer?: GatewayObserver;
   readonly redact?: (text: string) => string;
   readonly connectUpstream?: UpstreamConnector;
-  readonly composio?: ComposioEndpointSource;
   readonly connectTimeoutMs?: number;
   readonly toolTimeoutMs?: number;
   readonly progressIntervalMs?: number;
@@ -68,12 +61,15 @@ type Outcome =
   | { readonly status: "ready"; readonly tools: readonly GatewayTool[] }
   | { readonly status: "unavailable"; readonly connection: RunConnection };
 
-let sharedComposioSource: ComposioEndpointSource | undefined;
+type ComposioPlanConnection = Extract<
+  ResolvedConnection,
+  { readonly integration: "gmail" | "google_calendar" }
+>;
 
-/** One production Composio source per process, so sessions are shared across runs. */
-function defaultComposioSource(): ComposioEndpointSource {
-  if (sharedComposioSource === undefined) sharedComposioSource = createComposioEndpointSource();
-  return sharedComposioSource;
+function composioConnector(catalog: IntegrationCatalog, connection: ComposioPlanConnection) {
+  return connection.integration === "gmail"
+    ? catalog.gmail.connector(connection)
+    : catalog.google_calendar.connector(connection);
 }
 
 function unavailable(
@@ -119,11 +115,11 @@ function apiTools(
   const options = { currency };
   const definitions =
     connection.integration === "stripe"
-      ? catalog.apiTools.stripe(connection, options)
+      ? catalog.stripe.tools(connection, options)
       : connection.integration === "quickbooks"
-        ? catalog.apiTools.quickbooks(connection, options)
+        ? catalog.quickbooks.tools(connection, options)
         : connection.integration === "slack"
-          ? catalog.apiTools.slack(connection, options)
+          ? catalog.slack.tools(connection, options)
           : [];
   const byName = new Map(definitions.map((definition) => [definition.name, definition]));
   return descriptors.flatMap((descriptor) => {
@@ -156,28 +152,29 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
   const hubspotUpstream: Promise<Upstream | Error> =
     hubspotConnection?.integration === "hubspot"
       ? Promise.resolve()
-          .then(() => connect(hubspotUpstreamConfig(hubspotConnection), connectOptions))
+          .then(() => connect(options.catalog.hubspot.upstream(hubspotConnection), connectOptions))
           .catch((error: unknown) => new Error(messageOf(error)))
       : Promise.resolve(new Error("not available"));
 
   // Gmail and Calendar: one Composio session for both toolkits.
-  const composioConnections: ComposioConnection[] = [];
+  const composioConnections: ComposioPlanConnection[] = [];
   for (const connection of [available.get("gmail"), available.get("google_calendar")]) {
     if (connection?.integration === "gmail" || connection?.integration === "google_calendar") {
       composioConnections.push(connection);
     }
   }
-  const composioSource = options.composio ?? defaultComposioSource();
   const firstComposio = composioConnections[0];
   const composioUpstream: Promise<Upstream | Error> =
     firstComposio === undefined
       ? Promise.resolve(new Error("not available"))
-      : composioSource
-          .endpoint(firstComposio, {
-            toolkits: composioConnections.map(composioToolkitOf),
-            access: composioAccessFor(options.policy),
-          })
-          .then((config) => connect(config, connectOptions))
+      : Promise.resolve()
+          .then(() =>
+            composioConnector(options.catalog, firstComposio).upstream(
+              composioConnections.map((connection) => COMPOSIO_TOOLKIT_OF[connection.integration]),
+              composioAccessFor(options.policy),
+            ),
+          )
+          .then((session) => connect(session.config, connectOptions))
           .catch((error: unknown) => new Error(messageOf(error)));
 
   const [hubspot, composio] = await Promise.all([hubspotUpstream, composioUpstream]);
@@ -206,7 +203,7 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
       });
       continue;
     }
-    const definition: ToolSource = options.catalog.definitions[integration];
+    const definition: ToolSource = options.catalog[integration];
     const descriptors = profileDescriptors(definition);
     let tools: readonly GatewayTool[];
     try {

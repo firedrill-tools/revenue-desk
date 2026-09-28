@@ -1,15 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { secretValue } from "../../../src/config/secret.js";
 import {
   type ComposioAccess,
   DEFAULT_POLICY,
   INTEGRATION_IDS,
 } from "../../../src/contracts/integration.js";
-import type { UpstreamConfig } from "../../../src/gateway/mcp-proxy.js";
 import { openRunGateway, type RunGateway } from "../../../src/gateway/run-gateway.js";
-import type { ComposioEndpointSource, ComposioSelection } from "../../../src/gateway/upstreams.js";
-import { hubspotUpstreamConfig } from "../../../src/gateway/upstreams.js";
 import {
+  type ComposioTestSession,
   gmailConnection,
   hubspotHttpConnection,
   plansWith,
@@ -36,18 +33,16 @@ async function upstreams() {
     () => crm.close(),
     () => mail.close(),
   );
-  const selections: ComposioSelection[] = [];
-  const composio: ComposioEndpointSource = {
-    endpoint: async (_connection, selection) => {
-      selections.push(selection);
-      return {
-        transport: "http",
-        url: mail.url,
-        headers: { Authorization: `Bearer ${MAIL_TOKEN}` },
-      };
-    },
+  const selections: { toolkits: readonly string[]; access: ComposioAccess }[] = [];
+  const composio: ComposioTestSession = async (toolkits, access) => {
+    selections.push({ toolkits, access });
+    return {
+      transport: "http",
+      url: mail.url,
+      headers: { Authorization: `Bearer ${MAIL_TOKEN}` },
+    };
   };
-  return { crm, mail, composio, selections };
+  return { crm, mail, composio, catalog: testCatalog({ composio }), selections };
 }
 
 async function open(
@@ -69,7 +64,7 @@ async function open(
 
 describe("openRunGateway", () => {
   it("connects every kind, registers the offered tools and reports all six integrations", async () => {
-    const { crm, composio } = await upstreams();
+    const { crm, catalog } = await upstreams();
     const gateway = await open({
       plans: plansWith([
         { integration: "stripe", status: "available", connection: stripeConnection() },
@@ -80,7 +75,7 @@ describe("openRunGateway", () => {
         },
         { integration: "gmail", status: "available", connection: gmailConnection() },
       ]),
-      composio,
+      catalog,
     });
     expect(gateway.connections.map((connection) => connection.integration)).toEqual([
       ...INTEGRATION_IDS,
@@ -143,7 +138,7 @@ describe("openRunGateway", () => {
   });
 
   it("routes each server's calls to its own integration", async () => {
-    const { crm, composio, mail } = await upstreams();
+    const { crm, catalog, mail } = await upstreams();
     const gateway = await open({
       plans: plansWith([
         {
@@ -153,7 +148,7 @@ describe("openRunGateway", () => {
         },
         { integration: "gmail", status: "available", connection: gmailConnection() },
       ]),
-      composio,
+      catalog,
     });
     const servers = gateway.mcpServers();
     const hubspot = servers.hubspot;
@@ -177,11 +172,11 @@ describe("openRunGateway", () => {
       [{ ...DEFAULT_POLICY, outbound: "deny" }, "draft"],
     ];
     for (const [policy, access] of cases) {
-      const { composio, selections } = await upstreams();
+      const { catalog, selections } = await upstreams();
       const calendar = { ...gmailConnection(), integration: "google_calendar" as const };
       await open({
         policy,
-        composio,
+        catalog,
         plans: plansWith([
           { integration: "gmail", status: "available", connection: gmailConnection() },
           {
@@ -199,11 +194,11 @@ describe("openRunGateway", () => {
   });
 
   it("makes an integration unavailable when its upstream cannot be reached, never falling back", async () => {
-    const composio: ComposioEndpointSource = {
-      endpoint: async () => {
+    const catalog = testCatalog({
+      composio: async () => {
         throw new Error(`Composio session creation failed: bad key composio-key-${"c".repeat(20)}`);
       },
-    };
+    });
     const gateway = await open({
       plans: plansWith([
         { integration: "stripe", status: "available", connection: stripeConnection() },
@@ -214,7 +209,7 @@ describe("openRunGateway", () => {
         },
         { integration: "gmail", status: "available", connection: gmailConnection() },
       ]),
-      composio,
+      catalog,
       redact: (text) => text.replaceAll(`composio-key-${"c".repeat(20)}`, "[redacted]"),
       connectTimeoutMs: 2_000,
     });
@@ -233,7 +228,7 @@ describe("openRunGateway", () => {
   it("reports an integration that offers none of its tools", async () => {
     const catalog = testCatalog();
     const gateway = await open({
-      catalog: { ...catalog, apiTools: { ...catalog.apiTools, stripe: () => [] } },
+      catalog: { ...catalog, stripe: { ...catalog.stripe, tools: () => [] } },
       plans: plansWith([
         { integration: "stripe", status: "available", connection: stripeConnection() },
       ]),
@@ -282,46 +277,5 @@ describe("openRunGateway", () => {
     });
     await gateway.close();
     await gateway.close();
-  });
-});
-
-describe("hubspotUpstreamConfig", () => {
-  it("sends the HTTP token as a bearer header, or no header without one", () => {
-    const connection = hubspotHttpConnection("http://127.0.0.1:1/mcp", "hub-token");
-    expect(hubspotUpstreamConfig(connection)).toEqual({
-      transport: "http",
-      url: "http://127.0.0.1:1/mcp",
-      headers: { Authorization: "Bearer hub-token" },
-    });
-    expect(
-      hubspotUpstreamConfig({
-        ...connection,
-        mcp: { transport: "http", url: "http://127.0.0.1:1/mcp", token: null },
-      }),
-    ).toMatchObject({ headers: {} });
-  });
-
-  it("launches stdio with an explicit child environment and the override command", () => {
-    const config: UpstreamConfig = hubspotUpstreamConfig({
-      integration: "hubspot",
-      kind: "mcp",
-      profile: "hubspot-mcp-0.4",
-      endpointLabel: "api.hubapi.test",
-      mcp: {
-        transport: "stdio",
-        accessToken: secretValue("pat-na1-test-token"),
-        apiBaseUrl: "http://127.0.0.1:4010/hubspot",
-        command: { command: "node", args: ["fake-hubspot.js"] },
-      },
-    });
-    expect(config).toMatchObject({
-      transport: "stdio",
-      command: "node",
-      args: ["fake-hubspot.js"],
-      env: {
-        PRIVATE_APP_ACCESS_TOKEN: "pat-na1-test-token",
-        BASE_URL_OVERRIDE: "http://127.0.0.1:4010/hubspot",
-      },
-    });
   });
 });

@@ -21,7 +21,6 @@ import { DEFAULT_POLICY } from "../../src/contracts/integration.js";
 import { idempotencyKeyFor } from "../../src/gateway/context.js";
 import { openRunGateway } from "../../src/gateway/run-gateway.js";
 import type { GatewayCallResult } from "../../src/gateway/types.js";
-import type { ComposioEndpointSource } from "../../src/gateway/upstreams.js";
 import {
   gmailConnection,
   hubspotHttpConnection,
@@ -94,22 +93,21 @@ async function gate() {
     () => crm.close(),
     () => mail.close(),
   );
-  const composio: ComposioEndpointSource = {
-    endpoint: async () => ({
-      transport: "http",
-      url: mail.url,
-      headers: { Authorization: `Bearer ${MAIL_TOKEN}` },
-    }),
-  };
   const stripeCalls: StripeCall[] = [];
   const finished: GatewayCallResult[] = [];
   const gateway = await openRunGateway({
     runId: RUN_ID,
-    catalog: testCatalog(stripeCalls),
+    catalog: testCatalog({
+      stripeCalls,
+      composio: async () => ({
+        transport: "http",
+        url: mail.url,
+        headers: { Authorization: `Bearer ${MAIL_TOKEN}` },
+      }),
+    }),
     settings: TEST_SETTINGS,
     policy: DEFAULT_POLICY,
     signal: new AbortController().signal,
-    composio,
     observer: { callFinished: (result) => finished.push(result) },
     plans: plansWith([
       { integration: "stripe", status: "available", connection: stripeConnection() },

@@ -16,7 +16,9 @@ import {
   type ActionClass,
   type Classification,
   type ClassifierSettings,
+  type ComposioAccess,
   type ComposioConnection,
+  type ComposioToolkitSlug,
   type HubSpotConnection,
   INTEGRATIONS,
   type IntegrationDefinition,
@@ -29,6 +31,7 @@ import {
 import type { JsonObject } from "../../src/contracts/json.js";
 import { ApiToolError, defineApiTool } from "../../src/gateway/api-server.js";
 import type { IntegrationCatalog } from "../../src/gateway/catalog.js";
+import type { UpstreamConfig } from "../../src/gateway/mcp-proxy.js";
 
 export const TEST_SETTINGS: WorkspaceSettings = {
   companyName: "Kestrel Analytics",
@@ -179,7 +182,48 @@ function plain(args: object): JsonObject {
 export type StripeCall = { readonly tool: string; readonly args: JsonObject; readonly key: string };
 
 /** A catalog whose Stripe tools record every run (with the idempotency key they received). */
-export function testCatalog(stripeCalls: StripeCall[] = []): IntegrationCatalog {
+/** Where the test's Composio session MCP lives, per the run's toolkits and exposure. */
+export type ComposioTestSession = (
+  toolkits: readonly ComposioToolkitSlug[],
+  access: ComposioAccess,
+) => Promise<UpstreamConfig>;
+
+export type TestCatalogOptions = {
+  readonly stripeCalls?: StripeCall[];
+  readonly composio?: ComposioTestSession;
+};
+
+const noComposio: ComposioTestSession = async () => {
+  throw new Error("Composio is not set up in this test.");
+};
+
+/** HubSpot over HTTP with its bearer token, or a stdio command override with the token in its env. */
+function hubspotUpstream(connection: HubSpotConnection): UpstreamConfig {
+  const { mcp } = connection;
+  if (mcp.transport === "http") {
+    return {
+      transport: "http",
+      url: mcp.url,
+      headers: mcp.token === null ? {} : { Authorization: `Bearer ${mcp.token.reveal()}` },
+    };
+  }
+  if (mcp.command === null) throw new Error("The test catalog launches only a command override.");
+  return {
+    transport: "stdio",
+    command: mcp.command.command,
+    args: mcp.command.args,
+    env: { PRIVATE_APP_ACCESS_TOKEN: mcp.accessToken.reveal() },
+  };
+}
+
+export function testCatalog(options: TestCatalogOptions = {}): IntegrationCatalog {
+  const stripeCalls = options.stripeCalls ?? [];
+  const composio = options.composio ?? noComposio;
+  const connector = () => ({
+    upstream: async (toolkits: readonly ComposioToolkitSlug[], access: ComposioAccess) => ({
+      config: await composio(toolkits, access),
+    }),
+  });
   const listCharges = defineApiTool({
     name: "list_charges",
     description: "List a Stripe customer's charges, newest first. Amounts are minor units.",
@@ -226,9 +270,9 @@ export function testCatalog(stripeCalls: StripeCall[] = []): IntegrationCatalog 
     },
   });
   return {
-    definitions: {
-      gmail: definition("gmail", GMAIL_TOOLS, gmailClassifier),
-      google_calendar: definition("google_calendar", [
+    gmail: { ...definition("gmail", GMAIL_TOOLS, gmailClassifier), connector },
+    google_calendar: {
+      ...definition("google_calendar", [
         spec(
           "GOOGLECALENDAR_EVENTS_LIST",
           "google_calendar.events.list",
@@ -236,19 +280,24 @@ export function testCatalog(stripeCalls: StripeCall[] = []): IntegrationCatalog 
           "read",
         ),
       ]),
-      hubspot: definition("hubspot", HUBSPOT_TOOLS),
-      stripe: definition("stripe", STRIPE_TOOLS, stripeClassifier),
-      quickbooks: definition("quickbooks", [
+      connector,
+    },
+    hubspot: { ...definition("hubspot", HUBSPOT_TOOLS), upstream: hubspotUpstream },
+    stripe: {
+      ...definition("stripe", STRIPE_TOOLS, stripeClassifier),
+      tools: () => [listCharges, createRefund],
+    },
+    quickbooks: {
+      ...definition("quickbooks", [
         spec("get_company_info", "quickbooks.company_info.get", "Read QuickBooks company", "read"),
       ]),
-      slack: definition("slack", [
+      tools: () => [],
+    },
+    slack: {
+      ...definition("slack", [
         spec("list_channels", "slack.conversations.list", "List Slack channels", "read"),
       ]),
-    },
-    apiTools: {
-      stripe: () => [listCharges, createRefund],
-      quickbooks: () => [],
-      slack: () => [],
+      tools: () => [],
     },
   };
 }
