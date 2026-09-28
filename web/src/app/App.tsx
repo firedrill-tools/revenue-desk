@@ -1,5 +1,5 @@
 import { lazy, type ReactNode, Suspense, useEffect } from "react";
-import { AppBar, PrimaryNav } from "@/components/app/app-bar";
+import { AppBar, PrimaryNav, ThemeToggle } from "@/components/app/app-bar";
 import { BrandMark, Wordmark } from "@/components/app/brand";
 import { ConversationRail } from "@/components/app/conversation-rail";
 import { NoticeProvider } from "@/components/app/notices";
@@ -73,9 +73,10 @@ function RailSheet({ route }: { route: Route }) {
           onNavigate={close}
           header={
             <div className="border-b px-3 pt-3 pb-2">
-              <div className="flex h-8 items-center gap-2 px-1">
+              <div className="flex min-h-8 items-center gap-2 pr-12 pl-1">
                 <BrandMark />
                 <Wordmark />
+                <ThemeToggle className="ml-auto sm:hidden" />
               </div>
               <PrimaryNav route={route} onNavigate={close} className="mt-2 flex-wrap" />
             </div>

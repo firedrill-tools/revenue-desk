@@ -18,7 +18,9 @@ export function BrandMark({ className }: { className?: string }) {
 
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cn("font-semibold text-[15px] tracking-[-0.01em]", className)}>
+    <span
+      className={cn("whitespace-nowrap font-semibold text-[15px] tracking-[-0.01em]", className)}
+    >
       Revenue Desk
     </span>
   );

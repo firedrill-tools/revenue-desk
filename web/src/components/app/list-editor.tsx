@@ -62,7 +62,7 @@ export function ListEditor({
                 type="button"
                 onClick={() => onChange(values.filter((item) => item !== value))}
                 aria-label={`Remove ${value}`}
-                className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="rd-hit relative inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 <XIcon className="size-3.5" />
               </button>

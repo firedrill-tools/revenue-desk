@@ -98,7 +98,7 @@ function ConversationRow({
         aria-current={selected ? "page" : undefined}
         onClick={onNavigate}
         className={cn(
-          "flex flex-col gap-0.5 rounded-md py-2 pr-9 pl-2.5 text-foreground no-underline transition-colors hover:no-underline",
+          "flex flex-col gap-0.5 rounded-md py-2 pr-9 pl-2.5 text-foreground no-underline transition-colors hover:no-underline pointer-coarse:pr-12",
           selected ? "bg-brand-subtle" : "hover:bg-surface-hover",
         )}
       >
@@ -119,7 +119,7 @@ function ConversationRow({
             variant="ghost"
             size="icon-xs"
             aria-label={`Actions for ${conversationTitle(conversation)}`}
-            className="absolute top-2 right-1.5 text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/row:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100"
+            className="absolute top-2 right-1.5 text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/row:opacity-100 aria-expanded:opacity-100 pointer-coarse:top-1/2 pointer-coarse:right-0 pointer-coarse:-translate-y-1/2 pointer-coarse:opacity-100"
           >
             <EllipsisIcon />
           </Button>
@@ -211,7 +211,7 @@ export function ConversationRail({
       <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3">
         {loading ? <RailSkeleton /> : null}
         {error ? (
-          <div className="px-5 py-3 text-body-sm text-muted-foreground">
+          <div className="px-4.5 py-3 text-body-sm text-muted-foreground">
             <p>Conversations did not load.</p>
             <Button variant="link" className="h-auto px-0 text-brand" onClick={reload}>
               Try again
@@ -219,7 +219,7 @@ export function ConversationRail({
           </div>
         ) : null}
         {data && data.items.length === 0 ? (
-          <p className="px-5 py-3 text-body-sm text-muted-foreground">
+          <p className="px-4.5 py-3 text-body-sm text-muted-foreground">
             {debounced.trim() === "" ? "No conversations yet." : "No conversations match."}
           </p>
         ) : null}
@@ -242,7 +242,7 @@ export function ConversationRail({
           </section>
         ))}
         {data?.nextCursor ? (
-          <p className="px-5 pt-3 text-meta text-muted-foreground">
+          <p className="px-4.5 pt-3 text-meta text-muted-foreground">
             Showing the 100 most recent. Search to find older conversations.
           </p>
         ) : null}

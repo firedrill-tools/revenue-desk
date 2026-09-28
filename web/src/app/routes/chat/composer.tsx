@@ -36,7 +36,7 @@ function UsageSummary({ usage }: { usage: ConversationUsage }) {
       <ContextTrigger>
         <button
           type="button"
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-meta text-muted-foreground tabular-nums outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-meta text-muted-foreground tabular-nums outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-11"
         >
           {formatTokens(total)} tokens
           <span aria-hidden="true" className="text-border-strong">

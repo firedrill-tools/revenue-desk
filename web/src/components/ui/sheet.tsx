@@ -46,15 +46,20 @@ function SheetOverlay({
   )
 }
 
+// revenue-desk patch: `closeClassName` places the close button against a
+// sheet's own header row. On touch screens the button grows to 44px (see
+// globals.css), so it moves up and in by 6px to keep the same centre.
 function SheetContent({
   className,
   children,
   side = "right",
   showCloseButton = true,
+  closeClassName,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
+  closeClassName?: string
 }) {
   return (
     <SheetPortal>
@@ -73,7 +78,10 @@ function SheetContent({
           <SheetPrimitive.Close data-slot="sheet-close" asChild>
             <Button
               variant="ghost"
-              className="absolute top-3 right-3"
+              className={cn(
+                "absolute top-3 right-3 pointer-coarse:top-1.5 pointer-coarse:right-1.5",
+                closeClassName
+              )}
               size="icon-sm"
             >
               <XIcon

@@ -173,6 +173,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Touch screens: every control is a 44px target (WCAG 2.5.5). Heights grow;
+   the dense desktop sizes stay for mouse pointers. Buttons carry
+   data-rd-control because a Radix trigger rendered asChild replaces their
+   data-slot. .rd-hit widens the hit area of a small control that cannot grow
+   (give it a position). */
+@media (pointer: coarse) {
+  [data-rd-control],
+  [data-slot="select-trigger"],
+  [data-slot="input"] {
+    min-height: 2.75rem;
+  }
+  [data-rd-control][data-size^="icon"] {
+    min-width: 2.75rem;
+  }
+  .rd-hit::after {
+    content: "";
+    position: absolute;
+    inset: min(0px, calc((100% - 2.75rem) / 2));
+  }
+}
+
 /* Text shimmer for the agent's status line (AI Elements Shimmer, CSS only). */
 @keyframes rd-shimmer {
   from {

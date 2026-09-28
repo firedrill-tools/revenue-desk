@@ -36,7 +36,7 @@ export function PrimaryNav({
             aria-current={active ? "page" : undefined}
             onClick={onNavigate}
             className={cn(
-              "inline-flex h-8 items-center rounded-md px-2.5 font-medium text-body-sm no-underline transition-colors hover:no-underline",
+              "inline-flex h-8 items-center rounded-md px-2.5 font-medium text-body-sm no-underline transition-colors hover:no-underline pointer-coarse:h-11",
               active
                 ? "bg-surface-hover text-foreground"
                 : "text-muted-foreground hover:bg-surface-hover/70 hover:text-foreground",
@@ -73,7 +73,7 @@ function ModelLabel() {
   );
 }
 
-function ThemeToggle() {
+export function ThemeToggle({ className }: { className?: string }) {
   const [theme, setTheme] = useTheme();
   const next = theme === "dark" ? "light" : "dark";
   return (
@@ -81,7 +81,7 @@ function ThemeToggle() {
       variant="ghost"
       size="icon"
       aria-label={`Switch to ${next} theme`}
-      className="text-muted-foreground hover:text-foreground"
+      className={cn("text-muted-foreground hover:text-foreground", className)}
       onClick={() => setTheme(next)}
     >
       {theme === "dark" ? <SunIcon /> : <MoonIcon />}
@@ -109,7 +109,8 @@ export function AppBar({ route }: { route: Route }) {
         href="/"
         className="flex items-center gap-2 rounded-md px-1 text-foreground no-underline hover:no-underline"
       >
-        <BrandMark />
+        {/* Phones: the wordmark alone, so the bar keeps its 44px controls on screen. */}
+        <BrandMark className="max-sm:hidden" />
         <Wordmark />
       </Link>
       {sandbox ? <MetaChip className="ml-1">Local sandbox</MetaChip> : null}
@@ -119,7 +120,8 @@ export function AppBar({ route }: { route: Route }) {
       <div className="ml-auto flex items-center gap-1">
         <ModelLabel />
         <ConnectionsHealth />
-        <ThemeToggle />
+        {/* On phones the toggle lives in the navigation sheet, so the bar keeps 44px targets. */}
+        <ThemeToggle className="max-sm:hidden" />
         {inspectorAvailable ? (
           <Button
             variant="ghost"

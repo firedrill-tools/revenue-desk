@@ -28,7 +28,7 @@ export function SegmentedControl<T extends string>({
     <fieldset
       disabled={disabled}
       className={cn(
-        "inline-flex h-8 shrink-0 items-center self-start rounded-md border bg-surface-subtle p-0.5 sm:self-auto",
+        "inline-flex h-8 shrink-0 items-center self-start rounded-md border bg-surface-subtle p-0.5 sm:self-auto pointer-coarse:h-11",
         disabled && "opacity-60",
       )}
     >
