@@ -56,6 +56,31 @@ const refund: Step = () => [
   refundCall("j2_refund"),
 ];
 
+/**
+ * Why the refund was not made, said to the user. The tool result is written
+ * for the model (a JSON failure, "Blocked by policy: … do not retry it."),
+ * so a reply never repeats it as it is.
+ */
+export function refundNotMade(resultText: string | undefined, charge: string): string {
+  const line = firstLine(resultText);
+  if (line.startsWith("Blocked by policy")) {
+    return `Financial actions are set to deny, so I did not refund ${charge}.`;
+  }
+  if (line.startsWith("The user declined")) {
+    return `You declined the refund, so I did not refund ${charge}.`;
+  }
+  let failure: { readonly message?: unknown } | undefined;
+  try {
+    failure = (JSON.parse(line) as { error?: { message?: unknown } }).error;
+  } catch {
+    failure = undefined;
+  }
+  if (typeof failure?.message === "string") {
+    return `Stripe declined the refund: ${failure.message} I did not refund ${charge}.`;
+  }
+  return `I did not refund ${charge}: ${line}`;
+}
+
 /** After the refund: record it, or stop and say why not. */
 const recordOrStop =
   (refundId: string): Step =>
@@ -64,7 +89,7 @@ const recordOrStop =
     if (result === undefined || result.isError) {
       return [
         text(
-          `I did not refund ${HARBOR_PINE.duplicateCharge}: ${firstLine(result?.text)} Nothing was logged in HubSpot or posted to #billing.`,
+          `${refundNotMade(result?.text, HARBOR_PINE.duplicateCharge)} Nothing was logged in HubSpot or posted to #billing.`,
         ),
       ];
     }
@@ -172,7 +197,10 @@ export const J2_REFUND_DENIED: Scenario = {
   id: "j2-refund-denied",
   title: "The user denies the refund",
   approvals: { j2_refund: "deny" },
-  expected: { status: "completed", replyIncludes: ["I did not refund"] },
+  expected: {
+    status: "completed",
+    replyIncludes: ["You declined the refund, so I did not refund"],
+  },
   verify: (fakes) => {
     const problems = verifyNotRefunded(fakes);
     const attempts = fakes.stripe.http.requestsTo("POST", "/v1/refunds");
@@ -190,7 +218,10 @@ export const J2_STRIPE_DECLINE: Scenario = {
   arrange: (fakes) => {
     fakes.stripe.faults.decline("/v1/refunds", { method: "POST" });
   },
-  expected: { status: "completed", replyIncludes: ["I did not refund", "declined"] },
+  expected: {
+    status: "completed",
+    replyIncludes: ["Stripe declined the refund: Your card was declined.", "I did not refund"],
+  },
   verify: (fakes) => {
     const problems = verifyNotRefunded(fakes);
     const attempts = fakes.stripe.http.requestsTo("POST", "/v1/refunds");

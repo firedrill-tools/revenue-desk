@@ -45,6 +45,11 @@ test("financial actions set to deny: the next refund is refused with a plain rea
     timeout: 30_000,
   });
   await expect(page.locator('[data-status="blocked"]')).toContainText("Refund charge in Stripe");
+  // The reply says why in the user's words, not the tool's words for the model.
+  await expect(
+    page.getByText(/Financial actions are set to deny, so I did not refund/),
+  ).toBeVisible();
+  await expect(page.getByRole("main")).not.toContainText("The action was not run");
   await expectNoSideScroll(page);
 
   // The card leads to the setting that decided it.

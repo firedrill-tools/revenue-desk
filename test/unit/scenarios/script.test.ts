@@ -3,6 +3,7 @@
  * drift detection against offered schemas, prompt dispatch, and the facts
  * the scripts rely on, checked against the business fixtures.
  */
+
 import { describe, expect, it } from "vitest";
 import {
   BLUEFIN,
@@ -30,6 +31,8 @@ import {
   text,
   toolUseId,
 } from "../../scenarios/index.js";
+import { J1_REPLY_BODY } from "../../scenarios/j1-billing-inquiry.js";
+import { refundNotMade } from "../../scenarios/j2-refund-duplicate.js";
 import { J5_DIGEST } from "../../scenarios/j5-weekly-digest.js";
 import { loadBusinessFixtures } from "../../support/fakes/fixtures.js";
 import type { MessagesBody, ScriptedBlock } from "../../support/mock-anthropic.js";
@@ -328,5 +331,38 @@ describe("scenario facts agree with the business fixtures", () => {
     expect(expectedIdempotencyKey("run_1", "toolu_a")).not.toBe(
       expectedIdempotencyKey("run_1", "toolu_b"),
     );
+  });
+});
+
+describe("the sandbox's J2 reply when no refund was made", () => {
+  it("says why in the user's words, never the tool's text for the model", () => {
+    expect(
+      refundNotMade(
+        "Blocked by policy: Financial actions are set to deny in this workspace. The action was not run; do not retry it.",
+        "ch_1",
+      ),
+    ).toBe("Financial actions are set to deny, so I did not refund ch_1.");
+    expect(
+      refundNotMade("The user declined this action. It was not run; do not retry it.", "ch_1"),
+    ).toBe("You declined the refund, so I did not refund ch_1.");
+    expect(
+      refundNotMade(
+        '{"error":{"provider":"stripe","status":402,"code":"card_declined","message":"Your card was declined."}}',
+        "ch_1",
+      ),
+    ).toBe("Stripe declined the refund: Your card was declined. I did not refund ch_1.");
+    for (const text of ["do not retry", '{"error"', "provider"]) {
+      expect(
+        refundNotMade(
+          '{"error":{"provider":"stripe","status":402,"message":"Your card was declined."}}',
+          "ch_1",
+        ),
+      ).not.toContain(text);
+    }
+  });
+
+  it("promises the customer nothing before the refund is made", () => {
+    expect(J1_REPLY_BODY).not.toMatch(/refunding|will refund|business days/i);
+    expect(J1_REPLY_BODY).toContain("are reviewing the second one; we'll follow up shortly.");
   });
 });

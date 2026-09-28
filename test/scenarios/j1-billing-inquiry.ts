@@ -17,7 +17,8 @@ export const J1_REPLY_BODY = [
   "",
   "Thanks for flagging this. You're right: your card was charged $490.00 twice on September 22. The second charge was a manual retry and duplicates your September Growth plan payment, which QuickBooks shows as paid.",
   "",
-  "We are refunding the duplicate $490.00 now; it usually reaches your card within 5 to 10 business days.",
+  // Until the refund is approved and made, the customer hears only what was found (src/agent/prompt.ts).
+  "We found two $490.00 charges on September 22 and are reviewing the second one; we'll follow up shortly.",
   "",
   "Best,",
   "Maya Lindqvist",
