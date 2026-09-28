@@ -85,8 +85,12 @@ describe("buildSystemPrompt", () => {
     expect(STABLE_RULES).toContain(
       "Call a refund, invoice, payment or cancellation tool only when the user asked for that action in this conversation.",
     );
-    expect(STABLE_RULES).toContain("recommend it with the amount and the record and ask");
+    // J1 rerun 3 wrote "I'd like to refund…" and called the refund tool in the same step.
+    expect(STABLE_RULES).toContain(
+      "recommend it with the amount and the record and ask in your reply, without calling the tool",
+    );
     expect(STABLE_RULES).toContain("an approval card is not a substitute for being asked");
+    expect(STABLE_RULES).toContain("When the user asked for one, before you call its tool");
     // J1 rerun: the agent held the customer's reply back until the refund was decided.
     expect(STABLE_RULES).toContain(
       "Waiting for that answer does not hold up the rest of what was asked: finish it",
@@ -112,6 +116,8 @@ describe("buildSystemPrompt", () => {
     );
     expect(STABLE_RULES).toContain("when you know only a name, search by name");
     expect(STABLE_RULES).toContain("instead of passing an empty value");
+    // J1 rerun 3 listed refunds for charge "ch_placeholder" before it had the charges.
+    expect(STABLE_RULES).toContain("Never call a tool with a placeholder or guessed id");
   });
 
   it("converts UTC timestamps before showing them", () => {
