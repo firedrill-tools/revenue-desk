@@ -46,11 +46,26 @@ export async function expectNoSideScroll(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
+/** The part of the DOM settleAnimations reads (test code is type-checked without the DOM library). */
+type AnimationsDocument = {
+  getAnimations(): {
+    readonly effect: { getTiming(): { readonly iterations?: number } } | null;
+    readonly playState: string;
+  }[];
+};
+
 /** Waits for enter animations (a sheet fading in) to end; endless ones (spinners) are ignored. */
 export async function settleAnimations(page: Page): Promise<void> {
+  // A function, not a string: the app's Content-Security-Policy forbids evaluating strings.
   await page.waitForFunction(
-    `document.getAnimations().every((animation) =>
-      animation.effect?.getTiming().iterations === Infinity || animation.playState !== "running")`,
+    () =>
+      (globalThis as unknown as { document: AnimationsDocument }).document
+        .getAnimations()
+        .every(
+          (animation) =>
+            animation.effect?.getTiming().iterations === Number.POSITIVE_INFINITY ||
+            animation.playState !== "running",
+        ),
     null,
     { timeout: 5_000 },
   );
@@ -195,7 +210,12 @@ export async function holdStreamAt(page: Page, text: string): Promise<void> {
 }
 
 export async function waitUntilHeld(page: Page): Promise<void> {
-  await page.waitForFunction("window.__rdHold.paused === true", null, { timeout: 30_000 });
+  // A function, not a string: the app's Content-Security-Policy forbids evaluating strings.
+  await page.waitForFunction(
+    () => (globalThis as unknown as { __rdHold?: { paused: boolean } }).__rdHold?.paused === true,
+    null,
+    { timeout: 30_000 },
+  );
 }
 
 export async function releaseStream(page: Page): Promise<void> {

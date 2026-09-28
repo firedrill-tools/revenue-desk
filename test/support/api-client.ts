@@ -1,8 +1,9 @@
 /**
  * A test client for Revenue Desk's HTTP API (src/contracts/api.ts), as a
  * browser tab uses it: GET /api/session for the per-boot cookie and CSRF
- * token, then mutating requests with a same-origin Origin, JSON, the cookie
- * and x-rd-csrf. Chat responses are read as the UI message stream (SSE,
+ * token (read first, as the app does, since every other route needs the
+ * cookie), then mutating requests with a same-origin Origin, JSON, the
+ * cookie and x-rd-csrf. Chat responses are read as the UI message stream (SSE,
  * terminated by [DONE]); a caller can decide approvals while the stream is
  * open, as the approval card does.
  */
@@ -115,7 +116,7 @@ export class ApiClient {
     });
   }
 
-  private send<R extends ApiRoute>(
+  private async send<R extends ApiRoute>(
     route: R,
     options: {
       readonly params?: RouteParams<R>;
@@ -124,6 +125,10 @@ export class ApiClient {
     },
   ): Promise<Response> {
     const [method, template] = route.split(" ") as [string, string];
+    // Reads need the session cookie too; the session and health routes do not.
+    if (this.cookie === null && template !== API_PATHS.session && template !== API_PATHS.health) {
+      await this.session();
+    }
     let path = template;
     for (const [name, value] of Object.entries((options.params ?? {}) as Record<string, string>)) {
       path = path.replace(`:${name}`, encodeURIComponent(value));
