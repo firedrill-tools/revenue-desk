@@ -10,7 +10,7 @@ import type {
   ToolDescriptor,
 } from "../contracts/integration.js";
 import type { JsonObject } from "../contracts/json.js";
-import type { ToolSource } from "./catalog.js";
+import type { RunMemory, ToolSource } from "./catalog.js";
 import { type ArgumentValidator, compileArgumentValidator } from "./validate.js";
 
 export type RegisteredTool = {
@@ -67,13 +67,15 @@ export function classifiedMetadata(
 /**
  * Registers one offered tool: compiles its schema (throws SchemaCompileError
  * when it cannot be checked, so it must not be offered) and binds its
- * integration's classifier to the workspace settings.
+ * integration's classifier to the workspace settings and, when the
+ * integration has one, to the run's memory of its earlier calls.
  */
 export function registerTool(
   descriptor: ToolDescriptor,
   inputSchema: unknown,
   definition: Pick<ToolSource, "classify">,
   settings: ClassifierSettings,
+  memory?: RunMemory,
 ): RegisteredTool {
   const validate = compileArgumentValidator(inputSchema);
   return {
@@ -81,7 +83,9 @@ export function registerTool(
     validate,
     classify(input) {
       try {
-        return definition.classify(descriptor.name, input, settings);
+        const classification = definition.classify(descriptor.name, input, settings);
+        if (classification === null || memory === undefined) return classification;
+        return memory.refine(descriptor.name, input, classification);
       } catch {
         return null;
       }

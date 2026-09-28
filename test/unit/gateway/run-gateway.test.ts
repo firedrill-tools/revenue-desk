@@ -5,6 +5,8 @@ import {
   INTEGRATION_IDS,
 } from "../../../src/contracts/integration.js";
 import { openRunGateway, type RunGateway } from "../../../src/gateway/run-gateway.js";
+import type { GatewayCallResult } from "../../../src/gateway/types.js";
+import { GmailDraftMemory } from "../../../src/integrations/gmail/run-memory.js";
 import {
   type ComposioTestSession,
   gmailConnection,
@@ -164,6 +166,53 @@ describe("openRunGateway", () => {
     expect(crm.calls).toEqual([{ tool: "search_contacts", arguments: { query: "ana" } }]);
     expect(mail.calls).toEqual([{ tool: "GMAIL_FETCH_EMAILS", arguments: { query: "x" } }]);
     expect(crm.unauthorized + mail.unauthorized).toBe(0);
+  });
+
+  it("feeds an integration's run memory every finished call, so a later call is classified with it", async () => {
+    const { catalog } = await upstreams();
+    const memory = new GmailDraftMemory();
+    const finished: GatewayCallResult[] = [];
+    const gateway = await open({
+      plans: plansWith([
+        { integration: "gmail", status: "available", connection: gmailConnection() },
+      ]),
+      catalog: { ...catalog, gmail: { ...catalog.gmail, runMemory: () => memory } },
+      observer: { callFinished: (result) => finished.push(result) },
+    });
+    const send = gateway.registry.get("mcp__gmail__GMAIL_SEND_DRAFT");
+    if (send === undefined) throw new Error("send not registered");
+    // Before the run created the draft, nothing vouches for its recipients.
+    expect(send.classify({ draft_id: "r_1" })?.details?.recipients).toBeUndefined();
+
+    const gmail = gateway.mcpServers().gmail;
+    if (gmail === undefined) throw new Error("gmail server missing");
+    await callWithMeta(
+      await connectClient(gmail),
+      "GMAIL_CREATE_EMAIL_DRAFT",
+      { recipient_email: "dana@harborpine.test", subject: "Your charge", body: "Hi Dana," },
+      "toolu_draft",
+    );
+    // The run's own observer still sees the call.
+    expect(finished.map((result) => result.call.tool)).toEqual(["GMAIL_CREATE_EMAIL_DRAFT"]);
+    expect(memory.drafts.get("r_1")?.recipients.to).toEqual(["dana@harborpine.test"]);
+    expect(send.classify({ draft_id: "r_1" })).toMatchObject({
+      actionClass: "outbound",
+      details: {
+        consequence: "Send the Gmail draft to dana@harborpine.test",
+        recipients: ["dana@harborpine.test"],
+      },
+    });
+    // Each run starts with an empty memory.
+    const other = await open({
+      plans: plansWith([
+        { integration: "gmail", status: "available", connection: gmailConnection() },
+      ]),
+      catalog: { ...catalog, gmail: { ...catalog.gmail, runMemory: () => new GmailDraftMemory() } },
+    });
+    expect(
+      other.registry.get("mcp__gmail__GMAIL_SEND_DRAFT")?.classify({ draft_id: "r_1" })?.details
+        ?.recipients,
+    ).toBeUndefined();
   });
 
   it("asks Composio for one session covering the run's toolkits at the policy's exposure", async () => {

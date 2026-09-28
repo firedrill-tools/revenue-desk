@@ -50,6 +50,8 @@ export type ToolCallRecord = {
 export type ApprovalRecord = {
   readonly id: string;
   readonly tool_use_id: string;
+  /** The ApprovalDescriptor the card showed, as JSON. */
+  readonly descriptor_json: string;
   readonly integration: string;
   readonly action_class: string;
   readonly operation: string;

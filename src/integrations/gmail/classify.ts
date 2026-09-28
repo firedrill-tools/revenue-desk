@@ -6,20 +6,41 @@
 // Denied (null): another mailbox than the user's own (user_id other than
 // "me"), attachments (the agent has no files to attach, so one can only come
 // from somewhere unexpected), and recipients that are not email addresses.
+//
+// Sending a draft: its input holds only the draft id, but "no email to the
+// wrong customer" means the card must name who receives it. The recipients
+// come from the same run's GMAIL_CREATE_EMAIL_DRAFT of that draft
+// (GmailDraftMemory in run-memory.ts). No allowlisted read tool returns a
+// draft by id (the fetch, thread and label tools return messages and
+// threads, which do not carry draft ids), so a draft the run did not create
+// cannot be looked up: its card says plainly that the recipients could not
+// be confirmed.
 
 import type {
   ApprovalFact,
   Classification,
   ClassifierSettings,
 } from "../../contracts/integration.js";
-import type { JsonObject } from "../../contracts/json.js";
+import type { JsonObject, JsonValue } from "../../contracts/json.js";
 import { parseAddress } from "../shared/email.js";
-import { field, str, strings } from "../shared/json.js";
+import { asObject, field, obj, str, strings } from "../shared/json.js";
 import { fromSpec, specOf } from "../shared/profile.js";
 import { listOf, preview } from "../shared/text.js";
 import { GMAIL_PROFILE } from "./profile.js";
 
-type Recipients = { readonly to: string[]; readonly cc: string[]; readonly bcc: string[] };
+export type Recipients = {
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly bcc: readonly string[];
+};
+
+/** A draft this run created: who it goes to, as the create call named them. */
+export type KnownDraft = {
+  readonly draftId: string;
+  readonly recipients: Recipients;
+  readonly subject: string | null;
+  readonly threadId: string | null;
+};
 
 const DESTRUCTIVE_LABELS = new Set(["TRASH", "SPAM"]);
 
@@ -132,21 +153,85 @@ function label(input: JsonObject): Classification | null {
   };
 }
 
-function sendDraft(input: JsonObject): Classification | null {
+export const UNCONFIRMED_RECIPIENTS =
+  "Not confirmed: this draft was not created in this run. Check it in Gmail before approving.";
+
+/**
+ * Sending draft `draft_id`. With the draft this run created, the card names
+ * its recipients; otherwise it says they could not be confirmed. Outbound
+ * either way.
+ */
+export function classifySendDraft(
+  input: JsonObject,
+  known: KnownDraft | null,
+): Classification | null {
   const draft = str(input, "draft_id");
   if (draft === undefined) return null;
+  const confirmed = known !== null && known.draftId === draft ? known : null;
+  if (confirmed === null) {
+    return {
+      actionClass: "outbound",
+      operation: "gmail.drafts.send",
+      title: "Send Gmail draft",
+      details: {
+        consequence: `Send Gmail draft ${draft}. Its recipients could not be confirmed.`,
+        facts: [
+          { label: "Draft", value: draft },
+          { label: "Recipients", value: UNCONFIRMED_RECIPIENTS },
+        ],
+        recordIds: [draft],
+      },
+    };
+  }
+  const all = everyone(confirmed.recipients);
+  const facts = recipientFacts(confirmed.recipients);
+  if (confirmed.subject !== null) {
+    facts.push({ label: "Subject", value: preview(confirmed.subject, 120) });
+  }
+  if (confirmed.threadId !== null) facts.push({ label: "Thread", value: confirmed.threadId });
+  facts.push({ label: "Draft", value: draft });
   return {
     actionClass: "outbound",
     operation: "gmail.drafts.send",
     title: "Send Gmail draft",
     details: {
-      consequence: `Send Gmail draft ${draft} to the recipients saved in it`,
-      facts: [
-        { label: "Draft", value: draft },
-        { label: "Recipients", value: "As saved in the draft" },
-      ],
+      consequence: `Send the Gmail draft to ${listOf(all)}`,
+      facts,
+      recipients: all,
       recordIds: [draft],
     },
+  };
+}
+
+/** The draft id in a GMAIL_CREATE_EMAIL_DRAFT result (Composio's `{successful, data}` or bare). */
+function createdDraftId(output: JsonValue): string | undefined {
+  const top = asObject(output);
+  if (top === undefined || field(top, "successful") === false) return undefined;
+  const data = obj(top, "data") ?? top;
+  const nested = obj(data, "response_data") ?? obj(data, "draft");
+  for (const candidate of [data, nested, top]) {
+    const id = str(candidate, "id") ?? str(candidate, "draft_id") ?? str(candidate, "draftId");
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+/**
+ * The draft a successful GMAIL_CREATE_EMAIL_DRAFT call created, from its
+ * input (recipients, subject, thread) and its result (the draft id). Null
+ * when either is missing or the recipients are not addresses.
+ */
+export function draftFromCreate(input: JsonObject, output: JsonValue): KnownDraft | null {
+  const draftId = createdDraftId(output);
+  const recipients = recipientsOf(input);
+  if (draftId === undefined || recipients === null || everyone(recipients).length === 0) {
+    return null;
+  }
+  return {
+    draftId,
+    recipients,
+    subject: str(input, "subject") ?? null,
+    threadId: str(input, "thread_id") ?? null,
   };
 }
 
@@ -186,7 +271,8 @@ export function classifyGmail(
     case "GMAIL_ADD_LABEL_TO_EMAIL":
       return label(input);
     case "GMAIL_SEND_DRAFT":
-      return sendDraft(input);
+      // Without the run's memory of its drafts (GmailDraftMemory) nothing confirms them.
+      return classifySendDraft(input, null);
     case "GMAIL_REPLY_TO_THREAD":
       return reply(input);
     default:

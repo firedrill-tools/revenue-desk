@@ -10,7 +10,9 @@
  */
 import { describe, expect, it } from "vitest";
 import { STOPPED_BEFORE_RUN_REASON } from "../../../src/agent/sdk-mapper.js";
-import { expectedIdempotencyKey } from "../../scenarios/facts.js";
+import type { ApprovalDescriptor } from "../../../src/contracts/events.js";
+import { UNCONFIRMED_RECIPIENTS } from "../../../src/integrations/gmail/classify.js";
+import { expectedIdempotencyKey, HARBOR_PINE } from "../../scenarios/facts.js";
 import {
   J1_BILLING_INQUIRY,
   J2_REFUND_DENIED,
@@ -19,13 +21,33 @@ import {
   J3_COLLECTIONS,
 } from "../../scenarios/index.js";
 import { runScenarioOverHttp } from "../../scenarios/run-over-http.js";
-import type { Scenario } from "../../scenarios/script.js";
+import { type Scenario, text } from "../../scenarios/script.js";
+import { gmail } from "../../scenarios/tools.js";
 import type { StreamChunk } from "../../support/api-client.js";
 import { type Harness, type HarnessOptions, startHarness } from "../../support/harness.js";
 import { requireNativeSdkBinary } from "../../support/sdk-gate-support.js";
 import { agentRequests, logicalIds, readRunRows } from "./support.js";
 
 const TIMEOUT = 120_000;
+
+/** A draft id from outside this run (the user's, or an earlier turn's). */
+const UNKNOWN_DRAFT = "r-0000000007400000042";
+
+const SEND_UNKNOWN_DRAFT: Scenario = {
+  id: "send-unknown-draft",
+  job: "J1",
+  title: "Send a draft the run did not create",
+  prompt: `Send my draft ${UNKNOWN_DRAFT} to the customer.`,
+  steps: [
+    () => [
+      text("Sending that draft needs your approval."),
+      gmail.sendDraft("unknown_send", UNKNOWN_DRAFT),
+    ],
+    () => [text("I did not send the draft.")],
+  ],
+  approvals: { unknown_send: "deny" },
+  expected: { status: "completed", replyIncludes: ["did not send"] },
+};
 
 async function withHarness(
   scenario: Scenario,
@@ -63,7 +85,7 @@ describe("full stack: the jobs, with the database checked against what happened"
     timeout: TIMEOUT,
   }, async () => {
     await withHarness(J1_BILLING_INQUIRY, {}, async (harness) => {
-      const { rows } = await play(harness, J1_BILLING_INQUIRY);
+      const { rows, played } = await play(harness, J1_BILLING_INQUIRY);
 
       expect(rows.run).toMatchObject({
         status: "completed",
@@ -150,7 +172,43 @@ describe("full stack: the jobs, with the database checked against what happened"
         status: "approved",
         decided_by: "user",
       });
+      // The card named who receives the email: the recipients of the draft this run
+      // created, which are exactly the ones Gmail sent it to.
+      const card = JSON.parse(rows.approval("j1_send").descriptor_json) as ApprovalDescriptor;
+      expect(card).toMatchObject({
+        consequence: `Send the Gmail draft to ${HARBOR_PINE.contactEmail}`,
+        recipients: [HARBOR_PINE.contactEmail],
+      });
+      expect(card.facts).toEqual(
+        expect.arrayContaining([
+          { label: "To", value: HARBOR_PINE.contactEmail },
+          { label: "Thread", value: HARBOR_PINE.gmailThread },
+        ]),
+      );
+      const streamed = played.chunks.find((chunk) => chunk.type === "tool-approval-request");
+      expect(streamed?.approvalDescriptor).toEqual(card);
       expect(harness.fakes.composio.gmail.outbox).toHaveLength(1);
+      expect(harness.fakes.composio.gmail.outbox[0]?.to).toEqual(card.recipients);
+    });
+  });
+
+  it("sending a draft the run did not create: the card says its recipients could not be confirmed", {
+    timeout: TIMEOUT,
+  }, async () => {
+    await withHarness(SEND_UNKNOWN_DRAFT, {}, async (harness) => {
+      const { rows } = await play(harness, SEND_UNKNOWN_DRAFT);
+      expect(rows.call("unknown_send")).toMatchObject({
+        operation: "gmail.drafts.send",
+        action_class: "outbound",
+        decision: "denied",
+      });
+      const card = JSON.parse(rows.approval("unknown_send").descriptor_json) as ApprovalDescriptor;
+      expect(card.consequence).toBe(
+        `Send Gmail draft ${UNKNOWN_DRAFT}. Its recipients could not be confirmed.`,
+      );
+      expect(card.facts).toContainEqual({ label: "Recipients", value: UNCONFIRMED_RECIPIENTS });
+      expect(card.recipients).toBeUndefined();
+      expect(harness.fakes.composio.gmail.outbox).toHaveLength(0);
     });
   });
 

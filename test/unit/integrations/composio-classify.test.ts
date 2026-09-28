@@ -1,11 +1,105 @@
 import { describe, expect, it } from "vitest";
 import type { ActionClass } from "../../../src/contracts/integration.js";
-import type { JsonObject } from "../../../src/contracts/json.js";
-import { classifyGmail } from "../../../src/integrations/gmail/classify.js";
+import type { JsonObject, JsonValue } from "../../../src/contracts/json.js";
+import {
+  classifyGmail,
+  classifySendDraft,
+  draftFromCreate,
+  UNCONFIRMED_RECIPIENTS,
+} from "../../../src/integrations/gmail/classify.js";
 import { GMAIL_PROFILE } from "../../../src/integrations/gmail/profile.js";
+import { GmailDraftMemory } from "../../../src/integrations/gmail/run-memory.js";
 import { classifyGoogleCalendar } from "../../../src/integrations/google-calendar/classify.js";
 import { GOOGLE_CALENDAR_PROFILE } from "../../../src/integrations/google-calendar/profile.js";
 import { SETTINGS } from "./helpers.js";
+
+const DRAFT_INPUT: JsonObject = {
+  recipient_email: "Dana Whitfield <dana@harborpine.test>",
+  cc: ["billing@harborpine.test"],
+  subject: "Your duplicate charge",
+  thread_id: "19a1",
+  body: "Hi Dana,",
+};
+
+describe("sending a draft this run created", () => {
+  it("reads the draft id from Composio's result, bare or wrapped", () => {
+    const expected = {
+      draftId: "r-7400",
+      recipients: { to: ["dana@harborpine.test"], cc: ["billing@harborpine.test"], bcc: [] },
+      subject: "Your duplicate charge",
+      threadId: "19a1",
+    };
+    const outputs: JsonValue[] = [
+      {
+        successful: true,
+        data: { id: "r-7400", message: { id: "m1", threadId: "19a1" } },
+        error: null,
+      },
+      { successful: true, data: { response_data: { id: "r-7400" } } },
+      { data: { draft_id: "r-7400" } },
+      { id: "r-7400", message: { id: "m1" } },
+      { draft_id: "r-7400" },
+    ];
+    for (const output of outputs) {
+      expect(draftFromCreate(DRAFT_INPUT, output), JSON.stringify(output)).toEqual(expected);
+    }
+  });
+
+  it("knows no draft without an id, after a failed create, or without addresses", () => {
+    expect(draftFromCreate(DRAFT_INPUT, { successful: false, data: { id: "r-1" } })).toBeNull();
+    expect(draftFromCreate(DRAFT_INPUT, { successful: true, data: {} })).toBeNull();
+    expect(draftFromCreate(DRAFT_INPUT, "Draft created")).toBeNull();
+    expect(draftFromCreate({ subject: "No one" }, { id: "r-1" })).toBeNull();
+    expect(draftFromCreate({ recipient_email: "not an address" }, { id: "r-1" })).toBeNull();
+  });
+
+  it("names the recipients, subject and thread of the known draft", () => {
+    const known = draftFromCreate(DRAFT_INPUT, { data: { id: "r-7400" } });
+    expect(classifySendDraft({ draft_id: "r-7400" }, known)).toEqual({
+      actionClass: "outbound",
+      operation: "gmail.drafts.send",
+      title: "Send Gmail draft",
+      details: {
+        consequence: "Send the Gmail draft to dana@harborpine.test and billing@harborpine.test",
+        facts: [
+          { label: "To", value: "dana@harborpine.test" },
+          { label: "Cc", value: "billing@harborpine.test" },
+          { label: "Subject", value: "Your duplicate charge" },
+          { label: "Thread", value: "19a1" },
+          { label: "Draft", value: "r-7400" },
+        ],
+        recipients: ["dana@harborpine.test", "billing@harborpine.test"],
+        recordIds: ["r-7400"],
+      },
+    });
+    // Another draft id is not vouched for by this one.
+    expect(classifySendDraft({ draft_id: "r-9999" }, known)?.details?.facts).toContainEqual({
+      label: "Recipients",
+      value: UNCONFIRMED_RECIPIENTS,
+    });
+  });
+
+  it("the run's memory learns from successful creates only and refines only sends", () => {
+    const memory = new GmailDraftMemory();
+    const base = classifyGmail("GMAIL_SEND_DRAFT", { draft_id: "r-7400" }, SETTINGS);
+    if (base === null) throw new Error("expected a classification");
+    memory.record("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_INPUT, { error: "quota" }, true);
+    memory.record("GMAIL_FETCH_EMAILS", { query: "x" }, { data: { id: "r-7400" } }, false);
+    expect(memory.refine("GMAIL_SEND_DRAFT", { draft_id: "r-7400" }, base)).toEqual(base);
+
+    memory.record("GMAIL_CREATE_EMAIL_DRAFT", DRAFT_INPUT, { data: { id: "r-7400" } }, false);
+    expect(memory.drafts.size).toBe(1);
+    const refined = memory.refine("GMAIL_SEND_DRAFT", { draft_id: "r-7400" }, base);
+    expect(refined.actionClass).toBe("outbound");
+    expect(refined.details?.recipients).toEqual([
+      "dana@harborpine.test",
+      "billing@harborpine.test",
+    ]);
+    const label = classifyGmail("GMAIL_ADD_LABEL_TO_EMAIL", { message_id: "m1" }, SETTINGS);
+    if (label === null) throw new Error("expected a classification");
+    expect(memory.refine("GMAIL_ADD_LABEL_TO_EMAIL", { message_id: "m1" }, label)).toBe(label);
+  });
+});
 
 describe("classifyGmail", () => {
   it("classifies reads as read", () => {
@@ -56,16 +150,16 @@ describe("classifyGmail", () => {
     ).toBe("Create a Gmail draft (not sent)");
   });
 
-  it("sends and replies as outbound", () => {
+  it("sends and replies as outbound; a draft nobody vouches for says its recipients are unconfirmed", () => {
     expect(classifyGmail("GMAIL_SEND_DRAFT", { draft_id: "r998" }, SETTINGS)).toEqual({
       actionClass: "outbound",
       operation: "gmail.drafts.send",
       title: "Send Gmail draft",
       details: {
-        consequence: "Send Gmail draft r998 to the recipients saved in it",
+        consequence: "Send Gmail draft r998. Its recipients could not be confirmed.",
         facts: [
           { label: "Draft", value: "r998" },
-          { label: "Recipients", value: "As saved in the draft" },
+          { label: "Recipients", value: UNCONFIRMED_RECIPIENTS },
         ],
         recordIds: ["r998"],
       },

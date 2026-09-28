@@ -9,6 +9,7 @@
 
 import {
   type ApiIntegrationId,
+  type Classification,
   type ComposioAccess,
   type ComposioIntegrationId,
   type ComposioToolkitSlug,
@@ -20,6 +21,7 @@ import {
   sdkToolName,
   type ToolDescriptor,
 } from "../contracts/integration.js";
+import type { JsonObject, JsonValue } from "../contracts/json.js";
 import type { ApiToolDefinition } from "./api-server.js";
 import type { UpstreamConfig } from "./mcp-proxy.js";
 
@@ -52,7 +54,26 @@ export type ComposioUpstreamSource<I extends ComposioIntegrationId> = {
   };
 };
 
+/**
+ * What a run learned from an integration's earlier calls that changes how a
+ * later call is classified, e.g. who receives a Gmail draft created earlier
+ * in the run, when sending it names only the draft. One per integration and
+ * run; it never contacts a system.
+ */
+export interface RunMemory {
+  /** A call of this integration finished; `output` is what the model received. */
+  record(tool: string, input: JsonObject, output: JsonValue, isError: boolean): void;
+  /** The classification of `tool` for `input`, refined with what the run learned. */
+  refine(tool: string, input: JsonObject, classification: Classification): Classification;
+}
+
+/** An integration whose classifications can depend on the run's earlier calls. */
+export type RunMemorySource = {
+  runMemory?(): RunMemory;
+};
+
 export type CatalogEntry<I extends IntegrationId> = IntegrationDefinition<I> &
+  RunMemorySource &
   (I extends ApiIntegrationId
     ? ApiToolSource<I>
     : I extends ComposioIntegrationId
@@ -65,7 +86,8 @@ export type CatalogEntry<I extends IntegrationId> = IntegrationDefinition<I> &
 export type IntegrationCatalog = { readonly [I in IntegrationId]: CatalogEntry<I> };
 
 /** The parts of an IntegrationDefinition the gateway reads for its tools. */
-export type ToolSource = Pick<IntegrationDefinition, "id" | "profile" | "classify">;
+export type ToolSource = Pick<IntegrationDefinition, "id" | "profile" | "classify"> &
+  RunMemorySource;
 
 /** Every tool of an integration's profile, as registered descriptors. */
 export function profileDescriptors(definition: ToolSource): ToolDescriptor[] {

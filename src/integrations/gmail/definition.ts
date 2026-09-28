@@ -7,6 +7,7 @@ import { resolveComposioConfig } from "../composio/resolve.js";
 import { allowedTools } from "../composio/session.js";
 import { classifyGmail } from "./classify.js";
 import { GMAIL_PROFILE } from "./profile.js";
+import { GmailDraftMemory } from "./run-memory.js";
 
 export function createGmailIntegration(
   connectors: ComposioConnectors = new ComposioConnectors(),
@@ -41,5 +42,7 @@ export function createGmailIntegration(
       probeComposio(connectors.forConnection(connection), "gmail", signal),
     allowlist: (access) => allowedTools("gmail", access),
     connector: (connection) => connectors.forConnection(connection),
+    // Sending a draft names the recipients of the draft this run created.
+    runMemory: () => new GmailDraftMemory(),
   };
 }

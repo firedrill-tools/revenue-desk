@@ -8,6 +8,7 @@ import type {
   IntegrationDefinition,
   ResolvedConnectionOf,
 } from "../../contracts/integration.js";
+import type { RunMemory } from "../../gateway/catalog.js";
 import type { ComposioConnector } from "./connector.js";
 
 export interface ComposioIntegration<I extends ComposioIntegrationId>
@@ -18,4 +19,6 @@ export interface ComposioIntegration<I extends ComposioIntegrationId>
   allowlist(access: ComposioAccess): readonly string[];
   /** The shared connector for this connection's Composio configuration. */
   connector(connection: ResolvedConnectionOf<I>): ComposioConnector;
+  /** What a run learns from this integration's calls (e.g. the drafts it created). */
+  runMemory?(): RunMemory;
 }

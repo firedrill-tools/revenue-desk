@@ -21,7 +21,12 @@ import {
   type WorkspaceSettings,
 } from "../contracts/integration.js";
 import { apiGatewayTool } from "./api-server.js";
-import { type IntegrationCatalog, profileDescriptors, type ToolSource } from "./catalog.js";
+import {
+  type IntegrationCatalog,
+  profileDescriptors,
+  type RunMemory,
+  type ToolSource,
+} from "./catalog.js";
 import {
   connectUpstream as defaultConnectUpstream,
   type Upstream,
@@ -30,7 +35,7 @@ import {
 } from "./mcp-proxy.js";
 import { type RegisteredTool, registerTool, ToolRegistry } from "./registry.js";
 import { createGatewayServer, type GatewayServer } from "./server.js";
-import type { GatewayObserver, GatewayTool } from "./types.js";
+import { type GatewayObserver, type GatewayTool, notify } from "./types.js";
 
 export type RunGatewayOptions = {
   readonly runId: string;
@@ -128,6 +133,25 @@ function apiTools(
   });
 }
 
+/** The run's observer, preceded by the integration's memory of finished calls. */
+function remembering(
+  memory: RunMemory | undefined,
+  observer: GatewayObserver | undefined,
+): GatewayObserver | undefined {
+  if (memory === undefined) return observer;
+  return {
+    callStarted: (call) => observer?.callStarted?.(call),
+    callProgress: (call, elapsedMs) => observer?.callProgress?.(call, elapsedMs),
+    callFinished(result) {
+      // The memory learns before the model sees the result, so its next call is classified with it.
+      notify(() =>
+        memory.record(result.call.tool, result.call.arguments, result.output, result.isError),
+      );
+      observer?.callFinished(result);
+    },
+  };
+}
+
 /** Connects the run's integrations and builds its registry. Never throws for an integration failure. */
 export async function openRunGateway(options: RunGatewayOptions): Promise<RunGateway> {
   const connect = options.connectUpstream ?? defaultConnectUpstream;
@@ -205,6 +229,8 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
     }
     const definition: ToolSource = options.catalog[integration];
     const descriptors = profileDescriptors(definition);
+    // What this run learns from the integration's calls refines later classifications.
+    const memory = definition.runMemory?.();
     let tools: readonly GatewayTool[];
     try {
       if (INTEGRATIONS[integration].kind === "api") {
@@ -236,6 +262,7 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
             tool.definition.inputSchema,
             definition,
             classifierSettings,
+            memory,
           ),
         );
         offered.push(tool);
@@ -250,13 +277,14 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
       });
       continue;
     }
+    const observer = remembering(memory, options.observer);
     servers.push(
       createGatewayServer({
         integration,
         runId: options.runId,
         tools: offered,
         redact,
-        ...(options.observer === undefined ? {} : { observer: options.observer }),
+        ...(observer === undefined ? {} : { observer }),
         ...(options.toolTimeoutMs === undefined ? {} : { timeoutMs: options.toolTimeoutMs }),
         ...(options.progressIntervalMs === undefined
           ? {}
