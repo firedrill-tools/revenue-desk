@@ -12,6 +12,7 @@ import { str } from "../shared/json.js";
 import { maskIdentifier, sentence } from "../shared/text.js";
 import { classifySlack } from "./classify.js";
 import { SlackClient } from "./client.js";
+import { checkSlackInput } from "./input-rules.js";
 import { SLACK_PROFILE } from "./profile.js";
 import { resolveSlack } from "./resolve.js";
 import { createSlackTools } from "./tools.js";
@@ -70,5 +71,7 @@ export function createSlackIntegration(deps: ApiIntegrationDeps = {}): ApiIntegr
     probe: (connection, signal) => probeSlack(connection, signal, deps.http),
     tools: (connection, options) =>
       createSlackTools(slackClientFor(connection, deps.http), options),
+    // Mentions must be Slack user ids; a plain @name or another system's id notifies nobody.
+    checkInput: checkSlackInput,
   };
 }

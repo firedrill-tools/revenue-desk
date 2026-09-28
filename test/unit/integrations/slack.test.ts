@@ -5,6 +5,7 @@ import type { ApiTool } from "../../../src/integrations/shared/api-tool.js";
 import { classifySlack } from "../../../src/integrations/slack/classify.js";
 import { SlackClient, slackError } from "../../../src/integrations/slack/client.js";
 import { createSlackIntegration, probeSlack } from "../../../src/integrations/slack/definition.js";
+import { checkSlackInput } from "../../../src/integrations/slack/input-rules.js";
 import { SLACK_PROFILE } from "../../../src/integrations/slack/profile.js";
 import { resolveSlack } from "../../../src/integrations/slack/resolve.js";
 import {
@@ -58,10 +59,43 @@ describe("Slack formatting and times", () => {
     expect(post?.description).toContain("Slack mrkdwn, not Markdown");
     expect(post?.description).toContain("Post about an action only after it succeeded");
     const text = post?.input.text as { description?: string } | undefined;
-    expect(text?.description).toContain("<@U123> to mention a person");
-    expect(text?.description).toContain("a plain @name mentions nobody");
+    expect(text?.description).toContain("<@U123> to mention a person by their Slack user id");
+    expect(text?.description).toContain(
+      "a plain @name or another system's id, such as a CRM owner id, mentions nobody",
+    );
     expect(text?.description).toContain("Markdown tables, # headings and **double asterisks**");
     expect(text?.description).toContain("No emoji.");
+  });
+
+  it("refuses mentions that notify nobody, before the post reaches Slack", () => {
+    // A HubSpot owner id in Slack's mention syntax, and a plain @name (both seen live).
+    expect(
+      checkSlackInput("post_message", {
+        channel: "#sales-ops",
+        text: "Closed by <@71001>. Flagging for @Sam to reconcile.",
+      }),
+    ).toEqual([
+      {
+        path: "/text",
+        message:
+          "mentions <@71001>, which is not a Slack user id (U… or W…): find the person with find_user and use their id, or write their name without a mention",
+      },
+      {
+        path: "/text",
+        message:
+          "has a plain @Sam, which mentions nobody in Slack: find the person with find_user and write <@USERID>, or write the name without @",
+      },
+    ]);
+    // Real mentions, email addresses and broadcasts (the classifier asks for those) pass.
+    for (const text of [
+      "Thanks <@U0SAM0001> and <@W0MAYA001|maya>.",
+      "Sent to marco@solstice.test.",
+      "Heads up @here: the digest is out.",
+    ]) {
+      expect(checkSlackInput("post_message", { channel: "#billing", text }), text).toEqual([]);
+    }
+    expect(checkSlackInput("read_channel", { text: "<@71001>" })).toEqual([]);
+    expect(createSlackIntegration().checkInput).toBe(checkSlackInput);
   });
 
   it("writes message times in the workspace time zone", async () => {
