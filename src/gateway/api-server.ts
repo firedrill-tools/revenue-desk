@@ -1,31 +1,38 @@
-import {
-  type AnyZodRawShape,
-  createSdkMcpServer,
-  type InferShape,
-  type McpSdkServerConfigWithInstance,
-  type SdkMcpToolDefinition,
-  tool,
-} from "@anthropic-ai/claude-agent-sdk";
-import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
-import { errorResult, type GatewayObserver, notify } from "./types.js";
+// The in-process tools of the API integrations (Stripe, QuickBooks, Slack).
+//
+// An ApiToolDefinition is a zod raw shape plus a typed `run`. The gateway
+// offers the model the shape's JSON schema (draft-07, no undeclared
+// properties), which is also the schema the PreToolUse hook validates against
+// before any approval. `run` receives the parsed arguments and the call's
+// ApiCallContext (runId, toolUseId, idempotencyKey, signal); it returns JSON
+// data or throws ApiToolError for a provider error the model should see.
 
-/** What an API tool's `run` receives besides its validated arguments. */
-export interface ApiToolContext {
-  /** Aborted when the SDK cancels the call (Stop, timeout or the run ending). */
-  readonly signal?: AbortSignal;
-}
+import type { AnyZodRawShape, InferShape } from "@anthropic-ai/claude-agent-sdk";
+import type { CallToolResult, Tool, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import type {
+  ApiCallContext,
+  IntegrationId,
+  ToolDescriptor,
+  ToolFailure,
+} from "../contracts/integration.js";
+import type { JsonObject } from "../contracts/json.js";
+import { errorResult, type GatewayTool, type ToolExecution } from "./types.js";
+
+/** What an API tool's `run` receives besides its arguments: exactly the frozen ApiCallContext. */
+export type ApiToolContext = ApiCallContext;
 
 /**
  * One in-process tool of an API integration. `run` returns plain data, which
- * the model receives as JSON text; it throws `ApiToolError` for a provider
- * error the model should see.
+ * the model receives as JSON text; it throws ApiToolError for a provider error.
  */
 export interface ApiToolDefinition<Shape extends AnyZodRawShape = AnyZodRawShape> {
+  /** The name after `mcp__<integration>__`; equal to its ToolSpec name. */
   readonly name: string;
   readonly description: string;
-  /** A zod raw shape; the SDK converts it to the JSON schema the model sees. */
+  /** A zod 4 raw shape. */
   readonly input: Shape;
-  /** Reads run in parallel and carry `readOnlyHint`; everything else is a write. */
+  /** Reads run concurrently and carry readOnlyHint; everything else is a write. */
   readonly readOnly: boolean;
   readonly destructive?: boolean;
   run(args: InferShape<Shape>, context: ApiToolContext): Promise<unknown>;
@@ -64,79 +71,121 @@ export class ApiToolError extends Error {
       message: this.message,
     };
   }
+
+  toFailure(): ToolFailure {
+    return {
+      provider: this.provider,
+      status: this.status ?? null,
+      code: this.code ?? null,
+      message: this.message,
+    };
+  }
 }
 
-export interface ApiServerOptions {
-  /** The integration id; tools reach the model as `mcp__<name>__<tool>`. */
-  readonly name: string;
-  // biome-ignore lint/suspicious/noExplicitAny: each tool keeps its own shape.
-  readonly tools: readonly ApiToolDefinition<any>[];
-  /** Per-call wall-clock limit in milliseconds (the SDK ignores values under 1000). */
-  readonly timeoutMs?: number;
-  readonly observer?: GatewayObserver;
+export class ApiToolDefinitionError extends Error {
+  override readonly name = "ApiToolDefinitionError";
 }
 
-function signalOf(extra: unknown): AbortSignal | undefined {
-  if (typeof extra !== "object" || extra === null || !("signal" in extra)) return undefined;
-  const signal = (extra as { signal?: unknown }).signal;
-  return signal instanceof AbortSignal ? signal : undefined;
+function isZod4Schema(value: unknown): value is z.ZodType {
+  return typeof value === "object" && value !== null && "_zod" in value;
 }
 
-function annotationsOf(definition: ApiToolDefinition): ToolAnnotations {
-  return definition.readOnly
-    ? { readOnlyHint: true }
-    : { readOnlyHint: false, destructiveHint: definition.destructive === true };
-}
-
-function failure(error: unknown): CallToolResult {
-  if (error instanceof ApiToolError) return errorResult(JSON.stringify({ error: error.toJSON() }));
-  const message = error instanceof Error ? error.message : String(error);
-  return errorResult(JSON.stringify({ error: { message } }));
-}
-
-function sdkTool(server: string, definition: ApiToolDefinition, observer?: GatewayObserver) {
-  const handler = async (args: Record<string, unknown>, extra: unknown) => {
-    const started = performance.now();
-    let result: CallToolResult;
-    try {
-      const signal = signalOf(extra);
-      const data = await definition.run(args, signal === undefined ? {} : { signal });
-      result = { content: [{ type: "text", text: JSON.stringify(data ?? null) }] };
-    } catch (error) {
-      result = failure(error);
+/** The strict zod object of a shape; refuses zod 3 shapes, which cannot produce the offered schema. */
+function strictObject(name: string, shape: AnyZodRawShape): z.ZodObject {
+  const entries = Object.entries(shape);
+  for (const [key, schema] of entries) {
+    if (!isZod4Schema(schema)) {
+      throw new ApiToolDefinitionError(`API tool ${name}: "${key}" is not a zod 4 schema.`);
     }
-    notify(observer, {
-      server,
-      kind: "api",
-      tool: definition.name,
-      arguments: args,
-      result,
-      isError: result.isError === true,
-      durationMs: Math.round(performance.now() - started),
-    });
-    return result;
-  };
-  return tool(definition.name, definition.description, definition.input, handler, {
-    annotations: annotationsOf(definition),
-  }) as SdkMcpToolDefinition;
+  }
+  return z.strictObject(shape as z.ZodRawShape);
+}
+
+/** The JSON schema the model sees for an API tool's arguments (draft-07, closed). */
+export function apiInputSchema(definition: ApiToolDefinition): Tool["inputSchema"] {
+  const schema = z.toJSONSchema(strictObject(definition.name, definition.input), {
+    target: "draft-7",
+    io: "input",
+    unrepresentable: "any",
+  });
+  return { ...(schema as Record<string, unknown>), type: "object" } as Tool["inputSchema"];
+}
+
+function annotationsOf(descriptor: ToolDescriptor): ToolAnnotations {
+  return descriptor.readOnly
+    ? { readOnlyHint: true }
+    : { readOnlyHint: false, destructiveHint: descriptor.baseClass === "destructive" };
+}
+
+function failureOf(integration: IntegrationId, error: unknown): ToolFailure {
+  if (error instanceof ApiToolError) return error.toFailure();
+  const message = error instanceof Error ? error.message : String(error);
+  return { provider: integration, status: null, code: null, message };
+}
+
+function failureResult(failure: ToolFailure): CallToolResult {
+  return errorResult(JSON.stringify({ error: failure }));
+}
+
+function zodIssues(error: z.ZodError): string {
+  return error.issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.join(".") || "(arguments)"}: ${issue.message}`)
+    .join("; ");
 }
 
 /**
- * An in-process MCP server for an API integration, built with the SDK's own
- * `createSdkMcpServer`/`tool()`. Each call returns a new server instance.
- * Build one per `query()`: an instance holds one transport at a time, and a
- * concurrent second query() silently gets no tools from a shared instance.
- *
- * The SDK validates arguments against the zod shape only after `canUseTool`
- * has approved the call, and reports a failure as an MCP -32602 error result;
- * `run` is not called then.
+ * The gateway tool of one API tool definition. The zod shape parses the
+ * arguments again (after the PreToolUse schema check) to apply defaults and
+ * give `run` typed values.
  */
-export function createApiServer(options: ApiServerOptions): McpSdkServerConfigWithInstance {
-  return createSdkMcpServer({
-    name: options.name,
-    version: "1.0.0",
-    alwaysLoad: true,
-    ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
-    tools: options.tools.map((definition) => sdkTool(options.name, definition, options.observer)),
-  });
+export function apiGatewayTool(
+  definition: ApiToolDefinition,
+  descriptor: ToolDescriptor,
+): GatewayTool {
+  if (definition.name !== descriptor.name) {
+    throw new ApiToolDefinitionError(
+      `API tool ${definition.name} does not match its profile entry ${descriptor.name}.`,
+    );
+  }
+  const parser = strictObject(definition.name, definition.input);
+  const toolDefinition: Tool = {
+    name: descriptor.name,
+    description: definition.description,
+    inputSchema: apiInputSchema(definition),
+    annotations: annotationsOf(descriptor),
+    _meta: { "anthropic/alwaysLoad": true },
+  };
+  return {
+    descriptor,
+    definition: toolDefinition,
+    async execute(args: JsonObject, context): Promise<ToolExecution> {
+      const parsed = parser.safeParse(args);
+      if (!parsed.success) {
+        const failure: ToolFailure = {
+          provider: descriptor.integration,
+          status: null,
+          code: "invalid_arguments",
+          message: `Invalid arguments: ${zodIssues(parsed.error)}`,
+        };
+        return { result: failureResult(failure), error: failure, httpStatus: null };
+      }
+      try {
+        const data = await definition.run(parsed.data as InferShape<AnyZodRawShape>, {
+          runId: context.runId,
+          toolUseId: context.toolUseId,
+          idempotencyKey: context.idempotencyKey,
+          signal: context.signal,
+        });
+        return {
+          result: { content: [{ type: "text", text: JSON.stringify(data ?? null) }] },
+          error: null,
+          httpStatus: null,
+        };
+      } catch (error) {
+        const failure = failureOf(descriptor.integration, error);
+        return { result: failureResult(failure), error: failure, httpStatus: failure.status };
+      }
+    },
+  };
 }

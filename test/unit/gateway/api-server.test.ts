@@ -1,162 +1,192 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
-import { ApiToolError, createApiServer, defineApiTool } from "../../../src/gateway/api-server.js";
-import type { GatewayCallEvent } from "../../../src/gateway/types.js";
+import {
+  type ApiCallContext,
+  sdkToolName,
+  type ToolDescriptor,
+} from "../../../src/contracts/integration.js";
+import {
+  type ApiToolContext,
+  ApiToolDefinitionError,
+  ApiToolError,
+  apiGatewayTool,
+  apiInputSchema,
+  defineApiTool,
+} from "../../../src/gateway/api-server.js";
+import type { ExecutionContext } from "../../../src/gateway/types.js";
+import { compileArgumentValidator } from "../../../src/gateway/validate.js";
+import { textOf } from "../../helpers/mcp-client.js";
 
-const clients: Client[] = [];
-
-afterEach(async () => {
-  for (const client of clients.splice(0)) await client.close();
+const descriptor = (name: string, readOnly: boolean): ToolDescriptor => ({
+  name,
+  upstream: readOnly ? "GET /v1/charges" : "POST /v1/refunds",
+  operation: readOnly ? "stripe.charges.list" : "stripe.refunds.create",
+  title: name,
+  baseClass: readOnly ? "read" : "financial",
+  readOnly,
+  integration: "stripe",
+  connectionKind: "api",
+  sdkName: sdkToolName("stripe", name),
 });
 
-function stripeServer() {
-  const runs: Record<string, unknown>[] = [];
-  const events: GatewayCallEvent[] = [];
-  const config = createApiServer({
-    name: "stripe",
-    timeoutMs: 30_000,
-    observer: (event) => events.push(event),
-    tools: [
-      defineApiTool({
-        name: "list_charges",
-        description: "List a customer's charges.",
-        input: { customer: z.string(), limit: z.number().int().min(1).max(100).optional() },
-        readOnly: true,
-        run: async (args) => {
-          runs.push(args);
-          return { data: [{ id: "ch_1" }], has_more: false };
-        },
-      }),
-      defineApiTool({
-        name: "create_refund",
-        description: "Refund a charge.",
-        input: { charge: z.string(), amount: z.number().int().positive().optional() },
-        readOnly: false,
-        run: async (args) => {
-          runs.push(args);
-          if (args.charge === "ch_declined") {
-            throw new ApiToolError("stripe", "Charge ch_declined has already been refunded.", {
-              status: 400,
-              code: "charge_already_refunded",
-            });
-          }
-          if (args.charge === "ch_boom") throw new Error("socket hang up");
-          return { id: "re_1", ...args };
-        },
-      }),
-      defineApiTool({
-        name: "delete_customer",
-        description: "Delete a customer.",
-        input: { customer: z.string() },
-        readOnly: false,
-        destructive: true,
-        run: async () => ({ deleted: true }),
-      }),
-    ],
+const context = (signal = new AbortController().signal): ExecutionContext => ({
+  runId: "run_1",
+  toolUseId: "toolu_1",
+  idempotencyKey: "key_1",
+  signal,
+});
+
+function refundTool(received: { args: unknown; context: ApiToolContext }[] = []) {
+  return defineApiTool({
+    name: "create_refund",
+    description: "Refund a charge.",
+    input: {
+      charge: z.string().describe("Charge id, ch_…"),
+      amount: z.number().int().positive().optional().describe("Minor units"),
+      reason: z.enum(["duplicate", "fraudulent"]).default("duplicate"),
+    },
+    readOnly: false,
+    run: async (args, callContext) => {
+      received.push({ args, context: callContext });
+      if (args.charge === "ch_refunded") {
+        throw new ApiToolError("stripe", "Charge ch_refunded has already been refunded.", {
+          status: 400,
+          code: "charge_already_refunded",
+        });
+      }
+      if (args.charge === "ch_boom") throw new Error("socket hang up");
+      return { id: "re_1", ...args };
+    },
   });
-  return { config, runs, events };
 }
 
-async function connect(instance: ReturnType<typeof stripeServer>["config"]["instance"]) {
-  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  await instance.connect(serverSide);
-  const client = new Client({ name: "unit", version: "1.0.0" });
-  await client.connect(clientSide);
-  clients.push(client);
-  return client;
-}
-
-const text = (result: unknown) =>
-  (result as { content?: { text?: string }[] }).content?.[0]?.text ?? "";
-
-describe("createApiServer", () => {
-  it("lists zod tools as always-loaded JSON-schema tools with read/write annotations", async () => {
-    const { config } = stripeServer();
-    expect(config).toMatchObject({ type: "sdk", name: "stripe", timeout: 30_000 });
-    const client = await connect(config.instance);
-    const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name)).toEqual([
-      "list_charges",
-      "create_refund",
-      "delete_customer",
-    ]);
-    const [list, refund, remove] = tools;
-    expect(list?.inputSchema).toMatchObject({
+describe("API tools", () => {
+  it("offer the zod shape as a closed draft-07 JSON schema that the validator can check", () => {
+    const schema = apiInputSchema(refundTool());
+    expect(schema).toMatchObject({
+      $schema: "http://json-schema.org/draft-07/schema#",
       type: "object",
       properties: {
-        customer: { type: "string" },
-        limit: { type: "integer", minimum: 1, maximum: 100 },
+        charge: { type: "string", description: "Charge id, ch_…" },
+        amount: { type: "integer", exclusiveMinimum: 0, description: "Minor units" },
+        reason: { type: "string", enum: ["duplicate", "fraudulent"], default: "duplicate" },
       },
-      required: ["customer"],
+      required: ["charge"],
+      additionalProperties: false,
     });
-    expect(list?.annotations).toEqual({ readOnlyHint: true });
-    expect(refund?.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
-    expect(remove?.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-    for (const tool of tools) expect(tool._meta).toMatchObject({ "anthropic/alwaysLoad": true });
-  });
-
-  it("returns run's data as JSON text and reports the call", async () => {
-    const { config, runs, events } = stripeServer();
-    const client = await connect(config.instance);
-    const result = await client.callTool({
-      name: "list_charges",
-      arguments: { customer: "cus_1", limit: 2 },
-    });
-    expect(result.isError).toBeUndefined();
-    expect(JSON.parse(text(result))).toEqual({ data: [{ id: "ch_1" }], has_more: false });
-    expect(runs).toEqual([{ customer: "cus_1", limit: 2 }]);
-    expect(events).toEqual([
-      expect.objectContaining({
-        server: "stripe",
-        kind: "api",
-        tool: "list_charges",
-        arguments: { customer: "cus_1", limit: 2 },
-        isError: false,
-        durationMs: expect.any(Number),
-      }),
+    const validate = compileArgumentValidator(schema);
+    expect(validate({ charge: "ch_1" })).toEqual([]);
+    expect(validate({ charge: "ch_1", amount: 0 }).map((issue) => issue.path)).toEqual(["/amount"]);
+    expect(validate({ charge: "ch_1", note: "x" })).toEqual([
+      { path: "", message: 'has an unexpected property "note"' },
     ]);
   });
 
-  it("normalises provider errors and other failures into error results", async () => {
-    const { config, events } = stripeServer();
-    const client = await connect(config.instance);
-    const declined = await client.callTool({
-      name: "create_refund",
-      arguments: { charge: "ch_declined" },
-    });
-    expect(declined.isError).toBe(true);
-    expect(JSON.parse(text(declined))).toEqual({
-      error: {
-        provider: "stripe",
-        status: 400,
-        code: "charge_already_refunded",
-        message: "Charge ch_declined has already been refunded.",
+  it("run with parsed arguments (defaults applied) and the call's context", async () => {
+    const received: { args: unknown; context: ApiToolContext }[] = [];
+    const tool = apiGatewayTool(refundTool(received), descriptor("create_refund", false));
+    const signal = new AbortController().signal;
+    const execution = await tool.execute({ charge: "ch_2", amount: 4900 }, context(signal));
+    expect(received).toEqual([
+      {
+        args: { charge: "ch_2", amount: 4900, reason: "duplicate" },
+        context: { runId: "run_1", toolUseId: "toolu_1", idempotencyKey: "key_1", signal },
       },
+    ]);
+    expect(execution.error).toBeNull();
+    expect(JSON.parse(textOf(execution.result))).toEqual({
+      id: "re_1",
+      charge: "ch_2",
+      amount: 4900,
+      reason: "duplicate",
     });
-    const broken = await client.callTool({
+    expect(tool.definition).toMatchObject({
       name: "create_refund",
-      arguments: { charge: "ch_boom" },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      _meta: { "anthropic/alwaysLoad": true },
     });
-    expect(JSON.parse(text(broken))).toEqual({ error: { message: "socket hang up" } });
-    expect(events.map((event) => event.isError)).toEqual([true, true]);
   });
 
-  it("rejects arguments that fail the zod shape before run is called", async () => {
-    const { config, runs, events } = stripeServer();
-    const client = await connect(config.instance);
-    const result = await client.callTool({
-      name: "create_refund",
-      arguments: { charge: "ch_1", amount: -5 },
+  it("report a provider error with its status and code", async () => {
+    const tool = apiGatewayTool(refundTool(), descriptor("create_refund", false));
+    const execution = await tool.execute({ charge: "ch_refunded" }, context());
+    const failure = {
+      provider: "stripe",
+      status: 400,
+      code: "charge_already_refunded",
+      message: "Charge ch_refunded has already been refunded.",
+    };
+    expect(execution).toEqual({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ error: failure }) }],
+      },
+      error: failure,
+      httpStatus: 400,
     });
-    expect(result.isError).toBe(true);
-    expect(text(result)).toMatch(/-32602.*Invalid arguments for tool create_refund/s);
-    expect(runs).toEqual([]);
-    expect(events).toEqual([]);
   });
 
-  it("builds a new server instance on every call", () => {
-    expect(stripeServer().config.instance).not.toBe(stripeServer().config.instance);
+  it("report an unexpected error without a status", async () => {
+    const tool = apiGatewayTool(refundTool(), descriptor("create_refund", false));
+    const execution = await tool.execute({ charge: "ch_boom" }, context());
+    expect(execution.error).toEqual({
+      provider: "stripe",
+      status: null,
+      code: null,
+      message: "socket hang up",
+    });
+    expect(execution.httpStatus).toBeNull();
+  });
+
+  it("never run with arguments the shape refuses", async () => {
+    const received: { args: unknown; context: ApiToolContext }[] = [];
+    const tool = apiGatewayTool(refundTool(received), descriptor("create_refund", false));
+    const execution = await tool.execute({ charge: 5, extra: true }, context());
+    expect(received).toEqual([]);
+    expect(execution.error?.code).toBe("invalid_arguments");
+    expect(execution.result.isError).toBe(true);
+  });
+
+  it("mark reads read-only", () => {
+    const list = defineApiTool({
+      name: "list_charges",
+      description: "List charges.",
+      input: { customer: z.string() },
+      readOnly: true,
+      run: async () => ({ data: [] }),
+    });
+    expect(apiGatewayTool(list, descriptor("list_charges", true)).definition.annotations).toEqual({
+      readOnlyHint: true,
+    });
+  });
+
+  it("must match their profile entry", () => {
+    expect(() => apiGatewayTool(refundTool(), descriptor("list_charges", true))).toThrow(
+      ApiToolDefinitionError,
+    );
+  });
+
+  it("serialise provider errors as the ToolFailure shape", () => {
+    const error = new ApiToolError("quickbooks", "Stale object", { status: 400, code: "5010" });
+    expect(error.toJSON()).toEqual({
+      provider: "quickbooks",
+      status: 400,
+      code: "5010",
+      message: "Stale object",
+    });
+    expect(new ApiToolError("slack", "channel_not_found").toJSON()).toEqual({
+      provider: "slack",
+      message: "channel_not_found",
+    });
+    expect(new ApiToolError("slack", "x").toFailure()).toEqual({
+      provider: "slack",
+      status: null,
+      code: null,
+      message: "x",
+    });
+  });
+
+  it("receive exactly the frozen ApiCallContext", () => {
+    expectTypeOf<ApiToolContext>().toEqualTypeOf<ApiCallContext>();
   });
 });

@@ -1,15 +1,15 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { sdkToolName, type ToolDescriptor } from "../../../src/contracts/integration.js";
 import {
   connectUpstream,
-  createFilteringProxy,
-  type FilteringProxy,
+  type Upstream,
+  upstreamGatewayTools,
 } from "../../../src/gateway/mcp-proxy.js";
-import type { GatewayCallEvent } from "../../../src/gateway/types.js";
+import type { ExecutionContext } from "../../../src/gateway/types.js";
+import { textOf } from "../../helpers/mcp-client.js";
 import {
   CRM_INSTRUCTIONS,
   MAIL_TOOLS,
@@ -25,7 +25,28 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function mailProxy(options: { pageSize?: number; failing?: string } = {}) {
+function descriptor(name: string, upstream = name, readOnly = true): ToolDescriptor {
+  return {
+    name,
+    upstream,
+    operation: "gmail.messages.list",
+    title: name,
+    baseClass: readOnly ? "read" : "outbound",
+    readOnly,
+    integration: "gmail",
+    connectionKind: "composio",
+    sdkName: sdkToolName("gmail", name),
+  };
+}
+
+const context = (): ExecutionContext => ({
+  runId: "run_1",
+  toolUseId: "toolu_1",
+  idempotencyKey: "k",
+  signal: new AbortController().signal,
+});
+
+async function mailUpstream(options: { pageSize?: number; failing?: string } = {}) {
   const upstream = await startHttpUpstream({ token: TOKEN, tools: MAIL_TOOLS, ...options });
   cleanups.push(() => upstream.close());
   const connection = await connectUpstream({
@@ -34,30 +55,12 @@ async function mailProxy(options: { pageSize?: number; failing?: string } = {}) 
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
   cleanups.push(() => connection.close());
-  const events: GatewayCallEvent[] = [];
-  const proxy = createFilteringProxy({
-    name: "gmail",
-    upstream: connection,
-    allow: ["GMAIL_FETCH_EMAILS", "GMAIL_SEND_DRAFT", "GMAIL_NOT_OFFERED"],
-    observer: (event) => events.push(event),
-  });
-  return { upstream, connection, proxy, events };
-}
-
-/** An MCP client talking to one proxy instance, the way the Claude CLI does. */
-async function clientFor(proxy: FilteringProxy) {
-  const config = proxy.serverConfig();
-  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  await config.instance.connect(serverSide);
-  const client = new Client({ name: "unit", version: "1.0.0" });
-  await client.connect(clientSide);
-  cleanups.push(() => client.close());
-  return { client, config };
+  return { upstream, connection };
 }
 
 describe("connectUpstream", () => {
   it("lists every page of an HTTP upstream's tools with its bearer header", async () => {
-    const { upstream, connection } = await mailProxy({ pageSize: 1 });
+    const { upstream, connection } = await mailUpstream({ pageSize: 1 });
     expect(connection.tools.map((tool) => tool.name)).toEqual(
       MAIL_TOOLS.map((fixture) => fixture.tool.name),
     );
@@ -77,6 +80,16 @@ describe("connectUpstream", () => {
     expect(upstream.unauthorized).toBeGreaterThan(0);
   });
 
+  it("gives up when its signal aborts", async () => {
+    const { upstream } = await mailUpstream();
+    await expect(
+      connectUpstream(
+        { transport: "http", url: upstream.url, headers: { Authorization: `Bearer ${TOKEN}` } },
+        { signal: AbortSignal.abort("user") },
+      ),
+    ).rejects.toThrow(/could not connect/);
+  });
+
   it("starts a stdio upstream and reads its instructions", { timeout: 20_000 }, async () => {
     const state = mkdtempSync(join(tmpdir(), "revenue-desk-proxy-"));
     cleanups.push(() => rmSync(state, { recursive: true, force: true }));
@@ -91,13 +104,10 @@ describe("connectUpstream", () => {
       "create_note",
       "delete_contact",
     ]);
-    const proxy = createFilteringProxy({
-      name: "hubspot",
-      upstream: connection,
-      allow: ["search_contacts"],
-    });
-    const { client } = await clientFor(proxy);
-    await client.callTool({ name: "search_contacts", arguments: { query: "ana" } });
+    const { tools } = upstreamGatewayTools(connection, [
+      { ...descriptor("search_contacts"), integration: "hubspot", connectionKind: "mcp" },
+    ]);
+    await tools[0]?.execute({ query: "ana" }, context());
     expect(readCallLog(log)).toEqual([{ tool: "search_contacts", arguments: { query: "ana" } }]);
   });
 
@@ -112,88 +122,89 @@ describe("connectUpstream", () => {
   });
 });
 
-describe("createFilteringProxy", () => {
-  it("lists only allowlisted tools with the upstream schemas unchanged", async () => {
-    const { proxy } = await mailProxy();
-    expect(proxy.missing).toEqual(["GMAIL_NOT_OFFERED"]);
-    const { client, config } = await clientFor(proxy);
-    expect(config).toMatchObject({ type: "sdk", name: "gmail", timeout: 120_000 });
-    const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name)).toEqual(["GMAIL_FETCH_EMAILS", "GMAIL_SEND_DRAFT"]);
+describe("upstreamGatewayTools", () => {
+  it("offers only the profile's tools, with the upstream schema byte for byte", async () => {
+    const { connection } = await mailUpstream();
+    const { tools, missing } = upstreamGatewayTools(connection, [
+      descriptor("GMAIL_FETCH_EMAILS"),
+      descriptor("GMAIL_SEND_DRAFT", "GMAIL_SEND_DRAFT", false),
+      descriptor("GMAIL_NOT_OFFERED"),
+    ]);
+    expect(missing).toEqual(["GMAIL_NOT_OFFERED"]);
+    expect(tools.map((tool) => tool.definition.name)).toEqual([
+      "GMAIL_FETCH_EMAILS",
+      "GMAIL_SEND_DRAFT",
+    ]);
     for (const tool of tools) {
-      const upstream = MAIL_TOOLS.find((fixture) => fixture.tool.name === tool.name)?.tool;
-      expect(tool.inputSchema).toEqual(upstream?.inputSchema);
-      expect(tool.annotations).toEqual(upstream?.annotations);
-      expect(tool.description).toBe(upstream?.description);
-      expect(tool._meta).toEqual({ "anthropic/alwaysLoad": true });
+      const upstream = MAIL_TOOLS.find(
+        (fixture) => fixture.tool.name === tool.definition.name,
+      )?.tool;
+      expect(tool.definition.inputSchema).toEqual(upstream?.inputSchema);
+      expect(tool.definition.description).toBe(upstream?.description);
+      expect(tool.definition._meta).toEqual({ "anthropic/alwaysLoad": true });
+      expect(tool.definition).not.toHaveProperty("outputSchema");
     }
-    expect(client.getInstructions()).toBeUndefined();
+    // The profile, not the upstream, decides the read-only hint.
+    expect(tools[1]?.definition.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
   });
 
-  it("forwards name and arguments unchanged and returns the upstream result", async () => {
-    const { upstream, proxy, events } = await mailProxy();
-    const { client } = await clientFor(proxy);
+  it("forwards the arguments unchanged under the upstream name", async () => {
+    const { upstream, connection } = await mailUpstream();
+    const { tools } = upstreamGatewayTools(connection, [
+      descriptor("fetch_mail", "GMAIL_FETCH_EMAILS"),
+    ]);
     const args = { query: "from:ana@acme.test", max_results: 5, label_ids: ["INBOX"] };
-    const result = await client.callTool({ name: "GMAIL_FETCH_EMAILS", arguments: args });
+    const execution = await tools[0]?.execute(args, context());
     expect(upstream.calls).toEqual([{ tool: "GMAIL_FETCH_EMAILS", arguments: args }]);
-    expect(result.isError).toBeUndefined();
-    expect(JSON.parse((result.content as { text: string }[])[0]?.text ?? "")).toMatchObject({
+    expect(tools[0]?.definition.name).toBe("fetch_mail");
+    expect(execution?.error).toBeNull();
+    expect(JSON.parse(textOf(execution?.result ?? { content: [] }))).toMatchObject({
       received: args,
     });
-    expect(events).toEqual([
-      expect.objectContaining({
-        server: "gmail",
-        kind: "mcp",
-        tool: "GMAIL_FETCH_EMAILS",
-        arguments: args,
-        isError: false,
-      }),
+  });
+
+  it("turns an upstream failure into an error result and a normalised failure", async () => {
+    const { connection } = await mailUpstream({ failing: "GMAIL_SEND_DRAFT" });
+    const { tools } = upstreamGatewayTools(connection, [
+      descriptor("GMAIL_SEND_DRAFT", "GMAIL_SEND_DRAFT", false),
     ]);
+    const execution = await tools[0]?.execute({ draft_id: "r_1" }, context());
+    expect(execution?.result.isError).toBe(true);
+    expect(execution?.error).toMatchObject({ provider: "gmail", status: null });
+    expect(execution?.error?.message).toMatch(/GMAIL_SEND_DRAFT exploded/);
   });
 
-  it("refuses a tool outside the allowlist without calling the upstream", async () => {
-    const { upstream, proxy, events } = await mailProxy();
-    const { client } = await clientFor(proxy);
-    const result = await client.callTool({
-      name: "GMAIL_DELETE_MESSAGE",
-      arguments: { message_id: "m_1" },
+  it("reports a tool result the upstream marked as an error", async () => {
+    const fixture = MAIL_TOOLS[0]?.tool;
+    if (fixture === undefined) throw new Error("fixture missing");
+    const stub = {
+      client: {
+        request: async () => ({ isError: true, content: [{ type: "text", text: "not found" }] }),
+      },
+      tools: [fixture],
+      instructions: undefined,
+      stderrTail: () => "",
+      close: async () => {},
+    } as unknown as Upstream;
+    const { tools } = upstreamGatewayTools(stub, [descriptor("GMAIL_FETCH_EMAILS")]);
+    const execution = await tools[0]?.execute({ query: "x" }, context());
+    expect(execution?.error).toEqual({
+      provider: "gmail",
+      status: null,
+      code: null,
+      message: "not found",
     });
-    expect(result).toEqual({
-      isError: true,
-      content: [{ type: "text", text: "Tool GMAIL_DELETE_MESSAGE is not available on gmail." }],
-    });
-    expect(upstream.calls).toEqual([]);
-    expect(events).toEqual([]);
   });
 
-  it("turns an upstream failure into an error result", async () => {
-    const { proxy, events } = await mailProxy({ failing: "GMAIL_SEND_DRAFT" });
-    const { client } = await clientFor(proxy);
-    const result = await client.callTool({
-      name: "GMAIL_SEND_DRAFT",
-      arguments: { draft_id: "r_1" },
-    });
-    expect(result.isError).toBe(true);
-    expect((result.content as { text: string }[])[0]?.text).toMatch(
-      /^The gmail MCP server failed: .*GMAIL_SEND_DRAFT exploded/,
-    );
-    expect(events.map((event) => event.isError)).toEqual([true]);
-  });
-
-  it("builds a new server instance for every run and forwards instructions only when given", async () => {
-    const { connection } = await mailProxy();
-    const proxy = createFilteringProxy({
-      name: "gmail",
-      upstream: connection,
-      allow: ["GMAIL_FETCH_EMAILS"],
-      instructions: "Use Gmail search syntax.",
-      timeoutMs: 5_000,
-    });
-    const first = proxy.serverConfig();
-    const second = proxy.serverConfig();
-    expect(first.instance).not.toBe(second.instance);
-    expect(first.timeout).toBe(5_000);
-    const { client } = await clientFor(proxy);
-    expect(client.getInstructions()).toBe("Use Gmail search syntax.");
+  it("reports a closed upstream as an upstream_error", async () => {
+    const { connection } = await mailUpstream();
+    const { tools } = upstreamGatewayTools(connection, [descriptor("GMAIL_FETCH_EMAILS")]);
+    await connection.close();
+    const execution = await tools[0]?.execute({ query: "x" }, context());
+    expect(execution?.error?.code).toBe("upstream_error");
+    expect(execution?.result.isError).toBe(true);
   });
 });
