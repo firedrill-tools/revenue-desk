@@ -30,6 +30,7 @@ import { describeError, type Redact } from "./redaction.js";
 import { RunRegistry } from "./run-registry.js";
 import { createSessionSecrets, type SessionSecrets } from "./security.js";
 import type { ApiServices } from "./services.js";
+import { SSE_HEARTBEAT_MS } from "./sse.js";
 
 /** The server always binds here (docs/ARCHITECTURE.md §3). */
 export const SERVER_HOST = "127.0.0.1";
@@ -52,6 +53,8 @@ export type ServerDependencies = {
   readonly secrets?: SessionSecrets;
   readonly maxConcurrentRuns?: number;
   readonly stopGraceMs?: number;
+  /** How often an open run stream sends an SSE comment. Default 15 s (sse.ts). */
+  readonly sseHeartbeatMs?: number;
   /** Test seams for run ownership (src/db/owner.ts). Default: this process and the system. */
   readonly ownership?: OrphanSweeperOptions["ownership"];
 };
@@ -117,6 +120,7 @@ export function createApiServices(
     connections,
     orphans,
     redact,
+    sseHeartbeatMs: deps.sseHeartbeatMs ?? SSE_HEARTBEAT_MS,
     now,
     newId,
     log,

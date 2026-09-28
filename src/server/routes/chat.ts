@@ -1,15 +1,16 @@
 // POST /api/chat and GET /api/chat/:conversationId/stream (docs/ARCHITECTURE.md §6).
 //
 // Both answer with the run's UI message stream: the replay from the start of
-// the assistant message, then live chunks. A client disconnect detaches only
-// that client; Stop is POST /api/runs/:id/stop.
+// the assistant message, then live chunks, with an SSE comment heartbeat
+// while the run is active (sse.ts). A client disconnect detaches only that
+// client; Stop is POST /api/runs/:id/stop.
 
-import { createUIMessageStreamResponse } from "ai";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { API_PATHS } from "../../contracts/api.js";
 import { apiError, parseJsonBody } from "../http.js";
 import type { ApiServices } from "../services.js";
+import { runStreamResponse } from "../sse.js";
 
 export const MAX_MESSAGE_TEXT_LENGTH = 32_000;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -45,12 +46,14 @@ export function registerChatRoutes(app: Hono, services: ApiServices): void {
     }
     const started = services.chat.startTurn(conversationId, { messageId: message.id, texts });
     if (!started.ok) return apiError(c, started.code, started.message);
-    return createUIMessageStreamResponse({ stream: started.run.channel.subscribe() });
+    return runStreamResponse(started.run.channel.subscribe(), {
+      heartbeatMs: services.sseHeartbeatMs,
+    });
   });
 
   app.get(API_PATHS.chatStream, (c) => {
     const run = services.registry.forConversation(c.req.param("conversationId"));
     if (run === undefined) return c.body(null, 204);
-    return createUIMessageStreamResponse({ stream: run.channel.subscribe() });
+    return runStreamResponse(run.channel.subscribe(), { heartbeatMs: services.sseHeartbeatMs });
   });
 }

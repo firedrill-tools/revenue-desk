@@ -25,6 +25,8 @@ export type ApiServices = {
   /** Recovers runs whose process is gone (a killed CLI). */
   readonly orphans: OrphanSweeper;
   readonly redact: Redact;
+  /** How often an open run stream sends an SSE comment (sse.ts). */
+  readonly sseHeartbeatMs: number;
   readonly now: () => Date;
   readonly newId: () => string;
   /** Operator log lines (stderr in production); already redacted by the caller. */

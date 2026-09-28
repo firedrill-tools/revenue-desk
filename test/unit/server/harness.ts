@@ -573,6 +573,7 @@ export type TestServerOptions = {
   readonly stateDir?: string;
   /** Run ownership seams. Default TEST_OWNERSHIP: LIVE_OWNER runs, GONE_OWNER does not. */
   readonly ownership?: ServerDependencies["ownership"];
+  readonly sseHeartbeatMs?: number;
 };
 
 export type TestServer = {
@@ -621,6 +622,7 @@ export function createTestServer(options: TestServerOptions = {}): TestServer {
       : { maxConcurrentRuns: options.maxConcurrentRuns }),
     ...(options.stopGraceMs === undefined ? {} : { stopGraceMs: options.stopGraceMs }),
     ownership: options.ownership ?? TEST_OWNERSHIP,
+    ...(options.sseHeartbeatMs === undefined ? {} : { sseHeartbeatMs: options.sseHeartbeatMs }),
   });
   prepareDatabase(services);
   const app = createApp({ version: "0.0.0-test", api: services });
@@ -689,10 +691,10 @@ export function userMessage(id: string, text: string): ChatUIMessage & { role: "
   return { id, role: "user", parts: [{ type: "text", text }] };
 }
 
-/** Parses an SSE body into chunks; asserts the [DONE] terminator. */
+/** Parses an SSE body into chunks (comment events, the heartbeat, are skipped); notes [DONE]. */
 export async function readSse(response: Response): Promise<{ chunks: ChatChunk[]; done: boolean }> {
   const text = await response.text();
-  const events = text.split("\n\n").filter((event) => event.length > 0);
+  const events = text.split("\n\n").filter((event) => event.length > 0 && !event.startsWith(":"));
   const chunks: ChatChunk[] = [];
   let done = false;
   for (const event of events) {
