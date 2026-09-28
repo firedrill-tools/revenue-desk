@@ -13,7 +13,7 @@ describe("dev:sandbox", () => {
     const apiPort = await freePort();
     const output: string[] = [];
     const sandbox = await startSandbox(
-      { model: "scripted", hubspot: "stdio", stateDir: null, web: false },
+      { model: "scripted", hubspot: "stdio", stateDir: null, web: false, built: false },
       { apiPort, onServerOutput: (text) => output.push(text) },
     );
     let stopped = false;
@@ -28,6 +28,11 @@ describe("dev:sandbox", () => {
       const health = await fetch(`http://127.0.0.1:${apiPort}/api/health`);
       expect(health.ok).toBe(true);
       expect(output.join("")).toContain("listening");
+      expect(output.join("")).toContain("Local sandbox — no real services");
+      // The full API is wired into src/server/main.ts: the workspace settings were applied.
+      expect(harness.workspace).toBe("applied");
+      const session = await fetch(`http://127.0.0.1:${apiPort}/api/session`);
+      expect(await session.json()).toMatchObject({ mode: "sandbox" });
       // The fakes run on a clock that starts at the fixtures' date and moves.
       expect(harness.fakes.clock.now().toISOString() >= "2026-09-28T13:00:00.000Z").toBe(true);
       await sandbox.stop();

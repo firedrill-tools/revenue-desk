@@ -16,7 +16,11 @@
  * the choice explicit.
  *
  *   pnpm dev:sandbox [--model scripted|real] [--hubspot stdio|http]
- *                    [--state-dir <dir>] [--no-web]
+ *                    [--state-dir <dir>] [--no-web] [--built]
+ *
+ * --built runs the production build (dist/server/main.js, which also serves
+ * the built app on the API port) instead of the sources, and no Vite: run
+ * `pnpm build` first.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
@@ -38,6 +42,8 @@ export interface SandboxOptions {
   /** Keep state here across restarts; default: a fresh temporary directory. */
   readonly stateDir: string | null;
   readonly web: boolean;
+  /** Run dist/server/main.js (pnpm build first); it serves the built app itself, so no Vite. */
+  readonly built: boolean;
 }
 
 export type SandboxArgs =
@@ -46,7 +52,7 @@ export type SandboxArgs =
   | { readonly ok: "help" };
 
 export const USAGE = [
-  "Usage: pnpm dev:sandbox [--model scripted|real] [--hubspot stdio|http] [--state-dir <dir>] [--no-web]",
+  "Usage: pnpm dev:sandbox [--model scripted|real] [--hubspot stdio|http] [--state-dir <dir>] [--no-web] [--built]",
   "",
   "A labelled local demo against local fakes of Gmail, Google Calendar, HubSpot, Stripe,",
   "QuickBooks Online and Slack, loaded with a fictional company. No real service is contacted.",
@@ -55,6 +61,7 @@ export const USAGE = [
   "  --hubspot   stdio (default: the pinned @hubspot/mcp-server) or http (the fake's MCP endpoint)",
   "  --state-dir keep the database and sessions here instead of a temporary directory",
   "  --no-web    start the API only, without Vite",
+  "  --built     run the production build (pnpm build first); it serves the app on the API port",
 ].join("\n");
 
 /** Parses the command line. The environment is consulted only for ANTHROPIC_API_KEY's presence. */
@@ -67,6 +74,7 @@ export function parseSandboxArgs(
   let hubspot: HubSpotMode = "stdio";
   let stateDir: string | null = null;
   let web = true;
+  let built = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] as string;
     const value = () => {
@@ -76,6 +84,7 @@ export function parseSandboxArgs(
     };
     if (arg === "--help" || arg === "-h") return { ok: "help" };
     if (arg === "--no-web") web = false;
+    else if (arg === "--built") built = true;
     else if (arg === "--model") {
       const choice = value();
       if (choice !== "scripted" && choice !== "real")
@@ -102,7 +111,7 @@ export function parseSandboxArgs(
         "--model real needs ANTHROPIC_API_KEY in the environment (it is never read from a file).",
     };
   }
-  return { ok: true, options: { model, hubspot, stateDir, web } };
+  return { ok: true, options: { model, hubspot, stateDir, web: web && !built, built } };
 }
 
 /** The banner printed once everything is up. Never contains a credential. */
@@ -204,6 +213,7 @@ export async function startSandbox(
   const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
   const harness = await startHarness({
     server: "process",
+    entry: options.built ? "built" : "source",
     port: apiPort,
     ...(runtime.onServerOutput === undefined ? {} : { onServerOutput: runtime.onServerOutput }),
     clock: "running",

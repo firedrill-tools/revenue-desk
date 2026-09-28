@@ -12,7 +12,7 @@ describe("dev:sandbox arguments", () => {
   it("uses the scripted model unless ANTHROPIC_API_KEY is set in the environment", () => {
     expect(parseSandboxArgs([], {})).toEqual({
       ok: true,
-      options: { model: "scripted", hubspot: "stdio", stateDir: null, web: true },
+      options: { model: "scripted", hubspot: "stdio", stateDir: null, web: true, built: false },
     });
     expect(parseSandboxArgs([], { ANTHROPIC_API_KEY: "  " })).toMatchObject({
       ok: true,
@@ -52,6 +52,11 @@ describe("dev:sandbox arguments", () => {
       message: "Unknown argument: --real",
     });
     expect(parseSandboxArgs(["--help"], {})).toEqual({ ok: "help" });
+    // The production build serves the app itself: no Vite.
+    expect(parseSandboxArgs(["--built"], {})).toMatchObject({
+      ok: true,
+      options: { built: true, web: false },
+    });
   });
 });
 
