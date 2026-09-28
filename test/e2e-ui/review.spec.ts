@@ -91,6 +91,8 @@ test.describe("a refund Stripe declines after approval", () => {
     harness = await startHarness({
       server: "process",
       entry: "built",
+      // Slack unconfigured too: the run opens with a notice that links to Connections.
+      env: { SLACK_BOT_TOKEN: "" },
       arrange: (fakes) => {
         fakes.stripe.faults.decline("/v1/refunds", {
           method: "POST",
@@ -111,6 +113,13 @@ test.describe("a refund Stripe declines after approval", () => {
     await quiet(url);
     await startJob(page, /Refund a duplicate charge/, url);
     const card = await approvalCard(page);
+    // The run's notice names Slack and leads to where it is fixed.
+    const notice = page.locator("p", { hasText: "Slack is not configured: set SLACK_BOT_TOKEN." });
+    await expect(notice).toBeVisible();
+    await expect(notice.getByRole("link", { name: "Connections" })).toHaveAttribute(
+      "href",
+      "/connections",
+    );
     await card.getByRole("button", { name: "Approve" }).click();
     await expect(page.getByText("Approved, then failed").first()).toBeVisible({
       timeout: 30_000,
