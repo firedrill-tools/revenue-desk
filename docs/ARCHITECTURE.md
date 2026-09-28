@@ -38,8 +38,9 @@ decisions log.
   at runtime from a file outside the repository named by `DOTENV_PATH` (or
   `process.loadEnvFile(path)`). Secrets travel as `SecretValue`
   (`src/contracts/env.ts`), which serialises as `[redacted]`. A redactor (§5)
-  scrubs every configured secret value and `Bearer …`, `sk_`, `rk_`, `xox`,
-  `pat-` patterns from logs, database rows, SSE output and stdout.
+  scrubs every configured secret value and `Bearer …`, `sk_`, `rk_`,
+  `sk-ant-`, `xox`, `pat-` patterns from logs, database rows, SSE output and
+  stdout (`src/config/redact.ts`).
 - **Composio development rule.** Implementers and automated checks may create
   Composio sessions and make read-only toolkit, catalog and tool-listing calls
   with the configured key. They never execute a Gmail or Calendar tool that
@@ -134,7 +135,7 @@ access levels in `src/integrations/composio/session.ts`):
 | `GMAIL_LIST_THREADS` | `gmail.threads.list` | read |
 | `GMAIL_LIST_LABELS` | `gmail.labels.list` | read |
 | `GMAIL_CREATE_EMAIL_DRAFT` | `gmail.drafts.create` | internal_write |
-| `GMAIL_ADD_LABEL_TO_EMAIL` | `gmail.messages.label` | internal_write |
+| `GMAIL_ADD_LABEL_TO_EMAIL` | `gmail.messages.label` | internal_write; destructive when it adds `TRASH` or `SPAM` |
 | `GMAIL_SEND_DRAFT` | `gmail.drafts.send` | outbound |
 | `GMAIL_REPLY_TO_THREAD` | `gmail.threads.reply` | outbound |
 
@@ -165,8 +166,8 @@ jobs need CRM reads, owner names and creating or updating records. Notes and
 tasks are created with `hubspot-batch-create-objects`, their associations
 inline in `inputs[].associations[]` (0.4.0 requires `associationCategory`),
 so one call creates the record and its links. The other 11 MCP tools
-(property and engagement administration, association batches, workflows,
-links, feedback) are not offered.
+(property and engagement administration, schemas, association batches,
+workflows, links, feedback) are not offered.
 
 | Tool | Runs as | Operation | Base class |
 |---|---|---|---|
@@ -788,10 +789,10 @@ only source of truth, and re-sending would replay side effects.
 | Action class | Default mode |
 |---|---|
 | `read` | auto |
-| `internal_write` (drafts, labels, HubSpot records, a QuickBooks customer, Slack posts to allowlisted channels without `@channel`/`@here`/`@everyone`, calendar events on an internal calendar whose attendees are all internal) | auto |
-| `outbound` (send or reply to email, calendar events with an external attendee or on a calendar not listed as internal, an update of an event whose current guests the run has not read, other Slack posts) | ask |
+| `internal_write` (drafts, labels other than Trash and Spam, HubSpot records, a QuickBooks customer, Slack posts to allowlisted channels without `@channel`/`@here`/`@everyone`, Slack reactions, calendar events on an internal calendar whose attendees are all internal) | auto |
+| `outbound` (send or reply to email, calendar events with an external attendee or on a calendar that is not internal, an update of an event whose current guests the run has not read, other Slack posts) | ask |
 | `financial` (refund, invoice create/send/void, payment record, subscription cancel) | ask |
-| `destructive` (no tool today) | deny |
+| `destructive` (`GMAIL_ADD_LABEL_TO_EMAIL` adding `TRASH` or `SPAM`) | deny |
 
 A `policies` row per class holds the saved mode; `AGENT_POLICY` overrides and
 locks it; the CLI's `--policy` overrides both for one run.
@@ -860,9 +861,11 @@ behind a pending approval is shown as waiting, not running (§5).
   credential itself records its connection `expired` or `needs_auth`, as a
   check would (`connectionFromFailure` in `src/integrations/registry.ts`,
   applied by the run recorder for the server and the CLI): QuickBooks 401
-  (expired), Stripe 401, Slack 401, `invalid_auth`, `not_authed`,
-  `account_inactive`, `token_revoked` or `token_expired`, and HubSpot 401.
-  One call's 403, a missing scope or a card decline never counts. The next run
+  (expired) or 403 (`needs_auth`; the same rule its check uses, which reads
+  a 403 as a refused token or a realm that is not the token's company),
+  Stripe 401, Slack 401, `invalid_auth`, `not_authed`, `account_inactive`,
+  `token_revoked` or `token_expired`, and HubSpot 401. A Stripe, HubSpot or
+  Slack 403, a missing scope or a card decline never counts. The next run
   leaves the integration out. The client refreshes connections when a run
   finishes, re-checks rows older than 30 minutes when Connections or its
   popover opens, and polls every 2 seconds while a configured connection is
@@ -1754,9 +1757,10 @@ prompt text, and replayed deterministically where it could be:
   parked on an approval should count toward `MAX_CONCURRENT_RUNS`.
 
 - **Connection health follows the runs.** A call whose provider refuses the
-  credential itself (QuickBooks 401, Stripe 401, Slack `invalid_auth` or
-  `token_expired`, HubSpot 401; never one call's 403, a missing scope or a
-  decline) records its connection as expired or needs_auth, as a check would
+  credential itself (QuickBooks 401 or 403, Stripe 401, Slack `invalid_auth`
+  or `token_expired`, HubSpot 401; never a Stripe, HubSpot or Slack 403, a
+  missing scope or a decline) records its connection as expired or
+  needs_auth, as a check would
   (`connectionFromFailure`, applied by the run recorder for the server and
   the CLI), so the next run leaves the integration out. The client refreshes
   connections when a run finishes and re-checks rows older than 30 minutes

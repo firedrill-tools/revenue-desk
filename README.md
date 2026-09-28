@@ -135,8 +135,9 @@ workspace time zone (Settings) with their UTC offset.
 
 4. In the app, open **Settings** and fill in the company profile, the
    internal email domains (recipients and attendees outside them are
-   external), any shared Google calendars the company owns (every other
-   calendar except your primary one counts as external), the Slack notices
+   external), any shared Google calendars the company owns (apart from your
+   primary calendar and calendars whose id is an internal address, every
+   calendar that is not listed counts as external), the Slack notices
    channel and the channels the agent may post to without asking, and the
    time zone. The time zone sets the business date ("today", with its
    weekday) and the zone of the times the Stripe, QuickBooks and Slack tools
@@ -254,8 +255,9 @@ node dist/cli/main.js ask --conversation <id> "Draft the reminder emails"
 payments without asking; use it only against test accounts.
 
 Without a build, run `node --import tsx src/cli/main.ts ask …`. `pnpm cli ask …`
-also works for trying it, but pnpm prints a banner on stdout (unless `-s`) and
-reports every non-zero exit code as 1, so do not use it in scripts.
+also works for trying it and passes the exit code through, but pnpm prints
+its own banner on stdout (unless `-s`), so do not use it where stdout is
+parsed.
 
 ## Approvals and safety
 
@@ -265,10 +267,10 @@ and the class's mode decides what happens:
 | Action class | Examples | Default |
 |---|---|---|
 | `read` | Any lookup, search or list | automatic |
-| `internal_write` | Gmail drafts and labels, HubSpot notes, tasks and other CRM records, Slack posts to allowlisted channels that do not mention `@channel`, `@here` or `@everyone`, calendar events on your own or a listed company calendar whose attendees are all internal, creating a QuickBooks customer | automatic |
-| `outbound` | Sending or replying to email, calendar events with an external attendee or on a calendar that is not listed as the company's, an update of an event whose current guests the run has not read (an update replaces the guest list), Slack posts to any other channel or that notify everyone | asks |
+| `internal_write` | Gmail drafts and labels (other than Trash and Spam), HubSpot notes, tasks and other CRM records, Slack posts to allowlisted channels that do not mention `@channel`, `@here` or `@everyone`, Slack reactions, calendar events on an internal calendar (your primary one, one whose id is an internal address, or a listed company calendar) whose attendees are all internal, creating a QuickBooks customer | automatic |
+| `outbound` | Sending or replying to email, calendar events with an external attendee or on a calendar that is not internal, an update of an event whose current guests the run has not read (an update replaces the guest list), Slack posts to any other channel or that notify everyone | asks |
 | `financial` | Stripe refunds and subscription cancellations; QuickBooks invoice create, send and void, and recording a payment | asks |
-| `destructive` | (no tool is destructive today) | denied |
+| `destructive` | Adding the Trash or Spam label to a Gmail message | denied |
 
 - **Changing the policy.** The Settings screen saves a mode per class.
   `AGENT_POLICY` (JSON, for example `{"financial":"deny"}`) overrides it and
@@ -326,8 +328,8 @@ and the class's mode decides what happens:
   browser. The Claude CLI child process receives `ANTHROPIC_API_KEY` and no
   integration credential, in an explicit environment rather than a copy of
   Revenue Desk's. A redactor removes configured
-  secret values and token shapes (`Bearer …`, `sk_`, `rk_`, `xox…`, `pat-`)
-  from logs, stored rows, streamed output and CLI output.
+  secret values and token shapes (`Bearer …`, `sk_`, `rk_`, `sk-ant-`,
+  `xox…`, `pat-`) from logs, stored rows, streamed output and CLI output.
 - **Local only, single user.** The server binds to 127.0.0.1 and refuses
   requests whose `Host` is not loopback. It assumes a single-user machine:
   loopback, `Origin` and CSRF checks stop other websites, not other programs
@@ -354,11 +356,11 @@ and the class's mode decides what happens:
   conversations or runs. Runs of processes that are still alive are never
   touched.
 - **Connections follow the runs.** A call whose provider refuses the
-  credential itself (QuickBooks, Stripe or HubSpot 401; Slack
-  `invalid_auth`, `token_expired` and the like) marks the connection expired
-  or needing sign-in, so the next run leaves it out; one call's 403, a
-  missing scope or a card decline does not. Connections re-checks rows older
-  than 30 minutes when you open it.
+  credential itself (QuickBooks 401 or 403; Stripe, HubSpot or Slack 401;
+  Slack `invalid_auth`, `token_expired` and the like) marks the connection
+  expired or needing sign-in, so the next run leaves it out; a Stripe,
+  HubSpot or Slack 403, a missing scope or a card decline does not.
+  Connections re-checks rows older than 30 minutes when you open it.
 - **Composio** sign-in starts only from a click on Connect. Composio sessions
   offer outbound Gmail and Calendar tools only when the policy does not deny
   outbound actions.
@@ -514,9 +516,9 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | The CLI exits 3 with "ANTHROPIC_API_KEY is not set" | The key is in neither the environment nor the `DOTENV_PATH` file. Check that `DOTENV_PATH` is exported in the shell that runs the command. |
 | "DOTENV_PATH names …, which could not be read" | The path is wrong or the file is not readable by you. A relative path resolves against the current directory. |
 | An integration shows **Not configured** | Connections lists the missing variable names. Add them to the file `DOTENV_PATH` names and restart the server: configuration is read only at start. |
-| Stripe shows **Invalid** | A live key (`sk_live_`, `rk_live_`) is configured. Use a test key. |
+| Stripe shows **Invalid configuration** | A live key (`sk_live_`, `rk_live_`) is configured. Use a test key. |
 | Gmail or Google Calendar needs sign-in or has expired | Click **Connect** in Connections, finish the Composio sign-in, then **Check**. Until then its tools are not offered and the agent says so. |
-| QuickBooks calls fail with 401 | The access token expired (after an hour). The first failing call marks QuickBooks **Expired** in Connections, and later runs leave it out. Set a new `QBO_ACCESS_TOKEN` and restart. A 403 usually means `QBO_REALM_ID` does not match the token's company. |
+| QuickBooks calls fail with 401 | The access token expired (after an hour). The first failing call marks QuickBooks **Expired** in Connections, and later runs leave it out. Set a new `QBO_ACCESS_TOKEN` and restart. A 403 usually means `QBO_REALM_ID` does not match the token's company; it marks QuickBooks **Needs sign-in** the same way. |
 | HubSpot is unavailable at the start of a run | The stdio MCP server could not start or rejected the token, or `HUBSPOT_MCP_URL` is unreachable. Check `HUBSPOT_ACCESS_TOKEN`, or the URL and `HUBSPOT_MCP_TOKEN`, then **Check** in Connections. |
 | A run fails with `model_error` | The model id is wrong or unavailable to your key, or the API failed. Revenue Desk never switches models; set `AGENT_MODEL` or `--model`. |
 | A run fails with `max_turns` or `budget_exceeded` | Raise `AGENT_MAX_TURNS` or `AGENT_MAX_BUDGET_USD`, or `--max-turns` and `--max-budget-usd` for one CLI run. |
@@ -525,7 +527,7 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | An approval disappeared as "expired" | The server restarted while it was pending, or `AGENT_APPROVAL_TIMEOUT_MS` passed. Ask again. |
 | A run failed with `server_restart` | The process running it exited mid-run (a crash, a restart, a CLI killed with SIGKILL). Revenue Desk failed it so the conversation is free again; its pending approvals expired. Ask again. |
 | "Revenue Desk is shutting down and starts no new run" (503) | The server received SIGINT or SIGTERM. Start it again. |
-| A call was rejected before it ran ("is missing hs_timestamp", "has a Markdown table", "is empty", "mentions … which is not a Slack user id") | Revenue Desk checked a rule the system enforces or a formatting rule, and nothing reached the system. The agent is told what to fix, so it can repeat the call corrected. |
+| A call was rejected before it ran (`is missing "hs_timestamp"`, `has a Markdown table`, `is empty`, `mentions …, which is not a Slack user id`) | Revenue Desk checked a rule the system enforces or a formatting rule, and nothing reached the system. The agent is told what to fix, so it can repeat the call corrected. |
 | HubSpot owners show as ids | The owners lookup needs the stdio server (`HUBSPOT_ACCESS_TOKEN`) and the token's `crm.objects.owners.read` scope; with `HUBSPOT_MCP_URL` it is not offered. |
 | Dates or aging are off by a day | The business date is today in the Settings time zone. Set the time zone, or `AGENT_BUSINESS_DATE` for a fixed date. |
 | "address already in use" on 4320 or 4321 | Another process holds the port. Stop it, or set `PORT` (the Vite proxy expects 4320). |
