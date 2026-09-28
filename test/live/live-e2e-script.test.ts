@@ -222,6 +222,14 @@ describe("helpers", () => {
     expect(promisesRefund("A refund of the duplicate $490.00 charge is pending.")).toBe(true);
     expect(promisesRefund("We're arranging a refund of the duplicate $490.00 charge.")).toBe(true);
     expect(promisesRefund("The refund will be processed in 5–10 business days.")).toBe(true);
+    expect(
+      promisesRefund(
+        "I'm passing the duplicate charge to our team to process a refund, and someone will follow up once that's done.",
+      ),
+    ).toBe(true);
+    expect(
+      promisesRefund("Our team will review whether a refund applies and follow up with you."),
+    ).toBe(false);
     expect(promisesRefund("We confirmed the duplicate $490.00 charge and will follow up.")).toBe(
       false,
     );

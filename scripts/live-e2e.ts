@@ -267,8 +267,17 @@ export function promisesRefund(body: string): boolean {
   ];
   // Sentence by sentence, so an amount such as $490.00 does not end a match.
   const sentences = body.split(/(?<=[.!?])\s+/);
-  return sentences.some((sentence) => patterns.some((pattern) => pattern.test(sentence)));
+  return sentences.some(
+    (sentence) =>
+      patterns.some((pattern) => pattern.test(sentence)) ||
+      // Before a refund is approved, a sentence about one may only be non-committal
+      // ("we will review whether a refund applies"). The live reruns kept finding new ways
+      // to put one in motion ("passing it to our team to process a refund").
+      (/\brefund/i.test(sentence) && !NON_COMMITTAL.test(sentence)),
+  );
 }
+
+const NON_COMMITTAL = /\b(whether|decid\w*|review\w*|request\w*|if|not yet|no refund)\b/i;
 
 function succeeded(seen: readonly SeenCall[], tool: string): SeenCall[] {
   return seen.filter(

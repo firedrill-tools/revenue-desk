@@ -104,9 +104,13 @@ describe("buildSystemPrompt", () => {
     expect(STABLE_RULES).toContain(
       "Never promise a customer a refund, credit, payment or date that has not been approved and done",
     );
-    // J1 rerun: "I've flagged the duplicate for a refund … our team will process it shortly".
+    // J1 reruns: "I've flagged the duplicate for a refund … our team will process it shortly",
+    // then "I'm passing the duplicate charge to our team to process a refund".
     expect(STABLE_RULES).toContain(
-      "do not say one is flagged, pending, being arranged or on its way",
+      "an email to the customer says only what you found and that the team will review it and follow up",
+    );
+    expect(STABLE_RULES).toContain(
+      "it does not say that one will be made, is pending or flagged, or was passed on to be processed",
     );
   });
 
