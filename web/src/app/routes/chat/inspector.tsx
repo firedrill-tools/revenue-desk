@@ -162,12 +162,28 @@ function RunTab({ data }: { data: InspectorData }) {
           <Fact label="Model" value={`${run.model} / ${run.effort}`} />
           <Fact label="Duration" value={usage ? formatDuration(usage.durationMs) : ""} />
           <Fact label="Cost" value={usage ? formatCost(usage.costUsd) : ""} />
-          <Fact label="Input tokens" value={usage ? formatCount(usage.inputTokens) : ""} />
-          <Fact label="Output tokens" value={usage ? formatCount(usage.outputTokens) : ""} />
-          <Fact label="Cache reads" value={usage ? formatCount(usage.cacheReadTokens) : ""} />
-          <Fact label="Cache writes" value={usage ? formatCount(usage.cacheCreationTokens) : ""} />
-          <Fact label="Turns" value={usage ? String(usage.numTurns) : ""} />
-          <Fact label="Model requests" value={usage ? String(usage.modelRequests) : ""} />
+          <Fact
+            label="Tokens"
+            value={
+              usage
+                ? `${formatCount(usage.inputTokens)} in · ${formatCount(usage.outputTokens)} out`
+                : ""
+            }
+          />
+          <Fact
+            label="Cache"
+            value={
+              usage
+                ? `${formatCount(usage.cacheReadTokens)} read · ${formatCount(usage.cacheCreationTokens)} written`
+                : ""
+            }
+          />
+          <Fact
+            label="Turns"
+            value={
+              usage ? `${usage.numTurns} · ${pluralize(usage.modelRequests, "model request")}` : ""
+            }
+          />
         </dl>
         {run.error ? (
           <p className="px-1 pt-2 text-body-sm text-danger">{run.error.message}</p>

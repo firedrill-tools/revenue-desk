@@ -1,3 +1,4 @@
+import type { DynamicToolUIPart } from "ai";
 import { CheckIcon, CopyIcon, ReceiptTextIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@/app/router";
@@ -15,6 +16,7 @@ import { StatusDot } from "@/components/app/status";
 import {
   ReadsGroup,
   ToolCallBlock,
+  ToolCallList,
   ToolCallRow,
   type ToolTiming,
 } from "@/components/app/tool-call";
@@ -30,9 +32,44 @@ import {
   messageUsage,
 } from "@/lib/messages";
 import { runHref } from "@/lib/routes";
-import { layoutAssistantParts, mergeToolRow, toolRowFromPart } from "@/lib/tool-model";
+import {
+  type AssistantBlock,
+  layoutAssistantParts,
+  mergeToolRow,
+  toolRowFromPart,
+} from "@/lib/tool-model";
 
 export type DecideApproval = (approvalId: string, approved: boolean, reason?: string) => void;
+
+type ThreadBlock =
+  | AssistantBlock
+  | { readonly kind: "tools"; readonly key: string; readonly parts: readonly DynamicToolUIPart[] };
+
+/**
+ * Consecutive calls with nothing between them share one bordered list, so a
+ * turn reads as a few units instead of a stack of boxes. A call with an
+ * approval stays on its own, with its decision attached.
+ */
+function groupToolRuns(blocks: readonly AssistantBlock[]): ThreadBlock[] {
+  const out: ThreadBlock[] = [];
+  let run: DynamicToolUIPart[] = [];
+  let key = "";
+  const flush = () => {
+    if (run.length > 0) out.push({ kind: "tools", key, parts: run });
+    run = [];
+  };
+  for (const block of blocks) {
+    if (block.kind === "tool" && block.part.approval === undefined) {
+      if (run.length === 0) key = `${block.key}:list`;
+      run.push(block.part);
+      continue;
+    }
+    flush();
+    out.push(block);
+  }
+  flush();
+  return out;
+}
 
 export type ThreadContext = {
   readonly now: number;
@@ -109,7 +146,7 @@ function AssistantFooter({
               <Link
                 href={runHref(runId)}
                 aria-label="Open run"
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground pointer-coarse:size-11"
               >
                 <ReceiptTextIcon className="size-3.5" />
               </Link>
@@ -135,42 +172,62 @@ function AssistantMessage({
   context: ThreadContext;
 }) {
   const blocks = useMemo(
-    () => layoutAssistantParts(message.id, message.parts),
+    () => groupToolRuns(layoutAssistantParts(message.id, message.parts)),
     [message.id, message.parts],
   );
   const settled = isRunSettled(message, streaming);
   const run = message.metadata?.runId ? context.runs.get(message.metadata.runId) : undefined;
   // Nothing to show yet: the status line below the thread says what is happening.
   if (blocks.length === 0 && !settled) return null;
+  const rowOf = (part: DynamicToolUIPart) =>
+    mergeToolRow(toolRowFromPart(part, settled), context.logRows.get(part.toolCallId));
 
   return (
     <Message from="assistant" className="max-w-full">
       <MessageContent className="w-full gap-3 overflow-visible">
         {blocks.map((block) => {
           if (block.kind === "reads") {
-            const rows = block.parts.map((part) =>
-              mergeToolRow(toolRowFromPart(part, settled), context.logRows.get(part.toolCallId)),
-            );
             return (
-              <ReadsGroup key={block.key} rows={rows} timings={context.timings} now={context.now} />
+              <ReadsGroup
+                key={block.key}
+                rows={block.parts.map(rowOf)}
+                timings={context.timings}
+                now={context.now}
+              />
+            );
+          }
+          if (block.kind === "tools") {
+            return (
+              <ToolCallList key={block.key}>
+                {block.parts.map((part) => (
+                  <ToolCallRow
+                    key={part.toolCallId}
+                    row={rowOf(part)}
+                    timing={context.timings.get(part.toolCallId)}
+                    now={context.now}
+                    variant="flat"
+                    className="rounded-none"
+                  />
+                ))}
+              </ToolCallList>
             );
           }
           if (block.kind === "tool") {
-            const row = mergeToolRow(
-              toolRowFromPart(block.part, settled),
-              context.logRows.get(block.part.toolCallId),
-            );
+            const row = rowOf(block.part);
             const approval = row.approval;
+            const decidable = approval?.state === "requested" && !settled;
             return (
               <ToolCallBlock
                 key={block.key}
+                attention={approval?.state === "requested"}
                 approval={
                   approval ? (
                     <ApprovalCard
+                      attached
                       approval={approval}
                       submission={context.submissions[approval.id]}
                       onDecide={
-                        approval.state === "requested" && !settled
+                        decidable
                           ? (approved, reason) => context.onDecide(approval.id, approved, reason)
                           : undefined
                       }
@@ -182,6 +239,8 @@ function AssistantMessage({
                   row={row}
                   timing={context.timings.get(row.toolCallId)}
                   now={context.now}
+                  variant="flat"
+                  className="rounded-none"
                 />
               </ToolCallBlock>
             );

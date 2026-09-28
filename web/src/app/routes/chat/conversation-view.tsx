@@ -3,7 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useResource } from "@/hooks/use-resource";
 import { ApiError, api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { ChatSession } from "./chat-session";
+import { CHAT_COLUMN, COMPOSER_DOCK } from "./layout";
 
 /** History skeleton: keeps the thread's structure (user block, prose, tool rows). */
 function ThreadSkeleton() {
@@ -14,7 +16,7 @@ function ThreadSkeleton() {
       aria-busy="true"
       aria-label="Loading conversation"
     >
-      <div className="mx-auto w-full max-w-[760px] flex-1 space-y-8 overflow-hidden px-4 pt-6 sm:px-6">
+      <div className={cn(CHAT_COLUMN, "flex-1 space-y-8 overflow-hidden pt-6")}>
         {[0, 1].map((turn) => (
           <div key={turn} className="space-y-4">
             <Skeleton className="ml-auto h-10 w-2/3 rounded-[10px] sm:w-1/2" />
@@ -27,8 +29,10 @@ function ThreadSkeleton() {
           </div>
         ))}
       </div>
-      <div className="shrink-0 px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
-        <Skeleton className="mx-auto h-[92px] w-full max-w-[760px] rounded-xl" />
+      <div className={COMPOSER_DOCK}>
+        <div className={CHAT_COLUMN}>
+          <Skeleton className="h-[92px] w-full rounded-xl" />
+        </div>
       </div>
     </div>
   );

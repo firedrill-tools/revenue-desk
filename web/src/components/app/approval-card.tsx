@@ -78,10 +78,22 @@ export type ApprovalCardProps = {
   submission?: ApprovalSubmission | undefined;
   /** Absent: read-only (the Runs detail). */
   onDecide?: ((approved: boolean, reason?: string) => void) | undefined;
+  /**
+   * Rendered inside its call's block (ToolCallBlock): no border or radius of
+   * its own, a divider above. A standalone card (a reloaded page's pending
+   * approval) keeps its own border.
+   */
+  attached?: boolean;
   className?: string;
 };
 
-export function ApprovalCard({ approval, submission, onDecide, className }: ApprovalCardProps) {
+export function ApprovalCard({
+  approval,
+  submission,
+  onDecide,
+  attached = false,
+  className,
+}: ApprovalCardProps) {
   const { facts } = approval;
   const rows = approvalFactRows(facts);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -102,10 +114,12 @@ export function ApprovalCard({ approval, submission, onDecide, className }: Appr
       approval={props.approval}
       state={props.state}
       aria-label={requested ? `Approval needed: ${facts.consequence}` : undefined}
+      data-state={approval.state}
       className={cn(
         requested
           ? "gap-0 overflow-hidden p-0 shadow-none"
           : "flex-row items-start gap-2 rounded-lg border-transparent bg-surface-subtle px-3 py-2 text-body-sm",
+        attached && "rounded-none border-0 border-t border-border",
         className,
       )}
     >
@@ -128,7 +142,7 @@ export function ApprovalCard({ approval, submission, onDecide, className }: Appr
             {rows.map((row) => (
               <div
                 key={`${row.label}:${row.value}`}
-                className="grid grid-cols-[minmax(5.5rem,32%)_1fr] gap-3 py-2 text-body-sm"
+                className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 py-2 text-body-sm sm:grid-cols-[8.5rem_minmax(0,1fr)]"
               >
                 <dt className="text-muted-foreground">{row.label}</dt>
                 <dd

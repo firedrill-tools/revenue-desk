@@ -6,8 +6,10 @@ import { invalidate } from "@/hooks/use-resource";
 import { api, errorMessage } from "@/lib/api";
 import { titleFromPrompt } from "@/lib/messages";
 import { chatHref } from "@/lib/routes";
+import { cn } from "@/lib/utils";
 import { Composer } from "./composer";
 import { ChatEmptyState } from "./empty-state";
+import { CHAT_COLUMN, COMPOSER_DOCK } from "./layout";
 import { setPendingPrompt } from "./pending-prompts";
 
 /**
@@ -40,12 +42,12 @@ export function NewChat() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-center px-4 py-8 sm:px-6">
+        <div className={cn(CHAT_COLUMN, "flex min-h-full flex-col justify-center py-8")}>
           <ChatEmptyState onPick={(prompt) => void start(prompt)} disabled={creating} />
         </div>
       </div>
-      <div className="shrink-0 px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
-        <div className="mx-auto w-full max-w-[760px]">
+      <div className={COMPOSER_DOCK}>
+        <div className={CHAT_COLUMN}>
           <Composer
             status="ready"
             running={false}

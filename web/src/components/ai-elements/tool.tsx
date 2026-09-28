@@ -115,6 +115,12 @@ export type ToolHeaderProps = {
    * only for screen readers (the dot remains visible in every case).
    */
   statusLabel?: "visible" | "responsive" | "hidden";
+  /**
+   * "stacked" (default): one line from the sm breakpoint; on phones the meta,
+   * status and time move to a second line under the title. "inline": always
+   * one line, for narrow ledgers without meta (the inspector).
+   */
+  layout?: "stacked" | "inline";
 } & (
   | { type: ToolUIPart["type"]; state: ToolUIPart["state"]; toolName?: never }
   | {
@@ -134,43 +140,78 @@ export const ToolHeader = ({
   meta,
   trailing,
   statusLabel = "visible",
+  layout = "stacked",
   ...props
 }: ToolHeaderProps) => {
   const derivedName =
     type === "dynamic-tool" ? toolName : type.split("-").slice(1).join("-");
   const resolved = status ?? getToolStatus(state);
 
+  const label = (
+    <span
+      className={cn(
+        statusLabel === "responsive" && "sr-only sm:not-sr-only",
+        statusLabel === "hidden" && "sr-only"
+      )}
+    >
+      {resolved.label}
+    </span>
+  );
+
+  if (layout === "inline") {
+    return (
+      <CollapsibleTrigger
+        className={cn(
+          "grid h-9 w-full min-w-0 grid-cols-[0.875rem_minmax(0,1fr)_auto_1rem] items-center gap-x-2.5 rounded-lg px-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset max-sm:h-11",
+          className
+        )}
+        {...props}
+      >
+        <span className="flex justify-center">
+          <ToolStatusDot tone={resolved.tone} />
+        </span>
+        <span className="truncate font-medium text-body-sm text-foreground">
+          {title ?? derivedName}
+        </span>
+        <span className="flex shrink-0 items-center justify-end gap-2 text-meta text-muted-foreground tabular-nums">
+          {label}
+          {trailing}
+        </span>
+        <ChevronRightIcon
+          aria-hidden="true"
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]/tool:rotate-90"
+        />
+      </CollapsibleTrigger>
+    );
+  }
+
+  // revenue-desk patch: one line from the sm breakpoint; on phones the title
+  // gets its own line (never truncated to a few letters) and the meta, status
+  // and time move to a second line, which also makes the row a 44px target.
   return (
     <CollapsibleTrigger
       className={cn(
-        "flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring",
+        "grid w-full min-w-0 grid-cols-[0.875rem_minmax(0,1fr)_auto_1rem] items-center gap-x-2.5 gap-y-0.5 rounded-lg px-3 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset max-sm:min-h-11 sm:h-9 sm:grid-cols-[0.875rem_minmax(0,max-content)_minmax(0,1fr)_auto_1rem] sm:py-0",
         className
       )}
       {...props}
     >
-      <span className="flex w-3.5 shrink-0 justify-center">
-        <ToolStatusDot tone={resolved.tone} />
+      <span className="col-start-1 row-start-1 flex h-5 justify-center self-start sm:h-auto sm:self-center">
+        <ToolStatusDot tone={resolved.tone} className="self-center" />
       </span>
-      <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="truncate font-medium text-body-sm text-foreground">
-          {title ?? derivedName}
-        </span>
+      <span className="col-span-2 col-start-2 row-start-1 truncate font-medium text-body-sm text-foreground sm:col-span-1">
+        {title ?? derivedName}
+      </span>
+      <span className="col-start-2 row-start-2 flex min-w-0 items-center gap-2 empty:hidden sm:col-start-3 sm:row-start-1">
         {meta}
       </span>
-      <span className="flex shrink-0 items-center gap-2 text-meta text-muted-foreground tabular-nums">
-        <span
-          className={cn(
-            statusLabel === "responsive" && "sr-only sm:not-sr-only",
-            statusLabel === "hidden" && "sr-only"
-          )}
-        >
-          {resolved.label}
-        </span>
+      <span className="col-start-3 row-start-2 flex shrink-0 items-center justify-end gap-2 text-meta text-muted-foreground tabular-nums sm:col-start-4 sm:row-start-1">
+        {label}
         {trailing}
       </span>
       <ChevronRightIcon
         aria-hidden="true"
-        className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]/tool:rotate-90"
+        className="col-start-4 row-span-2 row-start-1 size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]/tool:rotate-90 sm:col-start-5 sm:row-span-1"
       />
     </CollapsibleTrigger>
   );

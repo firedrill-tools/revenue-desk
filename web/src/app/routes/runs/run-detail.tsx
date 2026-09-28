@@ -4,7 +4,7 @@ import { Link } from "@/app/router";
 import { ApprovalCard } from "@/components/app/approval-card";
 import { ErrorState } from "@/components/app/page";
 import { KindChip, MetaChip, StatusDot, StatusText } from "@/components/app/status";
-import { ToolCallBlock, ToolCallRow } from "@/components/app/tool-call";
+import { ToolCallBlock, ToolCallList, ToolCallRow } from "@/components/app/tool-call";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRunDetail } from "@/hooks/use-api";
@@ -20,7 +20,7 @@ import {
   RUN_STATUS_LABELS,
 } from "@/lib/labels";
 import { chatHref } from "@/lib/routes";
-import { toolRowFromView } from "@/lib/tool-model";
+import { type ToolRowModel, toolRowFromView } from "@/lib/tool-model";
 
 function Section({
   title,
@@ -50,6 +50,31 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
       {sub ? <dd className="text-meta text-muted-foreground tabular-nums">{sub}</dd> : null}
     </div>
   );
+}
+
+type CallGroup =
+  | { readonly kind: "list"; readonly key: string; readonly rows: readonly ToolRowModel[] }
+  | { readonly kind: "block"; readonly key: string; readonly row: ToolRowModel };
+
+/** Calls without an approval share one list; a call with one keeps its decision beneath it. */
+function groupCalls(rows: readonly ToolRowModel[]): CallGroup[] {
+  const groups: CallGroup[] = [];
+  let list: ToolRowModel[] = [];
+  const flush = () => {
+    const first = list[0];
+    if (first) groups.push({ kind: "list", key: `list:${first.toolCallId}`, rows: list });
+    list = [];
+  };
+  for (const row of rows) {
+    if (row.approval === null) {
+      list.push(row);
+      continue;
+    }
+    flush();
+    groups.push({ kind: "block", key: `block:${row.toolCallId}`, row });
+  }
+  flush();
+  return groups;
 }
 
 const DECIDER_LABELS = {
@@ -106,17 +131,32 @@ function RunDetailBody({ run }: { run: RunDetailView }) {
           <p className="text-body-sm text-muted-foreground">This run called no tools.</p>
         ) : (
           <div className="space-y-2">
-            {run.toolCalls.map((call) => {
-              const row = toolRowFromView(call, run.approvals);
-              return (
-                <ToolCallBlock
-                  key={call.id}
-                  approval={row.approval ? <ApprovalCard approval={row.approval} /> : null}
-                >
-                  <ToolCallRow row={row} />
-                </ToolCallBlock>
-              );
-            })}
+            {groupCalls(run.toolCalls.map((call) => toolRowFromView(call, run.approvals))).map(
+              (group) =>
+                group.kind === "list" ? (
+                  <ToolCallList key={group.key}>
+                    {group.rows.map((row) => (
+                      <ToolCallRow
+                        key={row.toolCallId}
+                        row={row}
+                        variant="flat"
+                        className="rounded-none"
+                      />
+                    ))}
+                  </ToolCallList>
+                ) : (
+                  <ToolCallBlock
+                    key={group.key}
+                    approval={
+                      group.row.approval ? (
+                        <ApprovalCard attached approval={group.row.approval} />
+                      ) : null
+                    }
+                  >
+                    <ToolCallRow row={group.row} variant="flat" className="rounded-none" />
+                  </ToolCallBlock>
+                ),
+            )}
           </div>
         )}
       </Section>
