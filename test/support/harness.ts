@@ -39,12 +39,25 @@ export const REPOSITORY_ROOT = resolve(import.meta.dirname, "../..");
 
 export type ServerMode = "process" | "in-process" | "none";
 
+/**
+ * The real Messages API instead of the scripted one (the sandbox demo's
+ * explicit choice). The key is passed in by the caller, never read from a
+ * file; no base URL or proxy is set, so the Claude CLI talks to Anthropic.
+ */
+export type RealModel = { readonly real: { readonly apiKey: string } };
+
+/** Where the agent's model requests go, for the server's environment. */
+export type ModelEndpoint =
+  | { readonly kind: "scripted"; readonly url: string }
+  | { readonly kind: "real"; readonly apiKey: string };
+
 export interface HarnessOptions {
   /**
    * The scripted model: a scenario, several (chosen by prompt), a scenario
-   * responder, or a raw responder. Default: the sandbox's J1–J5 responder.
+   * responder, or a raw responder; or the real model. Default: the sandbox's
+   * J1–J5 responder.
    */
-  readonly model?: Scenario | readonly Scenario[] | ScenarioResponder | Responder;
+  readonly model?: Scenario | readonly Scenario[] | ScenarioResponder | Responder | RealModel;
   /** How the product reaches HubSpot. Default "stdio" (the pinned vendor server). */
   readonly hubspot?: HubSpotMode;
   /** Mount each fake under a path prefix. Default false. */
@@ -70,11 +83,14 @@ export interface HarnessOptions {
    * internal domains, Slack allowlist); "default" keeps the seeded ones.
    */
   readonly workspace?: "kestrel" | "default";
+  /** Process mode: also hand the server's stdout and stderr to this (the sandbox prints them). */
+  readonly onServerOutput?: (text: string) => void;
 }
 
 export interface Harness {
   readonly fakes: Fakes;
-  readonly model: MockAnthropic;
+  /** The scripted Messages API, or null with the real model. */
+  readonly model: MockAnthropic | null;
   /** The scripted responder when the model is scenario-driven, else null. */
   readonly script: ScenarioResponder | null;
   readonly stateDir: string;
@@ -101,21 +117,30 @@ export interface Harness {
  */
 export function harnessEnvironment(options: {
   readonly fakes: Fakes;
-  readonly modelUrl: string;
+  readonly model: ModelEndpoint;
   readonly stateDir: string;
   readonly port: number;
   readonly sandbox: boolean;
   readonly extra?: Readonly<Partial<Record<EnvVarName, string>>>;
 }): Record<string, string> {
-  const passthrough: Record<SdkChildPassthroughVar, string> = {
-    HTTP_PROXY: options.modelUrl,
-    HTTPS_PROXY: options.modelUrl,
-    NO_PROXY: "127.0.0.1,localhost",
-    CLAUDE_CODE_MAX_RETRIES: "0",
-  };
+  const scripted = options.model.kind === "scripted" ? options.model.url : null;
+  // With the scripted model the CLI's proxy is the model itself, which refuses every other host.
+  const passthrough: Partial<Record<SdkChildPassthroughVar, string>> =
+    scripted === null
+      ? {}
+      : {
+          HTTP_PROXY: scripted,
+          HTTPS_PROXY: scripted,
+          NO_PROXY: "127.0.0.1,localhost",
+          CLAUDE_CODE_MAX_RETRIES: "0",
+        };
   const product: Partial<Record<EnvVarName, string>> = {
-    ANTHROPIC_API_KEY: FAKE_CREDENTIALS.anthropicApiKey,
-    ANTHROPIC_BASE_URL: options.modelUrl,
+    ...(options.model.kind === "real"
+      ? { ANTHROPIC_API_KEY: options.model.apiKey }
+      : {
+          ANTHROPIC_API_KEY: FAKE_CREDENTIALS.anthropicApiKey,
+          ANTHROPIC_BASE_URL: options.model.url,
+        }),
     PORT: String(options.port),
     AGENT_STATE_DIR: options.stateDir,
     AGENT_BUSINESS_DATE: options.fakes.fixtures.company.businessDate,
@@ -127,10 +152,10 @@ export function harnessEnvironment(options: {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: join(options.stateDir, "server-home"),
     TMPDIR: tmpdir(),
-    ...passthrough,
   };
-  for (const [name, value] of Object.entries(product))
+  for (const [name, value] of Object.entries({ ...passthrough, ...product })) {
     if (value !== undefined) environment[name] = value;
+  }
   return environment;
 }
 
@@ -148,9 +173,23 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     cleanups.push(() => fakes.close());
     options.arrange?.(fakes);
 
-    const { respond, script } = responderFor(options.model);
-    const model = await startMockAnthropic(FAKE_CREDENTIALS.anthropicApiKey, respond);
-    cleanups.push(() => model.close());
+    let model: MockAnthropic | null = null;
+    let script: ScenarioResponder | null = null;
+    let endpoint: ModelEndpoint;
+    if (
+      options.model !== undefined &&
+      typeof options.model === "object" &&
+      "real" in options.model
+    ) {
+      endpoint = { kind: "real", apiKey: options.model.real.apiKey };
+    } else {
+      const scripted = responderFor(options.model);
+      script = scripted.script;
+      const mock = await startMockAnthropic(FAKE_CREDENTIALS.anthropicApiKey, scripted.respond);
+      cleanups.push(() => mock.close());
+      model = mock;
+      endpoint = { kind: "scripted", url: mock.url };
+    }
 
     let stateDir = options.stateDir;
     if (stateDir === undefined) {
@@ -163,7 +202,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     const port = options.port ?? (mode === "none" ? 0 : await freePort());
     const env = harnessEnvironment({
       fakes,
-      modelUrl: model.url,
+      model: endpoint,
       stateDir,
       port,
       sandbox: options.sandbox ?? true,
@@ -173,7 +212,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     let url: string | null = null;
     let serverLog = () => "";
     if (mode === "process") {
-      const server = await spawnServer(env, options.entry ?? "source");
+      const server = await spawnServer(env, options.entry ?? "source", options.onServerOutput);
       cleanups.push(() => server.stop());
       url = server.url;
       serverLog = server.log;
@@ -233,7 +272,7 @@ export async function applyWorkspaceSettings(
   return "applied";
 }
 
-function responderFor(model: HarnessOptions["model"]): {
+function responderFor(model: Exclude<HarnessOptions["model"], RealModel>): {
   readonly respond: Responder;
   readonly script: ScenarioResponder | null;
 } {
@@ -269,6 +308,7 @@ interface ServerProcess {
 async function spawnServer(
   env: Readonly<Record<string, string>>,
   entry: "source" | "built",
+  onOutput?: (text: string) => void,
 ): Promise<ServerProcess> {
   const args =
     entry === "built"
@@ -285,7 +325,9 @@ async function spawnServer(
   });
   let output = "";
   const capture = (chunk: Buffer) => {
-    output = (output + chunk.toString("utf8")).slice(-65_536);
+    const text = chunk.toString("utf8");
+    output = (output + text).slice(-65_536);
+    onOutput?.(text);
   };
   child.stdout?.on("data", capture);
   child.stderr?.on("data", capture);
@@ -307,7 +349,19 @@ async function spawnServer(
       throw new Error(`The server was not ready within 30 s:\n${output}`);
     }
   }
-  return { url, log: () => output, stop: () => stopChild(child, exited) };
+  // If this process exits without stopping the server (a crash), take it down too.
+  const killOnExit = () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  };
+  process.once("exit", killOnExit);
+  return {
+    url,
+    log: () => output,
+    stop: async () => {
+      process.off("exit", killOnExit);
+      await stopChild(child, exited);
+    },
+  };
 }
 
 async function stopChild(child: ChildProcess, exited: Promise<number | null>): Promise<void> {

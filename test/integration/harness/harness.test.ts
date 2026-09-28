@@ -33,7 +33,7 @@ describe("harness environment", () => {
     try {
       const env = harnessEnvironment({
         fakes,
-        modelUrl: "http://127.0.0.1:9",
+        model: { kind: "scripted", url: "http://127.0.0.1:9" },
         stateDir: "/tmp/rd-state",
         port: 4999,
         sandbox: true,
