@@ -130,11 +130,31 @@ describe("runTurn with the integrations registry", () => {
     }
 
     expect(eventContractViolations(events)).toEqual([]);
-    expect(ofType(events, "approval.requested")[0]?.descriptor).toMatchObject({
-      consequence: "Refund $490.00 on Stripe charge ch_KAhp_0922b",
+    // The card names the customer and the charge from the run's own list_charges result, with
+    // its time in the workspace zone (America/New_York), not the model's words.
+    const card = ofType(events, "approval.requested")[0]?.descriptor;
+    expect(card).toMatchObject({
+      consequence: "Refund $490.00 to Harbor & Pine Outfitters on Stripe charge ch_KAhp_0922b",
       actionClass: "financial",
       amount: { amountMinor: 49000, currency: "USD" },
     });
+    expect(card?.facts).toEqual([
+      { label: "Amount", value: "$490.00" },
+      { label: "Customer", value: "Harbor & Pine Outfitters (cus_KAharborpine)" },
+      { label: "Charge", value: "ch_KAhp_0922b" },
+      {
+        label: "Charged",
+        value:
+          '$490.00 on 2026-09-22 09:04 UTC-04:00 "Growth plan – September (manual retry from Dashboard)"',
+      },
+      { label: "Already refunded", value: "$0.00" },
+      { label: "Reason", value: "Duplicate charge" },
+    ]);
+    // What the model read carries the same local time.
+    const charges = ofType(events, "tool.output").find(
+      (event) => event.toolCallId === "toolu_charges",
+    );
+    expect(JSON.stringify(charges?.output)).toContain('"created":"2026-09-22T09:04:37-04:00"');
     const refundWrites = stripe.writes().filter((write) => write.path === "/v1/refunds");
     expect(refundWrites.map((write) => [write.idempotencyKey, write.replayed])).toEqual([
       [idempotencyKeyFor("run_compose", "toolu_refund"), false],

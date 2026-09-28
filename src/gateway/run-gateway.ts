@@ -230,7 +230,7 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
     const definition: ToolSource = options.catalog[integration];
     const descriptors = profileDescriptors(definition);
     // What this run learns from the integration's calls refines later classifications.
-    const memory = definition.runMemory?.();
+    const memory = definition.runMemory?.(classifierSettings);
     let tools: readonly GatewayTool[];
     try {
       if (INTEGRATIONS[integration].kind === "api") {

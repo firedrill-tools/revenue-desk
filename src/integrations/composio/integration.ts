@@ -2,6 +2,7 @@
 // beyond the frozen IntegrationDefinition.
 
 import type {
+  ClassifierSettings,
   ComposioAccess,
   ComposioIntegrationId,
   ComposioToolkitSlug,
@@ -20,5 +21,5 @@ export interface ComposioIntegration<I extends ComposioIntegrationId>
   /** The shared connector for this connection's Composio configuration. */
   connector(connection: ResolvedConnectionOf<I>): ComposioConnector;
   /** What a run learns from this integration's calls (e.g. the drafts it created). */
-  runMemory?(): RunMemory;
+  runMemory?(settings: ClassifierSettings): RunMemory;
 }

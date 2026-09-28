@@ -12,13 +12,14 @@ import { describe, expect, it } from "vitest";
 import { STOPPED_BEFORE_RUN_REASON } from "../../../src/agent/sdk-mapper.js";
 import type { ApprovalDescriptor } from "../../../src/contracts/events.js";
 import { UNCONFIRMED_RECIPIENTS } from "../../../src/integrations/gmail/classify.js";
-import { expectedIdempotencyKey, HARBOR_PINE } from "../../scenarios/facts.js";
+import { expectedIdempotencyKey, HARBOR_PINE, SOLSTICE } from "../../scenarios/facts.js";
 import {
   J1_BILLING_INQUIRY,
   J2_REFUND_DENIED,
   J2_REFUND_DUPLICATE,
   J2_STOPPED_AT_APPROVAL,
   J3_COLLECTIONS,
+  J4_CLOSED_WON,
 } from "../../scenarios/index.js";
 import { runScenarioOverHttp } from "../../scenarios/run-over-http.js";
 import { type Scenario, text } from "../../scenarios/script.js";
@@ -274,6 +275,38 @@ describe("full stack: the jobs, with the database checked against what happened"
         charge: "ch_KAhp_0922b",
         amount: 49_000,
       });
+    });
+  });
+
+  it("J4: the invoice cards name the customer, the invoice number and who receives it", {
+    timeout: TIMEOUT,
+  }, async () => {
+    await withHarness(J4_CLOSED_WON, {}, async (harness) => {
+      const { rows } = await play(harness, J4_CLOSED_WON);
+      expect(rows.run.status).toBe("completed");
+      const card = (id: string) =>
+        JSON.parse(rows.approval(id).descriptor_json) as ApprovalDescriptor;
+      // From the customer this run created, not from the model's words.
+      expect(card("j4_invoice")).toMatchObject({
+        consequence: `Create a $18,000.00 invoice for ${SOLSTICE.name} (not sent)`,
+        recordIds: [SOLSTICE.expectedCustomerId],
+      });
+      expect(card("j4_invoice").facts[0]).toEqual({
+        label: "Customer",
+        value: `${SOLSTICE.name} (QuickBooks customer ${SOLSTICE.expectedCustomerId})`,
+      });
+      // From the invoice this run created: its number, total, customer and billing email.
+      const send = card("j4_send");
+      expect(send).toMatchObject({
+        consequence: `Email invoice ${SOLSTICE.expectedDocNumber} ($18,000.00, ${SOLSTICE.name}) to ${SOLSTICE.contactEmail}`,
+        recipients: [SOLSTICE.contactEmail],
+        amount: { amountMinor: SOLSTICE.amountMinor, currency: "USD" },
+        recordIds: [SOLSTICE.expectedInvoiceId],
+      });
+      // The card named exactly who QuickBooks emailed.
+      expect(harness.fakes.quickbooks.sentInvoices.map((entry) => entry.to)).toEqual(
+        send.recipients,
+      );
     });
   });
 

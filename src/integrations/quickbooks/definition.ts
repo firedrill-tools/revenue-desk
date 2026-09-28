@@ -14,6 +14,7 @@ import { classifyQuickBooks } from "./classify.js";
 import { QuickBooksClient } from "./client.js";
 import { QUICKBOOKS_PROFILE } from "./profile.js";
 import { resolveQuickBooks } from "./resolve.js";
+import { QuickBooksRunMemory } from "./run-memory.js";
 import { createQuickBooksTools } from "./tools.js";
 
 export function quickBooksClientFor(
@@ -66,5 +67,7 @@ export function createQuickBooksIntegration(
     probe: (connection, signal) => probeQuickBooks(connection, signal, deps.http),
     tools: (connection, options) =>
       createQuickBooksTools(quickBooksClientFor(connection, deps.http), options),
+    // Approval cards name the customers and invoices this run read, not only their ids.
+    runMemory: (settings) => new QuickBooksRunMemory(settings),
   };
 }

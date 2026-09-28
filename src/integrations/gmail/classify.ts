@@ -34,12 +34,14 @@ export type Recipients = {
   readonly bcc: readonly string[];
 };
 
-/** A draft this run created: who it goes to, as the create call named them. */
+/** A draft this run created: who it goes to and what it says, as the create call gave them. */
 export type KnownDraft = {
   readonly draftId: string;
   readonly recipients: Recipients;
   readonly subject: string | null;
   readonly threadId: string | null;
+  /** The body the draft was created with; null when the call gave none. */
+  readonly body?: string | null;
 };
 
 const DESTRUCTIVE_LABELS = new Set(["TRASH", "SPAM"]);
@@ -189,6 +191,10 @@ export function classifySendDraft(
     facts.push({ label: "Subject", value: preview(confirmed.subject, 120) });
   }
   if (confirmed.threadId !== null) facts.push({ label: "Thread", value: confirmed.threadId });
+  // The person approving reads what the email says, not only who gets it.
+  if (confirmed.body !== undefined && confirmed.body !== null) {
+    facts.push({ label: "Body", value: preview(confirmed.body, 600) });
+  }
   facts.push({ label: "Draft", value: draft });
   return {
     actionClass: "outbound",
@@ -218,7 +224,7 @@ function createdDraftId(output: JsonValue): string | undefined {
 
 /**
  * The draft a successful GMAIL_CREATE_EMAIL_DRAFT call created, from its
- * input (recipients, subject, thread) and its result (the draft id). Null
+ * input (recipients, subject, thread, body) and its result (the draft id). Null
  * when either is missing or the recipients are not addresses.
  */
 export function draftFromCreate(input: JsonObject, output: JsonValue): KnownDraft | null {
@@ -232,6 +238,7 @@ export function draftFromCreate(input: JsonObject, output: JsonValue): KnownDraf
     recipients,
     subject: str(input, "subject") ?? null,
     threadId: str(input, "thread_id") ?? null,
+    body: str(input, "body") ?? str(input, "message_body") ?? null,
   };
 }
 

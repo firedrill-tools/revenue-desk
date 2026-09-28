@@ -13,6 +13,7 @@ import { classifyStripe } from "./classify.js";
 import { StripeClient } from "./client.js";
 import { STRIPE_PROFILE } from "./profile.js";
 import { resolveStripe } from "./resolve.js";
+import { StripeRunMemory } from "./run-memory.js";
 import { createStripeTools } from "./tools.js";
 
 export function stripeClientFor(connection: StripeConnection, http?: HttpDeps): StripeClient {
@@ -63,5 +64,7 @@ export function createStripeIntegration(deps: ApiIntegrationDeps = {}): ApiInteg
     probe: (connection, signal) => probeStripe(connection, signal, deps.http),
     tools: (connection, options) =>
       createStripeTools(stripeClientFor(connection, deps.http), options),
+    // Refund and cancellation cards name the customer and charge this run read.
+    runMemory: (settings) => new StripeRunMemory(settings),
   };
 }

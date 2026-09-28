@@ -10,6 +10,7 @@
 import {
   type ApiIntegrationId,
   type Classification,
+  type ClassifierSettings,
   type ComposioAccess,
   type ComposioIntegrationId,
   type ComposioToolkitSlug,
@@ -71,7 +72,8 @@ export interface RunMemory {
 
 /** An integration whose classifications can depend on the run's earlier calls. */
 export type RunMemorySource = {
-  runMemory?(): RunMemory;
+  /** A fresh memory for one run; `settings` are the run's classifier settings. */
+  runMemory?(settings: ClassifierSettings): RunMemory;
 };
 
 export type CatalogEntry<I extends IntegrationId> = IntegrationDefinition<I> &

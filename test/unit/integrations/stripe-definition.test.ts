@@ -8,6 +8,7 @@ import {
 } from "../../../src/integrations/stripe/definition.js";
 import { STRIPE_PROFILE } from "../../../src/integrations/stripe/profile.js";
 import { resolveStripe } from "../../../src/integrations/stripe/resolve.js";
+import { StripeRunMemory } from "../../../src/integrations/stripe/run-memory.js";
 import { mockFetch, SETTINGS, secret, testEnv } from "./helpers.js";
 
 const stripeEnv = (
@@ -109,6 +110,8 @@ describe("classifyStripe", () => {
         facts: [
           { label: "Amount", value: "$49.00" },
           { label: "Charge", value: "ch_2" },
+          // The run never read this charge: the card says so.
+          { label: "Charge details", value: "Not read in this run" },
           { label: "Reason", value: "Duplicate charge" },
         ],
         amount: { amountMinor: 4900, currency: "USD" },
@@ -142,6 +145,74 @@ describe("classifyStripe", () => {
       label: "Proration",
       value: "Credit unused time",
     });
+  });
+
+  it("names the customer and the charge the run read (StripeRunMemory)", () => {
+    const memory = new StripeRunMemory(SETTINGS);
+    const refine = (tool: string, input: JsonObject) => {
+      const base = classifyStripe(tool, input, SETTINGS);
+      if (base === null) throw new Error(`expected a classification of ${tool}`);
+      return memory.refine(tool, input, base);
+    };
+    // A failed read, and a charge the run has not seen, name nothing.
+    memory.record("find_customers", {}, { data: [{ id: "cus_1", name: "Acme" }] }, true);
+    expect(refine("create_refund", { charge: "ch_2", amount: 4900 }).details?.consequence).toBe(
+      "Refund $49.00 on Stripe charge ch_2",
+    );
+
+    memory.record(
+      "find_customers",
+      { name: "Acme" },
+      { data: [{ id: "cus_1", name: "Acme Logistics", email: "ap@acme.test" }] },
+      false,
+    );
+    memory.record(
+      "list_charges",
+      { customer: "cus_1" },
+      {
+        data: [
+          {
+            id: "ch_2",
+            amount: 9800,
+            amount_refunded: 4900,
+            currency: "eur",
+            customer: "cus_1",
+            payment_intent: "pi_2",
+            created: "2026-09-22T09:04:37-04:00",
+            description: "Seats, September",
+          },
+        ],
+      },
+      false,
+    );
+    const card = refine("create_refund", { payment_intent: "pi_2", amount: 4900 });
+    expect(card.details).toMatchObject({
+      // The charge's own currency, not the workspace's.
+      consequence: "Refund €49.00 to Acme Logistics on Stripe payment intent pi_2",
+      amount: { amountMinor: 4900, currency: "EUR" },
+      recordIds: ["pi_2"],
+    });
+    expect(card.details?.facts).toEqual([
+      { label: "Amount", value: "€49.00" },
+      { label: "Customer", value: "Acme Logistics (cus_1)" },
+      { label: "Payment intent", value: "pi_2" },
+      { label: "Charged", value: '€98.00 on 2026-09-22 09:04 UTC-04:00 "Seats, September"' },
+      { label: "Already refunded", value: "€49.00" },
+    ]);
+
+    memory.record(
+      "list_subscriptions",
+      {},
+      { data: [{ id: "sub_1", customer: "cus_1", status: "active" }] },
+      false,
+    );
+    expect(refine("cancel_subscription", { subscription: "sub_1" }).details).toMatchObject({
+      consequence: "Cancel Acme Logistics's Stripe subscription sub_1 immediately",
+    });
+    // Reads are not refined.
+    const read = classifyStripe("list_charges", {}, SETTINGS);
+    if (read === null) throw new Error("expected a classification");
+    expect(memory.refine("list_charges", {}, read)).toEqual(read);
   });
 
   it("denies unknown tools and inputs it cannot judge", () => {

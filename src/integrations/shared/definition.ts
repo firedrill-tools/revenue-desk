@@ -4,9 +4,11 @@
 
 import type {
   ApiIntegrationId,
+  ClassifierSettings,
   IntegrationDefinition,
   ResolvedConnectionOf,
 } from "../../contracts/integration.js";
+import type { RunMemory } from "../../gateway/catalog.js";
 import type { ApiTool, ApiToolOptions } from "./api-tool.js";
 import type { HttpDeps } from "./http.js";
 
@@ -14,6 +16,8 @@ export interface ApiIntegration<I extends ApiIntegrationId> extends IntegrationD
   readonly kind: "api";
   /** The profile's tools bound to one connection. Build them per query. */
   tools(connection: ResolvedConnectionOf<I>, options: ApiToolOptions): readonly ApiTool[];
+  /** What a run learns from this integration's calls, for later approval cards. */
+  runMemory?(settings: ClassifierSettings): RunMemory;
 }
 
 /** Test seams for API integrations: the HTTP layer (fetch, sleep, retry timing). */

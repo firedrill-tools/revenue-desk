@@ -28,6 +28,7 @@ describe("sending a draft this run created", () => {
       recipients: { to: ["dana@harborpine.test"], cc: ["billing@harborpine.test"], bcc: [] },
       subject: "Your duplicate charge",
       threadId: "19a1",
+      body: "Hi Dana,",
     };
     const outputs: JsonValue[] = [
       {
@@ -53,7 +54,7 @@ describe("sending a draft this run created", () => {
     expect(draftFromCreate({ recipient_email: "not an address" }, { id: "r-1" })).toBeNull();
   });
 
-  it("names the recipients, subject and thread of the known draft", () => {
+  it("names the recipients, subject and thread of the known draft, and shows its body", () => {
     const known = draftFromCreate(DRAFT_INPUT, { data: { id: "r-7400" } });
     expect(classifySendDraft({ draft_id: "r-7400" }, known)).toEqual({
       actionClass: "outbound",
@@ -66,6 +67,7 @@ describe("sending a draft this run created", () => {
           { label: "Cc", value: "billing@harborpine.test" },
           { label: "Subject", value: "Your duplicate charge" },
           { label: "Thread", value: "19a1" },
+          { label: "Body", value: "Hi Dana," },
           { label: "Draft", value: "r-7400" },
         ],
         recipients: ["dana@harborpine.test", "billing@harborpine.test"],
