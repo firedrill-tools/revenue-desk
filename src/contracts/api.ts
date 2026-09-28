@@ -244,7 +244,12 @@ export type RunSummaryView = {
   readonly error: RunError | null;
 };
 
-export type RunDetailView = RunSummaryView & {
+/**
+ * The summary's approval counts are replaced by the approvals themselves
+ * (the counts follow from the list); an intersection of both would be
+ * unsatisfiable.
+ */
+export type RunDetailView = Omit<RunSummaryView, "approvals"> & {
   readonly stopReason: string | null;
   readonly terminalReason: SdkTerminalReason | null;
   /** The effective policy the run used. */
