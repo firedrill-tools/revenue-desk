@@ -7,7 +7,7 @@
 // (better-sqlite3), so a row always exists before the chunk that shows it.
 
 import type { ConversationStatus } from "../contracts/api.js";
-import type { AgentEvent, AgentEventOf, ToolDecision } from "../contracts/events.js";
+import type { AgentEvent, AgentEventOf, ToolDecision, ToolMetadata } from "../contracts/events.js";
 import { countPendingApprovalsForRun } from "../db/repos/approvals.js";
 import {
   addConversationUsage,
@@ -38,6 +38,8 @@ export type RunRecorderOptions = {
 
 export class RunRecorder {
   readonly #options: RunRecorderOptions;
+  /** Base metadata from tool.input.start, for calls whose input cannot be classified. */
+  readonly #baseMetadata = new Map<string, ToolMetadata | null>();
 
   constructor(options: RunRecorderOptions) {
     this.#options = options;
@@ -55,6 +57,9 @@ export class RunRecorder {
         return;
       case "session":
         setConversationSession(db, conversationId, event.sdkSessionId);
+        return;
+      case "tool.input.start":
+        this.#baseMetadata.set(event.toolCallId, event.tool);
         return;
       case "tool.input.available":
         this.#toolInput(event);
@@ -90,16 +95,20 @@ export class RunRecorder {
 
   #toolInput(event: AgentEventOf<"tool.input.available">): void {
     const { db, runId, conversationId, redact } = this.#options;
+    // A known tool whose input cannot be classified (e.g. schema-invalid, so
+    // rejected) keeps its integration, kind, operation and base class; only an
+    // unknown tool is recorded without them.
+    const tool = event.tool ?? this.#baseMetadata.get(event.toolCallId) ?? null;
     insertToolCall(db, {
       id: this.#options.newId(),
       runId,
       conversationId,
       toolUseId: event.toolCallId,
-      integration: event.tool?.integration ?? null,
-      connectionKind: event.tool?.connectionKind ?? null,
+      integration: tool?.integration ?? null,
+      connectionKind: tool?.connectionKind ?? null,
       toolName: event.toolName,
-      operation: event.tool?.operation ?? null,
-      actionClass: event.tool?.actionClass ?? null,
+      operation: tool?.operation ?? null,
+      actionClass: tool?.actionClass ?? null,
       title: redact(event.title),
       input: redactJsonObject(event.input, redact),
       startedAt: this.#now(),
