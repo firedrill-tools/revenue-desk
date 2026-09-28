@@ -1,23 +1,25 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+// revenue-desk patch (docs/ARCHITECTURE.md §9, Appendix A): restyled.
+// - The yellow/green/blue rounded-full badges become a status dot (a 14px
+//   spinner while running) plus a plain label.
+// - ToolHeader takes `status` (tone and label), `meta` (integration label and
+//   the neutral connection-kind chip) and `trailing` (tabular duration or live
+//   elapsed time) slots.
+// - #490: ToolInput returns null while the input is still streaming.
+// - Input and output render through the app's lean CodeBlock and scroll
+//   inside their own block.
+
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { DynamicToolUIPart, ToolUIPart } from "ai";
-import {
-  CheckCircleIcon,
-  ChevronDownIcon,
-  CircleIcon,
-  ClockIcon,
-  WrenchIcon,
-  XCircleIcon,
-} from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import { isValidElement } from "react";
 
 import { CodeBlock } from "./code-block";
 
@@ -25,16 +27,94 @@ export type ToolProps = ComponentProps<typeof Collapsible>;
 
 export const Tool = ({ className, ...props }: ToolProps) => (
   <Collapsible
-    className={cn("group not-prose mb-4 w-full rounded-md border", className)}
+    className={cn(
+      "group/tool not-prose w-full min-w-0 rounded-lg border bg-background",
+      className
+    )}
     {...props}
   />
 );
 
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
+export type ToolStatusTone =
+  | "neutral"
+  | "running"
+  | "success"
+  | "warning"
+  | "danger";
+
+export type ToolStatusValue = { tone: ToolStatusTone; label: string };
+
+const statusByState: Record<ToolPart["state"], ToolStatusValue> = {
+  "approval-requested": { tone: "warning", label: "Awaiting approval" },
+  "approval-responded": { tone: "neutral", label: "Decided" },
+  "input-available": { tone: "running", label: "Running" },
+  "input-streaming": { tone: "neutral", label: "Preparing" },
+  "output-available": { tone: "success", label: "Done" },
+  "output-denied": { tone: "danger", label: "Denied" },
+  "output-error": { tone: "danger", label: "Failed" },
+};
+
+const dotTone: Record<ToolStatusTone, string> = {
+  neutral: "bg-muted-foreground/45",
+  running: "bg-brand",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-danger",
+};
+
+export const getToolStatus = (state: ToolPart["state"]): ToolStatusValue =>
+  statusByState[state];
+
+export type ToolStatusDotProps = { tone: ToolStatusTone; className?: string };
+
+/** A 8px dot, or a 14px spinner while running. Decorative: pair it with a label. */
+export const ToolStatusDot = ({ tone, className }: ToolStatusDotProps) =>
+  tone === "running" ? (
+    <Spinner
+      aria-hidden="true"
+      className={cn("size-3.5 shrink-0 text-brand", className)}
+    />
+  ) : (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-block size-2 shrink-0 rounded-full",
+        dotTone[tone],
+        className
+      )}
+    />
+  );
+
+/** Neutral outline chip naming how a call reaches its system: Composio, MCP, API. */
+export const ToolKindChip = ({
+  className,
+  ...props
+}: ComponentProps<"span">) => (
+  <span
+    className={cn(
+      "inline-flex h-[18px] shrink-0 items-center rounded-[4px] border px-1.5 font-medium text-[11px] text-muted-foreground leading-none tracking-wide",
+      className
+    )}
+    {...props}
+  />
+);
+
 export type ToolHeaderProps = {
   title?: string;
   className?: string;
+  /** Overrides the label derived from `state`. */
+  status?: ToolStatusValue;
+  /** After the title: the integration label and the kind chip. */
+  meta?: ReactNode;
+  /** Right side, before the chevron: duration or live elapsed time. */
+  trailing?: ReactNode;
+  /**
+   * The status label: always visible, visible from the sm breakpoint, or
+   * only for screen readers (the dot remains visible in every case).
+   */
+  statusLabel?: "visible" | "responsive" | "hidden";
 } & (
   | { type: ToolUIPart["type"]; state: ToolUIPart["state"]; toolName?: never }
   | {
@@ -44,58 +124,54 @@ export type ToolHeaderProps = {
     }
 );
 
-const statusLabels: Record<ToolPart["state"], string> = {
-  "approval-requested": "Awaiting Approval",
-  "approval-responded": "Responded",
-  "input-available": "Running",
-  "input-streaming": "Pending",
-  "output-available": "Completed",
-  "output-denied": "Denied",
-  "output-error": "Error",
-};
-
-const statusIcons: Record<ToolPart["state"], ReactNode> = {
-  "approval-requested": <ClockIcon className="size-4 text-yellow-600" />,
-  "approval-responded": <CheckCircleIcon className="size-4 text-blue-600" />,
-  "input-available": <ClockIcon className="size-4 animate-pulse" />,
-  "input-streaming": <CircleIcon className="size-4" />,
-  "output-available": <CheckCircleIcon className="size-4 text-green-600" />,
-  "output-denied": <XCircleIcon className="size-4 text-orange-600" />,
-  "output-error": <XCircleIcon className="size-4 text-red-600" />,
-};
-
-export const getStatusBadge = (status: ToolPart["state"]) => (
-  <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
-    {statusIcons[status]}
-    {statusLabels[status]}
-  </Badge>
-);
-
 export const ToolHeader = ({
   className,
   title,
   type,
   state,
   toolName,
+  status,
+  meta,
+  trailing,
+  statusLabel = "visible",
   ...props
 }: ToolHeaderProps) => {
   const derivedName =
     type === "dynamic-tool" ? toolName : type.split("-").slice(1).join("-");
+  const resolved = status ?? getToolStatus(state);
 
   return (
     <CollapsibleTrigger
       className={cn(
-        "flex w-full items-center justify-between gap-4 p-3",
+        "flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
       {...props}
     >
-      <div className="flex items-center gap-2">
-        <WrenchIcon className="size-4 text-muted-foreground" />
-        <span className="font-medium text-sm">{title ?? derivedName}</span>
-        {getStatusBadge(state)}
-      </div>
-      <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+      <span className="flex w-3.5 shrink-0 justify-center">
+        <ToolStatusDot tone={resolved.tone} />
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="truncate font-medium text-body-sm text-foreground">
+          {title ?? derivedName}
+        </span>
+        {meta}
+      </span>
+      <span className="flex shrink-0 items-center gap-2 text-meta text-muted-foreground tabular-nums">
+        <span
+          className={cn(
+            statusLabel === "responsive" && "sr-only sm:not-sr-only",
+            statusLabel === "hidden" && "sr-only"
+          )}
+        >
+          {resolved.label}
+        </span>
+        {trailing}
+      </span>
+      <ChevronRightIcon
+        aria-hidden="true"
+        className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]/tool:rotate-90"
+      />
     </CollapsibleTrigger>
   );
 };
@@ -105,11 +181,15 @@ export type ToolContentProps = ComponentProps<typeof CollapsibleContent>;
 export const ToolContent = ({ className, ...props }: ToolContentProps) => (
   <CollapsibleContent
     className={cn(
-      "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 space-y-4 p-4 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+      "space-y-3 border-t px-3 py-3 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
   />
+);
+
+const SectionLabel = ({ children }: { children: ReactNode }) => (
+  <h4 className="font-medium text-meta text-muted-foreground">{children}</h4>
 );
 
 export type ToolInputProps = ComponentProps<"div"> & {
@@ -124,20 +204,19 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
   }
 
   return (
-    <div className={cn("space-y-2 overflow-hidden", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
-        Parameters
-      </h4>
-      <div className="rounded-md bg-muted/50">
-        <CodeBlock code={JSON.stringify(input, null, 2) ?? ""} language="json" />
-      </div>
+    <div className={cn("min-w-0 space-y-1.5", className)} {...props}>
+      <SectionLabel>Input</SectionLabel>
+      <CodeBlock code={JSON.stringify(input, null, 2) ?? ""} language="json" />
     </div>
   );
 };
 
+/** How an output is shown: JSON is pretty-printed and highlighted, text stays text. */
+export type ToolOutputView = { language: "json" | "text"; code: string };
+
 export type ToolOutputProps = ComponentProps<"div"> & {
-  output: ToolPart["output"];
-  errorText: ToolPart["errorText"];
+  output: ToolOutputView | null;
+  errorText: string | null | undefined;
 };
 
 export const ToolOutput = ({
@@ -150,32 +229,15 @@ export const ToolOutput = ({
     return null;
   }
 
-  let Output = <div>{output as ReactNode}</div>;
-
-  if (typeof output === "object" && !isValidElement(output)) {
-    Output = (
-      <CodeBlock code={JSON.stringify(output, null, 2)} language="json" />
-    );
-  } else if (typeof output === "string") {
-    Output = <CodeBlock code={output} language="json" />;
-  }
-
   return (
-    <div className={cn("space-y-2", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
-        {errorText ? "Error" : "Result"}
-      </h4>
-      <div
-        className={cn(
-          "overflow-x-auto rounded-md text-xs [&_table]:w-full",
-          errorText
-            ? "bg-destructive/10 text-destructive"
-            : "bg-muted/50 text-foreground"
-        )}
-      >
-        {errorText && <div>{errorText}</div>}
-        {Output}
-      </div>
+    <div className={cn("min-w-0 space-y-1.5", className)} {...props}>
+      <SectionLabel>{errorText ? "Error" : "Result"}</SectionLabel>
+      {errorText ? (
+        <p className="whitespace-pre-wrap break-words rounded-md border border-danger/25 bg-danger/5 px-3 py-2 text-body-sm text-danger">
+          {errorText}
+        </p>
+      ) : null}
+      {output ? <CodeBlock code={output.code} language={output.language} /> : null}
     </div>
   );
 };

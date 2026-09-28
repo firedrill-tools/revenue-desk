@@ -1,6 +1,5 @@
 "use client";
 
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { DynamicToolUIPart, ToolUIPart } from "ai";
@@ -30,7 +29,7 @@ const useConfirmation = () => {
   return context;
 };
 
-export type ConfirmationProps = ComponentProps<typeof Alert> & {
+export type ConfirmationProps = ComponentProps<"section"> & {
   approval?: ToolUIPartApproval;
   state: ToolUIPart["state"];
 };
@@ -47,20 +46,30 @@ export const Confirmation = ({
     return null;
   }
 
+  // revenue-desk patch (#484): a polite live region instead of the shadcn
+  // Alert's role="alert", which interrupted screen readers for every card.
   return (
     <ConfirmationContext.Provider value={contextValue}>
-      <Alert className={cn("flex flex-col gap-2", className)} {...props} />
+      <section
+        aria-live="polite"
+        className={cn(
+          "flex flex-col gap-3 rounded-xl border bg-background p-4 text-body",
+          className
+        )}
+        data-slot="confirmation"
+        {...props}
+      />
     </ConfirmationContext.Provider>
   );
 };
 
-export type ConfirmationTitleProps = ComponentProps<typeof AlertDescription>;
+export type ConfirmationTitleProps = ComponentProps<"p">;
 
 export const ConfirmationTitle = ({
   className,
   ...props
 }: ConfirmationTitleProps) => (
-  <AlertDescription className={cn("inline", className)} {...props} />
+  <p className={cn("font-medium text-foreground", className)} {...props} />
 );
 
 export interface ConfirmationRequestProps {
@@ -145,6 +154,11 @@ export const ConfirmationActions = ({
 
 export type ConfirmationActionProps = ComponentProps<typeof Button>;
 
-export const ConfirmationAction = (props: ConfirmationActionProps) => (
-  <Button className="h-8 px-3 text-sm" type="button" {...props} />
+// revenue-desk patch: callers that pass className restate the sizing classes;
+// merged here so a danger colour does not drop the height and padding.
+export const ConfirmationAction = ({
+  className,
+  ...props
+}: ConfirmationActionProps) => (
+  <Button className={cn("h-8 px-3 text-sm", className)} type="button" {...props} />
 );

@@ -11,11 +11,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { codeHighlighter } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
@@ -321,7 +318,15 @@ export const MessageBranchPage = ({
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+// revenue-desk patch: code highlighting only (no cjk, math or mermaid), through
+// the app's lean shiki build (web/src/lib/highlight.ts); copy controls only.
+const streamdownPlugins = { code: codeHighlighter };
+const streamdownControls = {
+  code: { copy: true, download: false },
+  table: { copy: true, download: false, fullscreen: false },
+  image: false,
+  mermaid: false,
+} as const;
 
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
@@ -330,6 +335,8 @@ export const MessageResponse = memo(
         "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
+      controls={streamdownControls}
+      lineNumbers={false}
       plugins={streamdownPlugins}
       {...props}
     />

@@ -6,12 +6,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { codeHighlighter } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import {
   createContext,
@@ -75,10 +72,13 @@ export const Reasoning = memo(
       onChange: onOpenChange,
       prop: open,
     });
-    const [duration, setDuration] = useControllableState<number | undefined>({
-      defaultProp: undefined,
-      prop: durationProp,
-    });
+    // revenue-desk patch (#496): useControllableState switched from
+    // uncontrolled to controlled when a caller passed undefined while
+    // streaming and a number afterwards. The prop wins when defined.
+    const [measuredDuration, setDuration] = useState<number | undefined>(
+      undefined
+    );
+    const duration = durationProp ?? measuredDuration;
 
     const hasEverStreamedRef = useRef(isStreaming);
     const [hasAutoClosed, setHasAutoClosed] = useState(false);
@@ -136,7 +136,7 @@ export const Reasoning = memo(
     return (
       <ReasoningContext.Provider value={contextValue}>
         <Collapsible
-          className={cn("not-prose mb-4", className)}
+          className={cn("not-prose", className)}
           onOpenChange={handleOpenChange}
           open={isOpen}
           {...props}
@@ -154,12 +154,17 @@ export type ReasoningTriggerProps = ComponentProps<
   getThinkingMessage?: (isStreaming: boolean, duration?: number) => ReactNode;
 };
 
+// revenue-desk patch: after streaming, a sub-second duration reads "a moment"
+// instead of staying on the Thinking shimmer.
 const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
-  if (isStreaming || duration === 0) {
-    return <Shimmer duration={1}>Thinking...</Shimmer>;
+  if (isStreaming) {
+    return <Shimmer duration={1.5}>Thinking</Shimmer>;
   }
   if (duration === undefined) {
     return <p>Thought for a few seconds</p>;
+  }
+  if (duration <= 1) {
+    return <p>Thought for a moment</p>;
   }
   return <p>Thought for {duration} seconds</p>;
 };
@@ -176,14 +181,13 @@ export const ReasoningTrigger = memo(
     return (
       <CollapsibleTrigger
         className={cn(
-          "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+          "flex w-fit items-center gap-1.5 text-body-sm text-muted-foreground transition-colors hover:text-foreground",
           className
         )}
         {...props}
       >
         {children ?? (
           <>
-            <BrainIcon className="size-4" />
             {getThinkingMessage(isStreaming, duration)}
             <ChevronDownIcon
               className={cn(
@@ -204,19 +208,22 @@ export type ReasoningContentProps = ComponentProps<
   children: string;
 };
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+// revenue-desk patch: code highlighting only, through web/src/lib/highlight.ts.
+const streamdownPlugins = { code: codeHighlighter };
 
 export const ReasoningContent = memo(
   ({ className, children, ...props }: ReasoningContentProps) => (
     <CollapsibleContent
       className={cn(
-        "mt-4 text-sm",
+        "mt-2 border-l-2 pl-3 text-body-sm",
         "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
         className
       )}
       {...props}
     >
-      <Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+      <Streamdown controls={false} lineNumbers={false} plugins={streamdownPlugins}>
+        {children}
+      </Streamdown>
     </CollapsibleContent>
   )
 );

@@ -8,7 +8,6 @@
 
 /* Streamdown renders Tailwind classes from its dist bundles (AI Elements MessageResponse). */
 @source "../../../node_modules/streamdown/dist/*.js";
-@source "../../../node_modules/@streamdown/code/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -34,6 +33,7 @@
   --color-danger: var(--rd-danger);
   --color-danger-foreground: var(--rd-danger-foreground);
   --color-surface-subtle: var(--rd-surface-subtle);
+  --color-surface-hover: var(--rd-surface-hover);
   --color-border-strong: var(--rd-border-strong);
 
   /* shadcn/ui colour bridge. */
@@ -102,5 +102,108 @@
   pre,
   samp {
     @apply font-mono;
+  }
+}
+
+/* Agent replies (Streamdown): quieter tables and inline code, outside bullets. */
+.rd-prose [data-streamdown="inline-code"] {
+  border-radius: 4px;
+  padding: 0.0625rem 0.3125rem;
+  font-size: 0.8125rem;
+  background-color: var(--muted);
+}
+.rd-prose [data-streamdown="table-cell"] [data-streamdown="inline-code"] {
+  font-size: 0.75rem;
+}
+.rd-prose [data-streamdown="unordered-list"],
+.rd-prose [data-streamdown="ordered-list"] {
+  list-style-position: outside;
+  padding-left: 1.25rem;
+}
+.rd-prose [data-streamdown="list-item"] {
+  padding-block: 0.125rem;
+}
+.rd-prose [data-streamdown="table-wrapper"] {
+  position: relative;
+  gap: 0;
+  margin-block: 0.75rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.rd-prose [data-streamdown="table-wrapper"] > div:first-child {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  z-index: 1;
+}
+@media (hover: hover) {
+  .rd-prose [data-streamdown="table-wrapper"] > div:first-child {
+    opacity: 0;
+    transition: opacity var(--rd-duration-fast) var(--rd-ease);
+  }
+  .rd-prose [data-streamdown="table-wrapper"]:hover > div:first-child,
+  .rd-prose [data-streamdown="table-wrapper"]:focus-within > div:first-child {
+    opacity: 1;
+  }
+}
+/* Touch screens: no hover to reveal it, and it would cover the header; text stays selectable. */
+@media (hover: none) {
+  .rd-prose [data-streamdown="table-wrapper"] > div:first-child {
+    display: none;
+  }
+}
+.rd-prose [data-streamdown="table-wrapper"] > div:last-child {
+  border-radius: var(--rd-radius-panel);
+}
+.rd-prose [data-streamdown="table-header"] {
+  background-color: var(--rd-surface-subtle);
+}
+.rd-prose [data-streamdown="table-header-cell"] {
+  padding: 0.5rem 0.75rem;
+  font-weight: 500;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--muted-foreground);
+}
+.rd-prose [data-streamdown="table-cell"] {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Text shimmer for the agent's status line (AI Elements Shimmer, CSS only). */
+@keyframes rd-shimmer {
+  from {
+    background-position: 100% center;
+  }
+  to {
+    background-position: 0% center;
+  }
+}
+.rd-shimmer {
+  animation-name: rd-shimmer;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* Reduced motion: no transitions or enter/exit animations; spinners keep turning.
+   !important is needed to beat the per-utility durations. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: must override utility classes */
+    transition-duration: 0ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must override utility classes */
+    scroll-behavior: auto !important;
+  }
+  .animate-in,
+  .animate-out,
+  .animate-pulse,
+  .rd-shimmer {
+    /* biome-ignore lint/complexity/noImportantStyles: must override utility classes */
+    animation: none !important;
   }
 }

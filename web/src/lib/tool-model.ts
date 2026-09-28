@@ -1,0 +1,387 @@
+// One view model for a tool call, built either from a live chat part
+// (DynamicToolUIPart with the contract's toolMetadata and approval descriptor)
+// or from an action-log row (ToolCallView), so the chat thread, the inspector
+// and the Runs detail render the same row.
+//
+// Stream values arrive as unknown JSON, so everything read from a part is
+// checked before it is shown.
+//
+// Alias-free and DOM-free so the Node test suite can import it.
+
+import type { DynamicToolUIPart } from "ai";
+import type { ApprovalView, ChatUIMessage, ToolCallView } from "../../../src/contracts/api.js";
+import type { ApprovalDescriptor, ToolMetadata } from "../../../src/contracts/events.js";
+import {
+  ACTION_CLASSES,
+  type ActionClass,
+  type ApprovalFact,
+  CONNECTION_KINDS,
+  type ConnectionKind,
+  INTEGRATION_IDS,
+  INTEGRATIONS,
+  type IntegrationId,
+  type OperationName,
+} from "../../../src/contracts/integration.js";
+import { isSettledStatus, type ToolRowStatus, toolRowStatusFromLog } from "./labels.js";
+
+// ---------------------------------------------------------------------------
+// Reading contract payloads off parts
+// ---------------------------------------------------------------------------
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function oneOf<T extends string>(values: readonly T[], value: unknown): T | undefined {
+  return values.find((candidate) => candidate === value);
+}
+
+function readOperation(record: Record<string, unknown>): OperationName | undefined {
+  const value = readString(record, "operation");
+  if (value === undefined) return undefined;
+  const integration = value.slice(0, value.indexOf("."));
+  return oneOf(INTEGRATION_IDS, integration) ? (value as OperationName) : undefined;
+}
+
+/** toolMetadata from tool-input-start / tool-input-available; null when absent or malformed. */
+export function readToolMetadata(value: unknown): ToolMetadata | null {
+  if (!isRecord(value)) return null;
+  const integration = oneOf(INTEGRATION_IDS, value.integration);
+  const connectionKind = oneOf(CONNECTION_KINDS, value.connectionKind);
+  const actionClass = oneOf(ACTION_CLASSES, value.actionClass);
+  const operation = readOperation(value);
+  if (!integration || !connectionKind || !actionClass || !operation) return null;
+  return { integration, connectionKind, actionClass, operation };
+}
+
+function readStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.filter((item): item is string => typeof item === "string" && item !== "");
+  return items.length > 0 ? items : undefined;
+}
+
+/** What an approval card shows; tolerant of a partial descriptor. */
+export type ApprovalFacts = {
+  readonly consequence: string;
+  readonly title: string | null;
+  readonly actionClass: ActionClass | null;
+  readonly integration: IntegrationId | null;
+  readonly facts: readonly ApprovalFact[];
+  readonly recipients: readonly string[];
+  readonly recordIds: readonly string[];
+  readonly expiresAt: string | null;
+};
+
+export function readApprovalFacts(descriptor: unknown, fallbackReason?: string): ApprovalFacts {
+  const record = isRecord(descriptor) ? descriptor : {};
+  const facts = Array.isArray(record.facts)
+    ? record.facts.flatMap((fact: unknown) => {
+        if (!isRecord(fact)) return [];
+        const label = readString(fact, "label");
+        const value = readString(fact, "value");
+        return label && value ? [{ label, value }] : [];
+      })
+    : [];
+  return {
+    consequence:
+      readString(record, "consequence") ?? fallbackReason ?? "This action needs your approval.",
+    title: readString(record, "title") ?? null,
+    actionClass: oneOf(ACTION_CLASSES, record.actionClass) ?? null,
+    integration: oneOf(INTEGRATION_IDS, record.integration) ?? null,
+    facts,
+    recipients: readStringList(record.recipients) ?? [],
+    recordIds: readStringList(record.recordIds) ?? [],
+    expiresAt: readString(record, "expiresAt") ?? null,
+  };
+}
+
+/** From a persisted approval (reload fallback and Runs detail). */
+export function approvalFactsFromView(view: ApprovalView): ApprovalFacts {
+  const descriptor: ApprovalDescriptor = view.descriptor;
+  return readApprovalFacts(descriptor, view.consequence);
+}
+
+/**
+ * The facts table rows: the descriptor's own facts, then recipients and
+ * record ids that no fact already shows, so nothing is listed twice.
+ */
+export function approvalFactRows(facts: ApprovalFacts): ApprovalFact[] {
+  const rows: ApprovalFact[] = [...facts.facts];
+  const shown = (value: string) => rows.some((row) => row.value.includes(value));
+  const recipients = facts.recipients.filter((recipient) => !shown(recipient));
+  if (recipients.length > 0) {
+    rows.push({
+      label: recipients.length === 1 ? "Recipient" : "Recipients",
+      value: recipients.join(", "),
+    });
+  }
+  const recordIds = facts.recordIds.filter((id) => !shown(id));
+  if (recordIds.length > 0) {
+    rows.push({
+      label: recordIds.length === 1 ? "Record" : "Records",
+      value: recordIds.join(", "),
+    });
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Tool rows
+// ---------------------------------------------------------------------------
+
+export type ToolApprovalModel = {
+  readonly id: string;
+  /** requested: a person can still decide. */
+  readonly state: "requested" | "approved" | "denied" | "blocked";
+  readonly facts: ApprovalFacts;
+  readonly reason: string | null;
+};
+
+export type ToolRowModel = {
+  readonly toolCallId: string;
+  readonly title: string;
+  readonly toolName: string;
+  readonly integration: IntegrationId | null;
+  readonly integrationLabel: string | null;
+  readonly kind: ConnectionKind | null;
+  readonly operation: OperationName | null;
+  readonly actionClass: ActionClass | null;
+  readonly status: ToolRowStatus;
+  /** undefined while the input is still streaming. */
+  readonly input: unknown;
+  readonly output: unknown;
+  readonly errorText: string | null;
+  /** Known for finished action-log rows. */
+  readonly durationMs: number | null;
+  readonly approval: ToolApprovalModel | null;
+};
+
+function integrationLabel(integration: IntegrationId | null): string | null {
+  return integration === null ? null : INTEGRATIONS[integration].label;
+}
+
+/** A readable fallback title for a tool with no profile title. */
+export function humanizeToolName(toolName: string): string {
+  const match = /^mcp__[a-z_]+?__(.+)$/.exec(toolName);
+  const bare = (match?.[1] ?? toolName).replace(/[-_]+/g, " ").trim().toLowerCase();
+  return bare.length === 0 ? toolName : bare.charAt(0).toUpperCase() + bare.slice(1);
+}
+
+function approvalFromPart(part: DynamicToolUIPart): ToolApprovalModel | null {
+  const approval = part.approval;
+  if (!approval) return null;
+  const facts = readApprovalFacts(approval.descriptor, approval.requestReason);
+  const reason =
+    typeof approval.reason === "string" && approval.reason !== "" ? approval.reason : null;
+  if (approval.approved === undefined) {
+    return { id: approval.id, state: "requested", facts, reason: null };
+  }
+  if (approval.approved) return { id: approval.id, state: "approved", facts, reason };
+  return {
+    id: approval.id,
+    state: approval.isAutomatic ? "blocked" : "denied",
+    facts,
+    reason,
+  };
+}
+
+/**
+ * `runSettled`: the run that produced this part has ended (the message has a
+ * final status or the stream closed), so an unfinished call was stopped.
+ */
+export function toolRowFromPart(part: DynamicToolUIPart, runSettled: boolean): ToolRowModel {
+  const metadata = readToolMetadata(part.toolMetadata);
+  const approval = approvalFromPart(part);
+  let status: ToolRowStatus;
+  switch (part.state) {
+    case "input-streaming":
+      status = runSettled ? "stopped" : "preparing";
+      break;
+    case "input-available":
+      status = runSettled ? "stopped" : "running";
+      break;
+    case "approval-requested":
+      status = runSettled ? "stopped" : "awaiting_approval";
+      break;
+    case "approval-responded":
+      if (!part.approval.approved) status = part.approval.isAutomatic ? "blocked" : "denied";
+      else status = runSettled ? "stopped" : "running";
+      break;
+    case "output-available":
+      status = "succeeded";
+      break;
+    case "output-error":
+      status = "failed";
+      break;
+    case "output-denied":
+      status = part.approval.isAutomatic ? "blocked" : "denied";
+      break;
+  }
+  const integration = metadata?.integration ?? null;
+  return {
+    toolCallId: part.toolCallId,
+    title: part.title ?? humanizeToolName(part.toolName),
+    toolName: part.toolName,
+    integration,
+    integrationLabel: integrationLabel(integration),
+    kind: metadata?.connectionKind ?? null,
+    operation: metadata?.operation ?? null,
+    actionClass: metadata?.actionClass ?? null,
+    status,
+    input: part.input,
+    output: part.state === "output-available" ? part.output : undefined,
+    errorText: part.state === "output-error" ? part.errorText : null,
+    durationMs: null,
+    approval,
+  };
+}
+
+function approvalFromView(view: ApprovalView): ToolApprovalModel {
+  const facts = approvalFactsFromView(view);
+  switch (view.status) {
+    case "pending":
+      return { id: view.id, state: "requested", facts, reason: null };
+    case "approved":
+      return { id: view.id, state: "approved", facts, reason: view.reason };
+    default:
+      return { id: view.id, state: "denied", facts, reason: view.reason };
+  }
+}
+
+/** A read-only row from the action log (Runs detail, inspector). */
+export function toolRowFromView(
+  view: ToolCallView,
+  approvals: readonly ApprovalView[] = [],
+): ToolRowModel {
+  const approvalView = approvals.find(
+    (approval) => approval.id === view.approvalId || approval.toolCallId === view.toolCallId,
+  );
+  const status = toolRowStatusFromLog(view.status, view.decision);
+  let approval = approvalView ? approvalFromView(approvalView) : null;
+  if (approval && status === "blocked") approval = { ...approval, state: "blocked" };
+  return {
+    toolCallId: view.toolCallId,
+    title: view.title || humanizeToolName(view.toolName),
+    toolName: view.toolName,
+    integration: view.integration,
+    integrationLabel: integrationLabel(view.integration),
+    kind: view.connectionKind,
+    operation: view.operation,
+    actionClass: view.actionClass,
+    status,
+    input: view.input,
+    output: view.output ?? undefined,
+    errorText: view.error?.message ?? (view.isError ? "The call failed." : null),
+    durationMs: view.durationMs,
+    approval,
+  };
+}
+
+/**
+ * Enriches a live row with its action-log entry once known: the log has the
+ * duration and the exact decision (timed out, stopped, rejected), which the
+ * stream does not carry.
+ */
+export function mergeToolRow(row: ToolRowModel, log: ToolCallView | undefined): ToolRowModel {
+  if (!log) return row;
+  const logStatus = toolRowStatusFromLog(log.status, log.decision);
+  const status = isSettledStatus(logStatus) ? logStatus : row.status;
+  return { ...row, status, durationMs: log.durationMs ?? row.durationMs };
+}
+
+// ---------------------------------------------------------------------------
+// Assistant message layout: consecutive reads collapse into one group
+// ---------------------------------------------------------------------------
+
+type AssistantPart = ChatUIMessage["parts"][number];
+
+export type AssistantBlock =
+  | { readonly kind: "part"; readonly key: string; readonly part: AssistantPart }
+  | { readonly kind: "tool"; readonly key: string; readonly part: DynamicToolUIPart }
+  | { readonly kind: "reads"; readonly key: string; readonly parts: readonly DynamicToolUIPart[] };
+
+/** Three or more consecutive reads render as "Checked N sources". */
+export const READ_GROUP_MIN = 3;
+
+function isGroupableRead(part: DynamicToolUIPart): boolean {
+  const metadata = readToolMetadata(part.toolMetadata);
+  if (metadata?.actionClass !== "read") return false;
+  // A read that waits for a person is shown on its own so the card is visible.
+  return part.state !== "approval-requested" && part.state !== "approval-responded";
+}
+
+function isVisiblePart(part: AssistantPart): boolean {
+  switch (part.type) {
+    case "step-start":
+      return false;
+    case "text":
+      return part.text.trim() !== "";
+    case "reasoning":
+      return part.text.trim() !== "";
+    case "data-usage":
+    case "data-status":
+    case "data-progress":
+      return false;
+    default:
+      return true;
+  }
+}
+
+/**
+ * Orders an assistant message for rendering: hides step markers, empty text
+ * and data parts that are shown elsewhere, and groups runs of reads (step
+ * boundaries between them do not break a run).
+ */
+export function layoutAssistantParts(
+  messageId: string,
+  parts: readonly AssistantPart[],
+): AssistantBlock[] {
+  const blocks: AssistantBlock[] = [];
+  let reads: DynamicToolUIPart[] = [];
+
+  const flushReads = () => {
+    if (reads.length >= READ_GROUP_MIN) {
+      blocks.push({
+        kind: "reads",
+        key: `${messageId}:reads:${reads[0]?.toolCallId}`,
+        parts: reads,
+      });
+    } else {
+      for (const part of reads) {
+        blocks.push({ kind: "tool", key: `${messageId}:tool:${part.toolCallId}`, part });
+      }
+    }
+    reads = [];
+  };
+
+  parts.forEach((part, index) => {
+    if (part.type === "dynamic-tool" && isGroupableRead(part)) {
+      reads.push(part);
+      return;
+    }
+    if (!isVisiblePart(part)) return;
+    flushReads();
+    if (part.type === "dynamic-tool") {
+      blocks.push({ kind: "tool", key: `${messageId}:tool:${part.toolCallId}`, part });
+    } else {
+      blocks.push({ kind: "part", key: `${messageId}:${index}`, part });
+    }
+  });
+  flushReads();
+  return blocks;
+}
+
+/** The distinct integration labels of a group, in first-use order. */
+export function sourceLabels(rows: readonly ToolRowModel[]): string[] {
+  const labels: string[] = [];
+  for (const row of rows) {
+    const label = row.integrationLabel;
+    if (label !== null && !labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}

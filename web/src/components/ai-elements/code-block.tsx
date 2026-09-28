@@ -21,13 +21,16 @@ import {
   useRef,
   useState,
 } from "react";
-import type {
-  BundledLanguage,
-  BundledTheme,
-  HighlighterGeneric,
-  ThemedToken,
-} from "shiki";
-import { createHighlighter } from "shiki";
+import type { ThemedToken } from "shiki/core";
+
+import { highlightTokens } from "@/lib/highlight";
+
+// revenue-desk patch: highlighting goes through web/src/lib/highlight.ts (one
+// shiki 4 core build, JavaScript regex engine, a few languages loaded on
+// demand) instead of the full shiki bundle; `language` is any string and
+// unknown languages render plain. Sized for tool input and output: 12px mono,
+// scrolls inside its own block.
+type BundledLanguage = string;
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -129,41 +132,6 @@ const CodeBlockContext = createContext<CodeBlockContextType>({
   code: "",
 });
 
-// Highlighter cache (singleton per language)
-const highlighterCache = new Map<
-  string,
-  Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
->();
-
-// Token cache
-const tokensCache = new Map<string, TokenizedCode>();
-
-// Subscribers for async token updates
-const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
-
-const getTokensCacheKey = (code: string, language: BundledLanguage) => {
-  const start = code.slice(0, 100);
-  const end = code.length > 100 ? code.slice(-100) : "";
-  return `${language}:${code.length}:${start}:${end}`;
-};
-
-const getHighlighter = (
-  language: BundledLanguage
-): Promise<HighlighterGeneric<BundledLanguage, BundledTheme>> => {
-  const cached = highlighterCache.get(language);
-  if (cached) {
-    return cached;
-  }
-
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: ["github-light", "github-dark"],
-  });
-
-  highlighterCache.set(language, highlighterPromise);
-  return highlighterPromise;
-};
-
 // Create raw tokens for immediate display while highlighting loads
 const createRawTokens = (code: string): TokenizedCode => ({
   bg: "transparent",
@@ -187,62 +155,25 @@ export const highlightCode = (
   // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-callbacks)
   callback?: (result: TokenizedCode) => void
 ): TokenizedCode | null => {
-  const tokensCacheKey = getTokensCacheKey(code, language);
-
-  // Return cached result if available
-  const cached = tokensCache.get(tokensCacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  // Subscribe callback if provided
-  if (callback) {
-    if (!subscribers.has(tokensCacheKey)) {
-      subscribers.set(tokensCacheKey, new Set());
-    }
-    subscribers.get(tokensCacheKey)?.add(callback);
-  }
-
-  // Start highlighting in background - fire-and-forget async pattern
-  getHighlighter(language)
-    // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
-    .then((highlighter) => {
-      const availableLangs = highlighter.getLoadedLanguages();
-      const langToUse = availableLangs.includes(language) ? language : "text";
-
-      const result = highlighter.codeToTokens(code, {
-        lang: langToUse,
-        themes: {
-          dark: "github-dark",
-          light: "github-light",
-        },
-      });
-
-      const tokenized: TokenizedCode = {
+  const result = highlightTokens(
+    code,
+    language,
+    callback
+      ? (tokens) =>
+          callback({
+            bg: tokens.bg ?? "transparent",
+            fg: tokens.fg ?? "inherit",
+            tokens: tokens.tokens,
+          })
+      : undefined
+  );
+  return result
+    ? {
         bg: result.bg ?? "transparent",
         fg: result.fg ?? "inherit",
         tokens: result.tokens,
-      };
-
-      // Cache the result
-      tokensCache.set(tokensCacheKey, tokenized);
-
-      // Notify all subscribers
-      const subs = subscribers.get(tokensCacheKey);
-      if (subs) {
-        for (const sub of subs) {
-          sub(tokenized);
-        }
-        subscribers.delete(tokensCacheKey);
       }
-    })
-    // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then), eslint-plugin-promise(prefer-await-to-callbacks)
-    .catch((error) => {
-      console.error("Failed to highlight code:", error);
-      subscribers.delete(tokensCacheKey);
-    });
-
-  return null;
+    : null;
 };
 
 const CodeBlockBody = memo(
@@ -271,14 +202,14 @@ const CodeBlockBody = memo(
     return (
       <pre
         className={cn(
-          "dark:!bg-[var(--shiki-dark-bg)] dark:!text-[var(--shiki-dark)] m-0 p-4 text-sm",
+          "m-0 w-max min-w-full bg-transparent! px-3 py-2.5 text-[12px] leading-[18px] dark:text-foreground!",
           className
         )}
         style={preStyle}
       >
         <code
           className={cn(
-            "font-mono text-sm",
+            "font-mono text-[12px]",
             showLineNumbers && "[counter-increment:line_0] [counter-reset:line]"
           )}
         >
@@ -309,7 +240,7 @@ export const CodeBlockContainer = ({
 }: HTMLAttributes<HTMLDivElement> & { language: string }) => (
   <div
     className={cn(
-      "group relative w-full overflow-hidden rounded-md border bg-background text-foreground",
+      "group relative w-full min-w-0 overflow-hidden rounded-md border bg-surface-subtle text-foreground",
       className
     )}
     data-language={language}
@@ -419,7 +350,7 @@ export const CodeBlockContent = ({
   const tokenized = asyncTokens ?? syncTokens;
 
   return (
-    <div className="relative overflow-auto">
+    <div className="relative max-h-80 overflow-auto overscroll-contain">
       <CodeBlockBody showLineNumbers={showLineNumbers} tokenized={tokenized} />
     </div>
   );
