@@ -156,12 +156,20 @@ function parseEffort(value: string | null): AgentEffort | null {
   return effort;
 }
 
+/** The longest delay a Node timer holds; a longer one fires at once. */
+export const MAX_TIMEOUT_MS = 2_147_483_647;
+
 function parseInteger(flags: Values, flag: "maxTurns" | "timeoutMs"): number | null {
   const value = stringFlag(flags, flag);
   if (value === null) return null;
   const number = /^\d+$/.test(value) ? Number(value) : Number.NaN;
   if (!Number.isSafeInteger(number) || number < 1) {
     throw new UsageError(`${ASK_FLAGS[flag]} must be a whole number of at least 1.`);
+  }
+  if (flag === "timeoutMs" && number > MAX_TIMEOUT_MS) {
+    throw new UsageError(
+      `${ASK_FLAGS.timeoutMs} must be at most ${MAX_TIMEOUT_MS} (about 24.8 days).`,
+    );
   }
   return number;
 }

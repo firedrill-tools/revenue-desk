@@ -112,6 +112,8 @@ describe("parseCliArgs: usage errors", () => {
     [["ask", "--max-turns", "1.5", "x"], /--max-turns must be a whole number/],
     [["ask", "--max-turns=-3", "x"], /--max-turns must be a whole number/],
     [["ask", "--timeout-ms", "soon", "x"], /--timeout-ms must be a whole number/],
+    // Node would fire a longer timer at once: the run would time out immediately.
+    [["ask", "--timeout-ms", "3000000000", "x"], /--timeout-ms must be at most 2147483647/],
     [["ask", "--max-budget-usd", "0", "x"], /--max-budget-usd must be a positive amount/],
     [["ask", "--max-budget-usd", "1e3", "x"], /--max-budget-usd must be a positive amount/],
     [["ask", "--policy", "financial=auto", "x"], /--policy must be JSON/],

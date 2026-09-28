@@ -167,7 +167,7 @@ would allow it.
 | `--effort <level>` | `low`, `medium`, `high`, `xhigh` or `max` (default: Settings, then `AGENT_EFFORT`). |
 | `--max-turns <n>` | Turn limit for this run (default `AGENT_MAX_TURNS`). |
 | `--max-budget-usd <usd>` | Spend limit for this run (default `AGENT_MAX_BUDGET_USD`). |
-| `--timeout-ms <ms>` | Wall-clock limit; the run is stopped and ends timed out. |
+| `--timeout-ms <ms>` | Wall-clock limit, at most 2147483647 (about 24.8 days); the run is stopped and ends timed out. |
 | `--state-dir <path>` | State directory for this invocation, overriding `AGENT_STATE_DIR`. |
 
 Output:

@@ -25,6 +25,9 @@ export type StopRequest = {
   readonly cause: string;
 };
 
+/** The longest delay a Node timer holds. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /** How often a held stop checks whether the write settled. */
 const HOLD_POLL_MS = 100;
 
@@ -62,8 +65,14 @@ export class StopController {
     return this.#forced.promise;
   }
 
-  /** Stops the run after `ms` milliseconds with reason "timeout". */
+  /**
+   * Stops the run after `ms` milliseconds with reason "timeout". Node fires
+   * a timer longer than 2^31-1 ms at once, so a longer limit is refused.
+   */
   limitTo(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 1 || ms > MAX_TIMER_MS) {
+      throw new RangeError(`A time limit must be between 1 and ${MAX_TIMER_MS} ms.`);
+    }
     this.#schedule(() => this.stop({ reason: "timeout", cause: `the ${ms} ms time limit` }), ms);
   }
 

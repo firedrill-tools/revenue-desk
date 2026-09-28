@@ -103,6 +103,16 @@ describe("StopController", () => {
     stopper.dispose();
   });
 
+  it("refuses a time limit Node's timers cannot hold, and keeps the largest one waiting", async () => {
+    const stopper = new StopController({ graceMs: 1_000 });
+    expect(() => stopper.limitTo(3_000_000_000)).toThrow(RangeError);
+    expect(() => stopper.limitTo(0)).toThrow(RangeError);
+    stopper.limitTo(2_147_483_647);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(stopper.signal.aborted).toBe(false);
+    stopper.dispose();
+  });
+
   it("a signal before the time limit cancels the limit", async () => {
     const stopper = new StopController({ graceMs: 100 });
     stopper.limitTo(5_000);
