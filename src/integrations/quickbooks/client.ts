@@ -39,7 +39,7 @@ export type QueryAllOptions = {
   readonly pageSize: number;
   /** Stop after this many rows. */
   readonly maxRows: number;
-  /** Stop after this many requests. */
+  /** Stop after this many requests (default 50): a bound against a server that never ends. */
   readonly maxPages?: number;
   readonly signal: AbortSignal | undefined;
 };
@@ -107,7 +107,7 @@ export class QuickBooksClient {
   /** Every row of a query, page by page, until an empty page or a limit. */
   async queryAll(query: SelectQuery, options: QueryAllOptions): Promise<QueryAllResult> {
     const pageSize = Math.min(Math.max(1, Math.floor(options.pageSize)), MAX_PAGE_SIZE);
-    const maxPages = options.maxPages ?? 20;
+    const maxPages = options.maxPages ?? 50;
     const rows: JsonObject[] = [];
     let startPosition = 1;
     for (let pages = 0; pages < maxPages; pages += 1) {

@@ -3,17 +3,15 @@
 // hubspot-get-user-details (a read) to prove the token works.
 
 import type { HubSpotConnection, ProbeResult } from "../../contracts/integration.js";
-import { connectUpstream, type Upstream, type UpstreamConfig } from "../../gateway/mcp-proxy.js";
+import { connectUpstream, type Upstream, type UpstreamConnector } from "../../gateway/mcp-proxy.js";
 import { abortable } from "../shared/abort.js";
 import { listOf, maskIdentifier, preview, scrub } from "../shared/text.js";
 import { HubSpotLaunchError } from "./launch.js";
 import { HUBSPOT_TOOL_NAMES } from "./profile.js";
 import { type HubSpotLaunchOverrides, hubspotUpstreamConfig } from "./upstream.js";
 
-export type ConnectUpstream = (
-  config: UpstreamConfig,
-  options: { readonly timeoutMs?: number },
-) => Promise<Upstream>;
+/** The gateway's upstream connector (injected in tests). */
+export type ConnectUpstream = UpstreamConnector;
 
 export type HubSpotProbeDeps = {
   readonly connect?: ConnectUpstream;
@@ -86,7 +84,7 @@ export async function probeHubSpot(
   let upstream: Upstream | undefined;
   try {
     const config = hubspotUpstreamConfig(connection, deps.launch);
-    upstream = await abortable(connect(config, { timeoutMs }), signal, (late) => {
+    upstream = await abortable(connect(config, { timeoutMs, signal }), signal, (late) => {
       void late.close().catch(() => {});
     });
     const listed = new Set(upstream.tools.map((tool) => tool.name));
