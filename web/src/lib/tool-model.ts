@@ -22,7 +22,12 @@ import {
   type IntegrationId,
   type OperationName,
 } from "../../../src/contracts/integration.js";
-import { isSettledStatus, type ToolRowStatus, toolRowStatusFromLog } from "./labels.js";
+import {
+  isSettledStatus,
+  type StatusLabel,
+  type ToolRowStatus,
+  toolRowStatusFromLog,
+} from "./labels.js";
 
 // ---------------------------------------------------------------------------
 // Reading contract payloads off parts
@@ -134,10 +139,32 @@ export function approvalFactRows(facts: ApprovalFacts): ApprovalFact[] {
 // Tool rows
 // ---------------------------------------------------------------------------
 
+/**
+ * requested: a person can still decide. The others are outcomes: denied by a
+ * person, blocked by policy, or ended by Stop or the approval timeout.
+ */
+export type ApprovalState =
+  | "requested"
+  | "approved"
+  | "denied"
+  | "blocked"
+  | "stopped"
+  | "timed_out";
+
+/** How each approval outcome reads in the UI. */
+export const APPROVAL_STATE_LABELS = {
+  requested: { label: "Waiting", tone: "warning" },
+  approved: { label: "Approved", tone: "success" },
+  denied: { label: "Denied", tone: "danger" },
+  blocked: { label: "Blocked by policy", tone: "neutral" },
+  stopped: { label: "Stopped", tone: "neutral" },
+  timed_out: { label: "Timed out", tone: "neutral" },
+} as const satisfies Record<ApprovalState, StatusLabel>;
+
 export type ToolApprovalModel = {
   readonly id: string;
   /** requested: a person can still decide. */
-  readonly state: "requested" | "approved" | "denied" | "blocked";
+  readonly state: ApprovalState;
   readonly facts: ApprovalFacts;
   readonly reason: string | null;
 };
@@ -223,6 +250,11 @@ export function toolRowFromPart(part: DynamicToolUIPart, runSettled: boolean): T
       break;
   }
   const integration = metadata?.integration ?? null;
+  // A request the run ended before anyone decided can no longer be decided.
+  const settledApproval =
+    approval?.state === "requested" && status === "stopped"
+      ? { ...approval, state: "stopped" as const }
+      : approval;
   return {
     toolCallId: part.toolCallId,
     title: part.title ?? humanizeToolName(part.toolName),
@@ -237,7 +269,7 @@ export function toolRowFromPart(part: DynamicToolUIPart, runSettled: boolean): T
     output: part.state === "output-available" ? part.output : undefined,
     errorText: part.state === "output-error" ? part.errorText : null,
     durationMs: null,
-    approval,
+    approval: settledApproval,
   };
 }
 
@@ -248,8 +280,27 @@ function approvalFromView(view: ApprovalView): ToolApprovalModel {
       return { id: view.id, state: "requested", facts, reason: null };
     case "approved":
       return { id: view.id, state: "approved", facts, reason: view.reason };
-    default:
-      return { id: view.id, state: "denied", facts, reason: view.reason };
+    case "expired":
+      return {
+        id: view.id,
+        state: view.decidedBy === "restart" ? "stopped" : "timed_out",
+        facts,
+        reason: view.reason,
+      };
+    case "cancelled":
+      return { id: view.id, state: "stopped", facts, reason: view.reason };
+    case "denied":
+      return {
+        id: view.id,
+        state:
+          view.decidedBy === "timeout"
+            ? "timed_out"
+            : view.decidedBy === "stop"
+              ? "stopped"
+              : "denied",
+        facts,
+        reason: view.reason,
+      };
   }
 }
 
@@ -262,8 +313,7 @@ export function toolRowFromView(
     (approval) => approval.id === view.approvalId || approval.toolCallId === view.toolCallId,
   );
   const status = toolRowStatusFromLog(view.status, view.decision);
-  let approval = approvalView ? approvalFromView(approvalView) : null;
-  if (approval && status === "blocked") approval = { ...approval, state: "blocked" };
+  const approval = approvalView ? withOutcome(approvalFromView(approvalView), status) : null;
   return {
     toolCallId: view.toolCallId,
     title: view.title || humanizeToolName(view.toolName),
@@ -282,16 +332,31 @@ export function toolRowFromView(
   };
 }
 
+/** An unapproved approval takes the call's outcome when the log knows it (stopped, timed out, blocked). */
+function withOutcome(approval: ToolApprovalModel, status: ToolRowStatus): ToolApprovalModel {
+  if (approval.state === "requested" || approval.state === "approved") return approval;
+  if (status === "stopped" || status === "timed_out" || status === "blocked") {
+    return { ...approval, state: status };
+  }
+  return approval;
+}
+
 /**
- * Enriches a live row with its action-log entry once known: the log has the
+ * Enriches a settled live row with its action-log entry: the log has the
  * duration and the exact decision (timed out, stopped, rejected), which the
- * stream does not carry.
+ * stream does not carry. While the call is in flight the stream is the
+ * source of truth, so a pending approval always stays actionable.
  */
 export function mergeToolRow(row: ToolRowModel, log: ToolCallView | undefined): ToolRowModel {
-  if (!log) return row;
+  if (!log || !isSettledStatus(row.status)) return row;
   const logStatus = toolRowStatusFromLog(log.status, log.decision);
   const status = isSettledStatus(logStatus) ? logStatus : row.status;
-  return { ...row, status, durationMs: log.durationMs ?? row.durationMs };
+  return {
+    ...row,
+    status,
+    durationMs: log.durationMs ?? row.durationMs,
+    approval: row.approval ? withOutcome(row.approval, status) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

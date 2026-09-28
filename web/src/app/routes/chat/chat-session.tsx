@@ -136,11 +136,18 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
   });
 
   // The first prompt of a new conversation (left by the new-chat screen).
+  // Sent on the next tick: useChat stops its chat in an effect cleanup, so
+  // React's development double mount would abort a request started here and
+  // the remount would find the prompt already taken. The timer is cleared
+  // instead, and the prompt is taken only when the request really starts.
   useEffect(() => {
-    if (initialPrompt !== null && consumePendingPrompt(conversationId) === initialPrompt) {
+    if (initialPrompt === null) return;
+    const timer = setTimeout(() => {
+      if (consumePendingPrompt(conversationId) !== initialPrompt) return;
       void sendMessage({ text: initialPrompt });
       markRunStarting();
-    }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [conversationId, initialPrompt, sendMessage]);
 
   const running = status === "submitted" || status === "streaming";

@@ -166,6 +166,15 @@ describe("toolRowFromPart", () => {
     });
   });
 
+  it("closes a request the run ended before anyone decided", () => {
+    const pending = part("r", "approval-requested", REFUND, { approval: { id: "a" } });
+    expect(toolRowFromPart(pending, true)).toMatchObject({
+      status: "stopped",
+      approval: { state: "stopped" },
+    });
+    expect(toolRowFromPart(pending, false).approval?.state).toBe("requested");
+  });
+
   it("falls back to a readable title and handles unknown tools", () => {
     const unknown = {
       ...part("x", "output-error", null, { errorText: "Unknown tool" }),
@@ -273,15 +282,51 @@ describe("action-log rows", () => {
     expect(denied.approval).toMatchObject({ state: "denied", reason: "Wrong charge" });
   });
 
+  it("names how an unapproved call ended", () => {
+    const outcome = (view: ToolCallView, approval: ApprovalView) =>
+      toolRowFromView(view, [approval]).approval?.state;
+    const denied = approvalView("denied");
+    expect(
+      outcome(toolCall({ status: "denied", decision: "stopped" }), {
+        ...denied,
+        decidedBy: "stop",
+      }),
+    ).toBe("stopped");
+    expect(
+      outcome(toolCall({ status: "denied", decision: "timed_out" }), {
+        ...denied,
+        decidedBy: "timeout",
+      }),
+    ).toBe("timed_out");
+    expect(
+      outcome(toolCall({ status: "interrupted", decision: "stopped" }), approvalView("cancelled")),
+    ).toBe("stopped");
+    expect(
+      outcome(toolCall({ status: "denied", decision: "timed_out" }), approvalView("expired")),
+    ).toBe("timed_out");
+    expect(outcome(toolCall({ status: "denied", decision: "policy_denied" }), denied)).toBe(
+      "blocked",
+    );
+    expect(outcome(toolCall({ status: "denied", decision: "denied" }), denied)).toBe("denied");
+  });
+
   it("enriches live rows with the log's duration and exact decision", () => {
     const live = toolRowFromPart(
       part("refund", "output-denied", REFUND, { approval: { id: "a", approved: false } }),
       true,
     );
-    expect(
-      mergeToolRow(live, toolCall({ status: "denied", decision: "timed_out", durationMs: null }))
-        .status,
-    ).toBe("timed_out");
+    const merged = mergeToolRow(
+      live,
+      toolCall({ status: "denied", decision: "timed_out", durationMs: null }),
+    );
+    expect(merged.status).toBe("timed_out");
+    expect(merged.approval?.state).toBe("timed_out");
+    const waiting = toolRowFromPart(
+      part("refund", "approval-requested", REFUND, { approval: { id: "a" } }),
+      false,
+    );
+    const stale = toolCall({ status: "denied", decision: "policy_denied", durationMs: 139_000 });
+    expect(mergeToolRow(waiting, stale)).toBe(waiting);
     const running = toolRowFromPart(part("refund", "input-available", REFUND), false);
     expect(
       mergeToolRow(running, toolCall({ status: "running", decision: "auto", durationMs: null }))

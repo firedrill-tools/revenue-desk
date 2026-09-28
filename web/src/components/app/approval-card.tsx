@@ -16,7 +16,7 @@ import { useNow } from "@/hooks/use-now";
 import { INTEGRATIONS } from "@/lib/contracts";
 import { formatCountdown, looksLikeRecordIds, msUntil } from "@/lib/format";
 import { ACTION_CLASS_LABELS, isHighRiskClass } from "@/lib/labels";
-import { approvalFactRows, type ToolApprovalModel } from "@/lib/tool-model";
+import { APPROVAL_STATE_LABELS, approvalFactRows, type ToolApprovalModel } from "@/lib/tool-model";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "./status";
 
@@ -48,6 +48,8 @@ function confirmationProps(approval: ToolApprovalModel): {
       };
     case "denied":
     case "blocked":
+    case "stopped":
+    case "timed_out":
       return {
         approval: {
           id: approval.id,
@@ -213,17 +215,14 @@ export function ApprovalCard({ approval, submission, onDecide, className }: Appr
         </p>
       </ConfirmationAccepted>
       <ConfirmationRejected>
-        <StatusDot
-          tone={approval.state === "blocked" ? "neutral" : "danger"}
-          className="mt-[5px]"
-        />
+        <StatusDot tone={APPROVAL_STATE_LABELS[approval.state].tone} className="mt-[5px]" />
         <p className="min-w-0 text-muted-foreground">
           <span className="font-medium text-foreground">
-            {approval.state === "blocked" ? "Blocked by policy" : "Denied"}
+            {APPROVAL_STATE_LABELS[approval.state].label}
           </span>
           <span aria-hidden="true"> · </span>
           {facts.consequence}
-          {approval.reason ? (
+          {approval.reason && approval.reason !== facts.consequence ? (
             <span className="mt-0.5 block text-meta">{approval.reason}</span>
           ) : null}
         </p>

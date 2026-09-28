@@ -16,7 +16,7 @@ export const JOB_SUGGESTIONS: readonly JobSuggestion[] = [
     id: "billing_inquiry",
     title: "Answer a billing inquiry",
     prompt:
-      "Find the most recent customer email about a billing problem, look the customer up in Stripe, QuickBooks and HubSpot, and draft a reply in Gmail.",
+      "Find the most recent customer email with a billing question, look the customer up in Stripe, QuickBooks and HubSpot, and draft a reply in Gmail.",
     systems: ["gmail", "stripe", "quickbooks", "hubspot"],
   },
   {

@@ -14,10 +14,10 @@ import {
   formatRelativeTime,
   pluralize,
 } from "@/lib/format";
-import { KIND_LABELS, KIND_ORDER, RUN_STATUS_LABELS, type Tone } from "@/lib/labels";
+import { KIND_LABELS, KIND_ORDER, RUN_STATUS_LABELS } from "@/lib/labels";
 import type { ConversationUsage } from "@/lib/messages";
 import { runHref } from "@/lib/routes";
-import type { ToolRowModel } from "@/lib/tool-model";
+import { APPROVAL_STATE_LABELS, type ToolRowModel } from "@/lib/tool-model";
 
 export type InspectorData = {
   readonly rows: readonly ToolRowModel[];
@@ -94,14 +94,7 @@ function ActivityTab({ data }: { data: InspectorData }) {
           <SectionTitle aside={pluralize(approvals.length, "approval")}>Approvals</SectionTitle>
           <ul className="divide-y rounded-lg border">
             {approvals.map(({ row, approval }) => {
-              const state: { tone: Tone; label: string } =
-                approval.state === "requested"
-                  ? { tone: "warning", label: "Waiting" }
-                  : approval.state === "approved"
-                    ? { tone: "success", label: "Approved" }
-                    : approval.state === "blocked"
-                      ? { tone: "neutral", label: "Blocked" }
-                      : { tone: "danger", label: "Denied" };
+              const state = APPROVAL_STATE_LABELS[approval.state];
               return (
                 <li key={approval.id} className="flex items-start gap-3 px-3 py-2.5">
                   <div className="min-w-0 flex-1">
