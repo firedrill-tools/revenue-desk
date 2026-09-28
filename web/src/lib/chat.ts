@@ -29,7 +29,34 @@ export type ChatTransportOptions = {
   readonly api?: string;
   /** Defaults to the app client's CSRF-aware fetch. */
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * A resume found no run to follow (204): the run may have ended between
+   * reading the conversation and resuming, so its answer is stored and the
+   * conversation should be read again.
+   */
+  readonly onNoStream?: () => void;
 };
+
+/** The default transport, telling its owner when a resume finds no stream. */
+class ResumeAwareTransport<MESSAGE extends UIMessage> extends DefaultChatTransport<MESSAGE> {
+  readonly #onNoStream: (() => void) | undefined;
+
+  constructor(
+    init: ConstructorParameters<typeof DefaultChatTransport<MESSAGE>>[0],
+    onNoStream: (() => void) | undefined,
+  ) {
+    super(init);
+    this.#onNoStream = onNoStream;
+  }
+
+  override async reconnectToStream(
+    options: Parameters<DefaultChatTransport<MESSAGE>["reconnectToStream"]>[0],
+  ): ReturnType<DefaultChatTransport<MESSAGE>["reconnectToStream"]> {
+    const stream = await super.reconnectToStream(options);
+    if (stream === null) this.#onNoStream?.();
+    return stream;
+  }
+}
 
 /** The body of POST /api/chat for the latest user message. */
 export function chatRequestBody<MESSAGE extends UIMessage>(
@@ -42,13 +69,16 @@ export function chatRequestBody<MESSAGE extends UIMessage>(
 export function createChatTransport<MESSAGE extends UIMessage = ChatUIMessage>(
   options: ChatTransportOptions = {},
 ): DefaultChatTransport<MESSAGE> {
-  return new DefaultChatTransport<MESSAGE>({
-    api: options.api ?? API_PATHS.chat,
-    fetch: options.fetch ?? defaultApi.fetchWithCsrf,
-    prepareSendMessagesRequest: ({ id, messages }) => ({
-      body: chatRequestBody(id, messages),
-    }),
-  });
+  return new ResumeAwareTransport<MESSAGE>(
+    {
+      api: options.api ?? API_PATHS.chat,
+      fetch: options.fetch ?? defaultApi.fetchWithCsrf,
+      prepareSendMessagesRequest: ({ id, messages }) => ({
+        body: chatRequestBody(id, messages),
+      }),
+    },
+    options.onNoStream,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +199,8 @@ export function chatErrorMessage(error: ApiError | null, waitingApprovals = 0): 
         : "Four runs are already in progress. Stop one, or try again when one finishes.";
     case "not_found":
       return "This conversation no longer exists.";
+    case "shutting_down":
+      return "Revenue Desk is shutting down. Try again once it has restarted.";
     case "csrf_failed":
     case "forbidden_origin":
       return "The session expired. Reload the page and try again.";

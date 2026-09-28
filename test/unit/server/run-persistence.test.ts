@@ -73,6 +73,26 @@ const started: AgentEvent = {
 };
 
 describe("RunPersistence", () => {
+  it("logs nothing for a failed run: its message is stored, not lost", async () => {
+    const { db, persistence, apply, lines } = setup();
+    apply(started);
+    const chunks = apply({
+      type: "run.finished",
+      status: "failed",
+      finishedAt: T0,
+      stopReason: null,
+      terminalReason: null,
+      reply: null,
+      error: { code: "model_error", message: "Overloaded (529)" },
+    });
+    // The stream still carries the error for the client.
+    expect(chunks.map((chunk) => chunk.type)).toContain("error");
+    await persistence.end("failed");
+    expect(lines).toEqual([]);
+    const [message] = listMessages(db, "c1");
+    expect(message?.metadata).toMatchObject({ status: "failed" });
+  });
+
   it("records a started API write's idempotency key, so a forced end marks it outcome unknown", async () => {
     const { db, persistence, apply } = setup();
     apply(started);

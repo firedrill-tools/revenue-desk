@@ -33,7 +33,12 @@ export type StartTurnResult =
   | { readonly ok: true; readonly run: ActiveRun }
   | {
       readonly ok: false;
-      readonly code: "not_found" | "run_active" | "too_many_runs" | "invalid_request";
+      readonly code:
+        | "not_found"
+        | "run_active"
+        | "too_many_runs"
+        | "invalid_request"
+        | "shutting_down";
       readonly message: string;
     };
 
@@ -63,6 +68,13 @@ export class ChatService {
 
   startTurn(conversationId: string, turn: UserTurn): StartTurnResult {
     const { db, env, registry } = this.#options;
+    if (registry.closing) {
+      return {
+        ok: false,
+        code: "shutting_down",
+        message: "Revenue Desk is shutting down and starts no new run. Try again once it restarts.",
+      };
+    }
     const conversation = getConversation(db, conversationId);
     if (conversation === undefined) {
       return { ok: false, code: "not_found", message: "No conversation has this id." };

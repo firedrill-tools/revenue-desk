@@ -127,6 +127,8 @@ export const API_ERROR_STATUS = {
   /** An integration answered with an error during Check or Connect. */
   upstream_error: 502,
   internal: 500,
+  /** The server is shutting down and starts no new run. */
+  shutting_down: 503,
 } as const;
 
 export type ApiErrorCode = keyof typeof API_ERROR_STATUS;

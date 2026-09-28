@@ -607,6 +607,82 @@ describe("a Stop while a write is executing", () => {
   });
 });
 
+describe("a run whose core is still closing after run.finished", () => {
+  it("is over for the conversation: its answer is stored, its stream ends, the next turn may start", async () => {
+    let closeConnections: () => void = () => {};
+    const closing = new Promise<void>((resolve) => {
+      closeConnections = resolve;
+    });
+    let turns = 0;
+    const core: RunTurn = async function* (input) {
+      turns += 1;
+      yield ev.started(input);
+      yield { type: "step.start" };
+      yield* ev.text("t1", "All done.");
+      yield { type: "step.finish" };
+      yield ev.finished("completed");
+      // gateway.close(): HubSpot's stdio server can take seconds to exit.
+      if (turns === 1) await closing;
+    };
+    const server = createTestServer({ runTurn: core });
+    const conversationId = await server.createConversation();
+    const response = await server.request("POST", "/api/chat", {
+      conversationId,
+      message: userMessage("u1", "Who owes us money?"),
+    });
+    // The stream ends after the finish chunk, while the core is still closing.
+    const { chunks } = await readSse(response);
+    expect(chunks.at(-1)).toMatchObject({ type: "finish" });
+    expect(server.services.registry.size).toBe(1);
+    expect(server.services.registry.forConversation(conversationId)).toBeUndefined();
+
+    // A reload shows the answer, and a resume has nothing to replay.
+    const detail = (await (
+      await server.request("GET", `/api/conversations/${conversationId}`)
+    ).json()) as ConversationDetail;
+    expect(detail.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(detail.conversation.activeRunId).toBeNull();
+    expect((await server.request("GET", `/api/chat/${conversationId}/stream`)).status).toBe(204);
+
+    // The next turn starts at once.
+    const next = await server.request("POST", "/api/chat", {
+      conversationId,
+      message: userMessage("u2", "And the second one?"),
+    });
+    expect(next.status).toBe(200);
+    await readSse(next);
+    closeConnections();
+    await waitFor(() => server.services.registry.size === 0);
+  });
+});
+
+describe("a chat posted while the server shuts down", () => {
+  it("is refused with 503, and starts no run", async () => {
+    const held = heldScript();
+    const server = createTestServer({ script: held.script });
+    const [busy, other] = await Promise.all([
+      server.createConversation(),
+      server.createConversation(),
+    ]);
+    const running = await server.request("POST", "/api/chat", {
+      conversationId: busy,
+      message: userMessage("u1", "Wait"),
+    });
+    expect(running.status).toBe(200);
+    const stopping = server.services.registry.shutdown(2_000);
+    const late = await server.request("POST", "/api/chat", {
+      conversationId: other,
+      message: userMessage("u2", "Start now"),
+    });
+    expect(late.status).toBe(503);
+    expect(await late.json()).toMatchObject({ error: { code: "shutting_down" } });
+    expect(getMessageRow(server.services.db, "u2")).toBeUndefined();
+    await readSse(running);
+    await stopping;
+    expect(server.services.registry.size).toBe(0);
+  });
+});
+
 describe("a run the CLI starts at the same moment", () => {
   it("is seen under the server's write lock: 409, and nothing of this turn is written", async () => {
     const server = createTestServer();

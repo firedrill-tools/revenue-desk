@@ -265,3 +265,25 @@ describe("too many runs", () => {
     );
   });
 });
+
+describe("the chat transport's resume", () => {
+  it("says when a resume finds no run to follow, so the page reads the conversation again", async () => {
+    let noStream = 0;
+    const transport = createChatTransport({
+      fetch: async () => new Response(null, { status: 204 }),
+      onNoStream: () => {
+        noStream += 1;
+      },
+    });
+    await expect(transport.reconnectToStream({ chatId: "c1" })).resolves.toBeNull();
+    expect(noStream).toBe(1);
+  });
+});
+
+describe("a chat refused during shutdown", () => {
+  it("says to try again after the restart", () => {
+    expect(
+      chatErrorMessage(new ApiError("Shutting down.", { status: 503, code: "shutting_down" })),
+    ).toBe("Revenue Desk is shutting down. Try again once it has restarted.");
+  });
+});

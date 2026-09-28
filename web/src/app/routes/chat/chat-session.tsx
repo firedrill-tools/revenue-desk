@@ -109,35 +109,68 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
 
   const [initialPrompt] = useState(() => peekPendingPrompt(conversationId));
   const [initialMessages] = useState(() => prepareInitialMessages(detail));
-  const [transport] = useState(() => createChatTransport<ChatUIMessage>());
+  const noStreamRef = useRef<() => void>(() => {});
+  const [transport] = useState(() =>
+    createChatTransport<ChatUIMessage>({ onNoStream: () => noStreamRef.current() }),
+  );
   const [modelStatus, setModelStatus] = useState<StatusData | null>(null);
   const progressRef = useRef<(toolCallId: string, elapsedMs: number) => void>(() => {});
   const finishedRef = useRef<(message: ChatUIMessage) => void>(() => {});
 
-  const { messages, status, error, sendMessage, regenerate, resumeStream, clearError } =
-    useChat<ChatUIMessage>({
-      id: conversationId,
-      messages: initialMessages,
-      transport,
-      // A brand-new conversation has no run to resume, and a resume that ends
-      // empty would reset the status while the first message is streaming.
-      resume: initialPrompt === null,
-      throttle: 50,
-      onData: (part) => {
-        if (part.type === "data-status") setModelStatus(part.data);
-        else if (part.type === "data-progress") {
-          progressRef.current(part.data.toolCallId, part.data.elapsedMs);
-        }
-      },
-      onFinish: ({ message }) => {
-        setModelStatus(null);
-        finishedRef.current(message);
-      },
-      onError: () => {
-        setModelStatus(null);
-        invalidate("conversations");
-      },
-    });
+  const {
+    messages,
+    status,
+    error,
+    sendMessage,
+    regenerate,
+    resumeStream,
+    clearError,
+    setMessages,
+  } = useChat<ChatUIMessage>({
+    id: conversationId,
+    messages: initialMessages,
+    transport,
+    // A brand-new conversation has no run to resume, and a resume that ends
+    // empty would reset the status while the first message is streaming.
+    resume: initialPrompt === null,
+    throttle: 50,
+    onData: (part) => {
+      if (part.type === "data-status") setModelStatus(part.data);
+      else if (part.type === "data-progress") {
+        progressRef.current(part.data.toolCallId, part.data.elapsedMs);
+      }
+    },
+    onFinish: ({ message }) => {
+      setModelStatus(null);
+      finishedRef.current(message);
+    },
+    onError: () => {
+      setModelStatus(null);
+      invalidate("conversations");
+    },
+  });
+
+  // A resume that finds no stream: the run ended between reading the
+  // conversation and resuming (its answer was not in the first read), so
+  // read the conversation again rather than leave the question unanswered.
+  useLayoutEffect(() => {
+    noStreamRef.current = () => {
+      const expectsAnswer =
+        detail.conversation.activeRunId !== null || messages.at(-1)?.role === "user";
+      if (!expectsAnswer) return;
+      api
+        .request("GET /api/conversations/:conversationId", { params: { conversationId } })
+        .then((latest) => {
+          if (latest.conversation.activeRunId === null) {
+            setMessages(prepareInitialMessages(latest));
+          }
+          invalidate("conversations");
+        })
+        .catch(() => {
+          // The page keeps what it has; the rail's refresh shows the run's end.
+        });
+    };
+  });
 
   const { timings, reportProgress } = useToolTimings(messages);
   const { runs, runIds, refetch } = useRunDetails(messages);

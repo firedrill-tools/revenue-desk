@@ -1197,6 +1197,17 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
   line. Run notices name their system, and three or more unavailable systems
   give one "Not available for this run" notice with a link to Connections.
 
+- **Run lifecycle in the server.** When the registry handles `run.finished`
+  it stores the answer and ends the stream at once; the run stops counting
+  for its conversation (`forConversation`, the conversation GET, the resume,
+  the next turn) while its core may still close connections, which counts
+  only toward the concurrency limit. A resume that finds no stream (204)
+  makes the client read the conversation again. Shutdown stops accepting
+  connections first, and from its start `POST /api/chat` answers 503
+  `shutting_down` (new API error code). A failed run's `error` chunk no
+  longer reaches the server-side reducer, which logged it as a storage
+  failure.
+
 **Integration follow-ups (open).**
 
 - The approval card for `GMAIL_SEND_DRAFT` cannot name the recipients (the

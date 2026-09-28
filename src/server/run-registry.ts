@@ -37,6 +37,8 @@ export const DEFAULT_STOP_GRACE_MS = 10_000;
 /** After run.finished, how long the core has to end its event stream. */
 export const DRAIN_GRACE_MS = 3_000;
 export const CORE_ENDED_EARLY_TEXT = "The agent stopped unexpectedly before finishing the run.";
+/** A run launched after shutdown began gets this long to stop itself. */
+const SHUTDOWN_LATE_GRACE_MS = 1_000;
 /** How often a held close checks whether the run's writes settled. */
 const WRITE_HOLD_POLL_MS = 250;
 
@@ -140,6 +142,18 @@ export class ActiveRun {
     this.#finishedStatus ??= status;
   }
 
+  #settled = false;
+
+  /** The run's answer is stored and its stream ended; only its core may still be closing. */
+  get settled(): boolean {
+    return this.#settled;
+  }
+
+  /** @internal */
+  markSettled(): void {
+    this.#settled = true;
+  }
+
   /** @internal */
   get finishedStatus(): FinishedRunStatus | null {
     return this.#finishedStatus;
@@ -154,13 +168,20 @@ export class ActiveRun {
 export class RunRegistry {
   readonly #options: RunRegistryOptions;
   readonly #runs = new Map<string, ActiveRun>();
+  #closing = false;
 
   constructor(options: RunRegistryOptions) {
     this.#options = options;
   }
 
+  /** Every run, a finished one still closing its connections included (the concurrency limit). */
   get size(): number {
     return this.#runs.size;
+  }
+
+  /** Shutdown has begun: no new run starts. */
+  get closing(): boolean {
+    return this.#closing;
   }
 
   get maxConcurrentRuns(): number {
@@ -175,9 +196,14 @@ export class RunRegistry {
     return this.#runs.get(runId);
   }
 
+  /**
+   * The conversation's run that is still going. A run whose answer is
+   * stored and whose stream ended is not, although its core may still be
+   * closing connections: the conversation can be read and continued.
+   */
   forConversation(conversationId: string): ActiveRun | undefined {
     for (const run of this.#runs.values()) {
-      if (run.conversationId === conversationId) return run;
+      if (run.conversationId === conversationId && !run.settled) return run;
     }
     return undefined;
   }
@@ -190,6 +216,8 @@ export class RunRegistry {
     const { promise, resolve } = Promise.withResolvers<void>();
     const run = new ActiveRun(request, promise);
     this.#runs.set(run.runId, run);
+    // Started as shutdown began (the caller checked `closing` first): it stops at once.
+    if (this.#closing) run.stop("shutdown", SHUTDOWN_LATE_GRACE_MS);
     void this.#pump(run, request).finally(() => {
       run.clearTimers();
       this.#runs.delete(run.runId);
@@ -199,8 +227,12 @@ export class RunRegistry {
     return run;
   }
 
-  /** Stops every run (server shutdown) and waits for them, at most `timeoutMs`. */
+  /**
+   * Stops every run (server shutdown) and waits for them, at most
+   * `timeoutMs`. From the first call no new run starts (`closing`).
+   */
   async shutdown(timeoutMs: number): Promise<void> {
+    this.#closing = true;
     const runs = [...this.#runs.values()];
     for (const run of runs) run.stop("shutdown", Math.max(0, timeoutMs - 500));
     await Promise.race([
@@ -241,6 +273,13 @@ export class RunRegistry {
       if (event.type === "run.finished") {
         run.markFinished(event.status);
         run.forceAfter(DRAIN_GRACE_MS);
+        // The answer is complete: store it and end the stream now. The core
+        // may take seconds more to close its connections (HubSpot's stdio
+        // server); the conversation must not wait for that.
+        void persistence.end(event.status).then(() => {
+          run.markSettled();
+          run.channel.close();
+        });
       }
     };
 

@@ -95,6 +95,9 @@ export class RunPersistence {
   map(event: AgentEvent): readonly ChatUIChunk[] {
     const chunks = this.#mapper.map(event);
     for (const chunk of chunks) {
+      // A failed run's `error` chunk changes nothing in the message (its outcome goes
+      // through end()), and the reducer would report it as a storage failure.
+      if (chunk.type === "error") continue;
       this.#reducer.write(chunk);
       // The pending approval card is persisted with its request.
       if (chunk.type === "tool-approval-request" && chunk.isAutomatic !== true) {

@@ -182,8 +182,9 @@ export async function startServer(
       close: () => {
         closing ??= (async () => {
           probes.abort();
-          await services.registry.shutdown(SHUTDOWN_TIMEOUT_MS);
+          // No new connection from here on; a request on an open one gets 503 for a new run.
           const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+          await services.registry.shutdown(SHUTDOWN_TIMEOUT_MS);
           // Idle keep-alive sockets would otherwise hold close() open.
           if ("closeIdleConnections" in server) server.closeIdleConnections();
           await closed;
