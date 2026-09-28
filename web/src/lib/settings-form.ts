@@ -21,6 +21,17 @@ export function normalizeDomain(raw: string): Normalized {
   return DOMAIN.test(value) ? { value } : { error: "Enter a domain such as example.com." };
 }
 
+const CALENDAR_ID = /^[^\s@<>]+@[a-z0-9.-]+\.[a-z]{2,63}$/;
+
+/** A shared Google calendar id such as team@group.calendar.google.com. */
+export function normalizeCalendarId(raw: string): Normalized {
+  const value = raw.trim().toLowerCase();
+  if (value === "primary") return { error: "Your primary calendar is always internal." };
+  return CALENDAR_ID.test(value) && value.length <= 254
+    ? { value }
+    : { error: "Enter a calendar id such as team@group.calendar.google.com." };
+}
+
 export function normalizeChannel(raw: string): Normalized {
   const bare = raw.trim().toLowerCase().replace(/^#+/, "");
   const value = `#${bare}`;
@@ -38,6 +49,7 @@ export type SettingsDraft = {
   internalEmailDomains: string[];
   notifySlackChannel: string;
   allowedSlackChannels: string[];
+  internalCalendarIds: string[];
   timezone: string;
   currency: string;
   defaultModel: string;
@@ -54,6 +66,7 @@ export function draftFromSettings(settings: WorkspaceSettings): SettingsDraft {
     internalEmailDomains: [...settings.internalEmailDomains],
     notifySlackChannel: settings.notifySlackChannel ?? "",
     allowedSlackChannels: [...settings.allowedSlackChannels],
+    internalCalendarIds: [...settings.internalCalendarIds],
     timezone: settings.timezone,
     currency: settings.currency,
     defaultModel: settings.defaultModel ?? "",
@@ -109,6 +122,9 @@ export function settingsPatch(original: WorkspaceSettings, draft: SettingsDraft)
   }
   if (!sameList(draft.allowedSlackChannels, original.allowedSlackChannels)) {
     patch.allowedSlackChannels = draft.allowedSlackChannels;
+  }
+  if (!sameList(draft.internalCalendarIds, original.internalCalendarIds)) {
+    patch.internalCalendarIds = draft.internalCalendarIds;
   }
   const channel = text(draft.notifySlackChannel);
   const normalizedChannel = channel === "" ? null : normalizeChannelValue(channel);

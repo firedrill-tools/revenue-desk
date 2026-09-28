@@ -47,6 +47,19 @@ const slackChannel = z
     "Expected a Slack channel such as #billing, or a channel id.",
   );
 
+/**
+ * A Google calendar id: "primary" is always internal and needs no entry, so
+ * an entry is an address-shaped id such as team@group.calendar.google.com.
+ */
+const calendarId = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .refine(
+    (value) => /^[^\s@<>]+@[a-z0-9.-]+\.[a-z]{2,63}$/.test(value) && value.length <= 254,
+    "Expected a calendar id such as team@group.calendar.google.com.",
+  );
+
 const unique = <T>(values: readonly T[]): T[] => [...new Set(values)];
 
 const settingsUpdate = z.strictObject({
@@ -57,6 +70,7 @@ const settingsUpdate = z.strictObject({
   internalEmailDomains: z.array(domain).max(50).transform(unique).optional(),
   notifySlackChannel: slackChannel.nullable().optional(),
   allowedSlackChannels: z.array(slackChannel).max(100).transform(unique).optional(),
+  internalCalendarIds: z.array(calendarId).max(50).transform(unique).optional(),
   timezone: z
     .string()
     .trim()

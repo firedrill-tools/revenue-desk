@@ -75,6 +75,7 @@ let settings: WorkspaceSettings = {
   internalEmailDomains: ["kestrel.test"],
   notifySlackChannel: "#billing",
   allowedSlackChannels: ["#billing", "#sales-ops", "#revenue"],
+  internalCalendarIds: [],
   timezone: "America/New_York",
   currency: "USD",
   defaultModel: null,

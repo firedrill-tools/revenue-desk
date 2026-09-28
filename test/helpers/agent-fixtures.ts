@@ -42,6 +42,7 @@ export const TEST_SETTINGS: WorkspaceSettings = {
   internalEmailDomains: ["kestrel.test"],
   notifySlackChannel: "#billing",
   allowedSlackChannels: ["#billing", "#sales-ops"],
+  internalCalendarIds: [],
   timezone: "America/New_York",
   currency: "USD",
   defaultModel: null,

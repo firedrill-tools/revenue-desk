@@ -6,6 +6,7 @@ import type { WorkspaceSettings } from "../../../src/contracts/integration.js";
 import {
   draftFromSettings,
   isEmptyPatch,
+  normalizeCalendarId,
   normalizeChannel,
   normalizeDomain,
   policiesPatch,
@@ -21,6 +22,7 @@ const SETTINGS: WorkspaceSettings = {
   internalEmailDomains: ["kestrel.test"],
   notifySlackChannel: "#billing",
   allowedSlackChannels: ["#billing"],
+  internalCalendarIds: [],
   timezone: "America/New_York",
   currency: "USD",
   defaultModel: null,
@@ -61,6 +63,18 @@ describe("validateDraft", () => {
   });
 });
 
+describe("normalizeCalendarId", () => {
+  it("accepts shared calendar ids and refuses primary and non-ids", () => {
+    expect(normalizeCalendarId(" Team@Group.Calendar.Google.com ")).toEqual({
+      value: "team@group.calendar.google.com",
+    });
+    expect(normalizeCalendarId("primary")).toEqual({
+      error: "Your primary calendar is always internal.",
+    });
+    expect("error" in normalizeCalendarId("team calendar")).toBe(true);
+  });
+});
+
 describe("settingsPatch", () => {
   it("is empty when nothing changed", () => {
     expect(isEmptyPatch(settingsPatch(SETTINGS, draftFromSettings(SETTINGS)))).toBe(true);
@@ -73,6 +87,7 @@ describe("settingsPatch", () => {
       currency: "eur",
       notifySlackChannel: "revenue",
       allowedSlackChannels: ["#billing", "#revenue"],
+      internalCalendarIds: ["team@group.calendar.google.com"],
       defaultModel: "claude-opus-5",
       defaultEffort: "high",
     };
@@ -81,6 +96,7 @@ describe("settingsPatch", () => {
       currency: "EUR",
       notifySlackChannel: "#revenue",
       allowedSlackChannels: ["#billing", "#revenue"],
+      internalCalendarIds: ["team@group.calendar.google.com"],
       defaultModel: "claude-opus-5",
       defaultEffort: "high",
     });

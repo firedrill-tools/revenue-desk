@@ -135,8 +135,8 @@ access levels in `src/integrations/composio/session.ts`):
 | `GOOGLECALENDAR_EVENTS_LIST` | `google_calendar.events.list` | read |
 | `GOOGLECALENDAR_FIND_FREE_SLOTS` | `google_calendar.freebusy.query` | read |
 | `GOOGLECALENDAR_FIND_EVENT` | `google_calendar.events.find` | read |
-| `GOOGLECALENDAR_CREATE_EVENT` | `google_calendar.events.create` | outbound; internal_write when every attendee is inside `internalEmailDomains` |
-| `GOOGLECALENDAR_UPDATE_EVENT` | `google_calendar.events.update` | as create |
+| `GOOGLECALENDAR_CREATE_EVENT` | `google_calendar.events.create` | outbound; internal_write when every attendee is inside `internalEmailDomains` and the calendar is `primary`, an internal address or listed in `internalCalendarIds` |
+| `GOOGLECALENDAR_UPDATE_EVENT` | `google_calendar.events.update` | as create, and outbound unless this run read the event (events list, search, create or update result) and its current guests are all internal and none is dropped with a notification: the update is a full replacement |
 
 **HubSpot, profile `hubspot-mcp-0.4`** (10 of the 21 tools of 0.4.0, captured
 in `test/fixtures/surfaces/hubspot-mcp-0.4.0.json`). The jobs need CRM reads
@@ -584,7 +584,7 @@ enum column has a CHECK constraint equal to its contract list
 
 | Table | Columns |
 |---|---|
-| `workspace_settings` (singleton, CHECK id=1) | company_name, agent_name, sender_name, email_signature, internal_email_domains json, notify_slack_channel, allowed_slack_channels json, timezone, currency, default_model, default_effort, updated_at |
+| `workspace_settings` (singleton, CHECK id=1) | company_name, agent_name, sender_name, email_signature, internal_email_domains json, notify_slack_channel, allowed_slack_channels json, internal_calendar_ids json (migration `0004`), timezone, currency, default_model, default_effort, updated_at |
 | `policies` | action_class PK, mode `auto`/`ask`/`deny`, updated_at |
 | `connections` | integration PK, kind, profile, status (`ConnectionState`), status_detail, endpoint_label (host only), account_hint (masked), missing_vars json (names), last_checked_at, updated_at |
 | `conversations` | id, title, source `ui`/`cli`, status (`idle`, `running`, `awaiting_approval`, `error`), sdk_session_id, total_cost_usd, input_tokens, output_tokens, archived_at, created_at, updated_at |
@@ -1116,6 +1116,18 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
 - **Contract changes during the build:** `549d6c7` (W3) made `RunDetailView`
   `Omit<RunSummaryView, 'approvals'> & {…}`: the intersection with the
   summary's approval counts was unsatisfiable. No other contract changed.
+
+**2026-09-29, review fixes (security, correctness, UX).**
+
+- **Calendar updates and shared calendars.** `GOOGLECALENDAR_UPDATE_EVENT`
+  is a full replacement, so an update is outbound unless the run's
+  `GoogleCalendarRunMemory` (events lists, searches, create and update
+  results) shows the event's current guests are all internal and none is
+  dropped with a notification. Only `primary`, internal addresses and the
+  new `WorkspaceSettings.internalCalendarIds` (contract change, migration
+  `0004`, Settings › Internal domains and calendars) are internal calendars;
+  group calendars are outbound until listed. Cards write the time with its
+  weekday in the event's zone and say in words who Google emails.
 
 **Integration follow-ups (open).**
 

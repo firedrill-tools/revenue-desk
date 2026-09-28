@@ -173,6 +173,7 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
   const classifierSettings: ClassifierSettings = {
     internalEmailDomains: options.settings.internalEmailDomains,
     allowedSlackChannels: options.settings.allowedSlackChannels,
+    internalCalendarIds: options.settings.internalCalendarIds,
     currency: options.settings.currency,
   };
   const connectOptions = {

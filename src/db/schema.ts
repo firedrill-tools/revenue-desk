@@ -143,6 +143,10 @@ export const workspaceSettings = sqliteTable(
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'`),
+    internalCalendarIds: text("internal_calendar_ids", { mode: "json" })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
     timezone: text("timezone").notNull().default("UTC"),
     currency: text("currency").notNull().default("USD"),
     defaultModel: text("default_model"),

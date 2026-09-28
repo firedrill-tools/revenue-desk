@@ -258,6 +258,12 @@ export type WorkspaceSettings = {
   readonly notifySlackChannel: string | null;
   /** Posting to these channels is internal_write; any other channel is outbound. */
   readonly allowedSlackChannels: readonly string[];
+  /**
+   * Shared Google calendars (e.g. "team@group.calendar.google.com") the
+   * company owns: writing to them is internal_write. Any other calendar except
+   * "primary" and internal addresses is outbound.
+   */
+  readonly internalCalendarIds: readonly string[];
   /** IANA time zone, e.g. "America/New_York". */
   readonly timezone: string;
   /** ISO 4217 display currency. */
@@ -271,7 +277,7 @@ export type WorkspaceSettings = {
 
 export type ClassifierSettings = Pick<
   WorkspaceSettings,
-  "internalEmailDomains" | "allowedSlackChannels" | "currency"
+  "internalEmailDomains" | "allowedSlackChannels" | "internalCalendarIds" | "currency"
 >;
 
 // ---------------------------------------------------------------------------

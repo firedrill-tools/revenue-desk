@@ -10,7 +10,9 @@ import {
 import { GMAIL_PROFILE } from "../../../src/integrations/gmail/profile.js";
 import { GmailDraftMemory } from "../../../src/integrations/gmail/run-memory.js";
 import { classifyGoogleCalendar } from "../../../src/integrations/google-calendar/classify.js";
+import { createGoogleCalendarIntegration } from "../../../src/integrations/google-calendar/definition.js";
 import { GOOGLE_CALENDAR_PROFILE } from "../../../src/integrations/google-calendar/profile.js";
+import { GoogleCalendarRunMemory } from "../../../src/integrations/google-calendar/run-memory.js";
 import { SETTINGS } from "./helpers.js";
 
 const DRAFT_INPUT: JsonObject = {
@@ -300,14 +302,72 @@ describe("classifyGoogleCalendar", () => {
           'Create "Collections call" in Google Calendar with ana@acme.test and rep@kestrel.test',
         facts: [
           { label: "Title", value: "Collections call" },
-          { label: "When", value: "2026-10-02T14:00:00 for 30 min (America/New_York)" },
+          { label: "When", value: "Fri, Oct 2, 2026, 2:00–2:30 pm (America/New_York)" },
           { label: "Attendees", value: "ana@acme.test, rep@kestrel.test" },
           { label: "Outside the company", value: "ana@acme.test" },
-          { label: "Notifications", value: "all" },
+          { label: "Notifications", value: "Google emails the invitation to every attendee" },
         ],
         recipients: ["ana@acme.test", "rep@kestrel.test"],
       },
     });
+  });
+
+  it("writes when the event is with its weekday, in its time zone", () => {
+    const when = (extra: JsonObject) =>
+      classifyGoogleCalendar(
+        "GOOGLECALENDAR_CREATE_EVENT",
+        event(extra),
+        SETTINGS,
+      )?.details?.facts.find((fact) => fact.label === "When")?.value;
+    expect(when({ start_datetime: "2026-09-30T13:00:00" })).toBe(
+      "Wed, Sep 30, 2026, 1:00–1:30 pm (America/New_York)",
+    );
+    expect(when({ start_datetime: "2026-09-30 11:30", end_datetime: "2026-09-30T12:15:00" })).toBe(
+      "Wed, Sep 30, 2026, 11:30 am–12:15 pm (America/New_York)",
+    );
+    // An instant with an offset is shown in the event's zone.
+    expect(when({ start_datetime: "2026-09-30T17:00:00Z", event_duration_minutes: 60 })).toBe(
+      "Wed, Sep 30, 2026, 1:00–2:00 pm (America/New_York)",
+    );
+    expect(
+      when({
+        start_datetime: "2026-09-30T23:30:00",
+        event_duration_hour: 1,
+        event_duration_minutes: 0,
+      }),
+    ).toBe("Wed, Sep 30, 2026, 11:30 pm – Thu, Oct 1, 2026, 12:30 am (America/New_York)");
+    expect(
+      classifyGoogleCalendar(
+        "GOOGLECALENDAR_CREATE_EVENT",
+        { start_datetime: "2026-09-30T09:00:00", event_duration_minutes: 30 },
+        SETTINGS,
+      )?.details?.facts.find((fact) => fact.label === "When")?.value,
+    ).toBe("Wed, Sep 30, 2026, 9:00–9:30 am (UTC)");
+    expect(when({ start_datetime: "next Tuesday" })).toBe("next Tuesday (America/New_York)");
+  });
+
+  it("says who Google emails, in words", () => {
+    const notice = (tool: string, extra: JsonObject) =>
+      classifyGoogleCalendar(
+        tool,
+        event({ event_id: "ev1", ...extra }),
+        SETTINGS,
+      )?.details?.facts.find((fact) => fact.label === "Notifications")?.value;
+    expect(notice("GOOGLECALENDAR_CREATE_EVENT", {})).toBe(
+      "Google emails the invitation to every attendee",
+    );
+    expect(notice("GOOGLECALENDAR_CREATE_EVENT", { send_updates: "externalOnly" })).toBe(
+      "Google emails the invitation to attendees outside the company",
+    );
+    expect(notice("GOOGLECALENDAR_CREATE_EVENT", { send_updates: "none" })).toBe(
+      "No invitation email",
+    );
+    expect(notice("GOOGLECALENDAR_UPDATE_EVENT", { send_updates: "all" })).toBe(
+      "Google emails the change to every attendee",
+    );
+    expect(notice("GOOGLECALENDAR_UPDATE_EVENT", { send_updates: "none" })).toBe(
+      "No email about the change",
+    );
   });
 
   it("keeps internal-only and attendee-free events internal", () => {
@@ -319,12 +379,9 @@ describe("classifyGoogleCalendar", () => {
     ).toBe("internal_write");
     expect(classOf("GOOGLECALENDAR_CREATE_EVENT", event({}))).toBe("internal_write");
     expect(classOf("GOOGLECALENDAR_CREATE_EVENT", event({ attendees: [] }))).toBe("internal_write");
-    expect(
-      classOf(
-        "GOOGLECALENDAR_CREATE_EVENT",
-        event({ calendar_id: "team@group.calendar.google.com" }),
-      ),
-    ).toBe("internal_write");
+    expect(classOf("GOOGLECALENDAR_CREATE_EVENT", event({ calendar_id: "primary" }))).toBe(
+      "internal_write",
+    );
     expect(classOf("GOOGLECALENDAR_CREATE_EVENT", event({ calendar_id: "rep@kestrel.test" }))).toBe(
       "internal_write",
     );
@@ -346,19 +403,68 @@ describe("classifyGoogleCalendar", () => {
     );
   });
 
-  it("classifies updates like creates, but an update without attendees is outbound", () => {
+  it("treats a group calendar as outbound unless the workspace lists it", () => {
+    // Anyone can create a group calendar, share it with the user and publish it.
+    const shared = event({ calendar_id: "customer-shared@group.calendar.google.com" });
+    const unlisted = classifyGoogleCalendar("GOOGLECALENDAR_CREATE_EVENT", shared, SETTINGS);
+    expect(unlisted?.actionClass).toBe("outbound");
+    expect(unlisted?.details?.facts).toContainEqual({
+      label: "Calendar",
+      value: "customer-shared@group.calendar.google.com (not listed as internal)",
+    });
+    const listed = classifyGoogleCalendar("GOOGLECALENDAR_CREATE_EVENT", shared, {
+      ...SETTINGS,
+      internalCalendarIds: ["Customer-Shared@group.calendar.google.com"],
+    });
+    expect(listed?.actionClass).toBe("internal_write");
+    expect(listed?.details?.facts).toContainEqual({
+      label: "Calendar",
+      value: "customer-shared@group.calendar.google.com",
+    });
+    // Listing one calendar does not vouch for another, and outside guests still ask.
+    expect(
+      classifyGoogleCalendar(
+        "GOOGLECALENDAR_CREATE_EVENT",
+        event({ calendar_id: "team@group.calendar.google.com" }),
+        { ...SETTINGS, internalCalendarIds: ["customer-shared@group.calendar.google.com"] },
+      )?.actionClass,
+    ).toBe("outbound");
+    expect(
+      classifyGoogleCalendar(
+        "GOOGLECALENDAR_CREATE_EVENT",
+        { ...shared, attendees: ["ana@acme.test"] },
+        { ...SETTINGS, internalCalendarIds: ["customer-shared@group.calendar.google.com"] },
+      )?.actionClass,
+    ).toBe("outbound");
+  });
+
+  it("asks before any update of an event whose guests the run has not read", () => {
+    // UPDATE_EVENT is a full replacement: whoever the list leaves out is removed and notified.
+    for (const attendees of [[], ["rep@kestrel.test"], undefined]) {
+      const input = event({
+        event_id: "ev-with-customer",
+        send_updates: "all",
+        ...(attendees === undefined ? {} : { attendees }),
+      });
+      expect(classOf("GOOGLECALENDAR_UPDATE_EVENT", input), JSON.stringify(attendees)).toBe(
+        "outbound",
+      );
+    }
     expect(
       classOf(
         "GOOGLECALENDAR_UPDATE_EVENT",
-        event({ event_id: "ev1", attendees: ["rep@kestrel.test"] }),
-      ),
-    ).toBe("internal_write");
-    expect(
-      classOf(
-        "GOOGLECALENDAR_UPDATE_EVENT",
-        event({ event_id: "ev1", attendees: ["ana@acme.test"] }),
+        event({ event_id: "ev1", attendees: ["rep@kestrel.test"], send_updates: "externalOnly" }),
       ),
     ).toBe("outbound");
+    const unread = classifyGoogleCalendar(
+      "GOOGLECALENDAR_UPDATE_EVENT",
+      event({ event_id: "ev1", attendees: ["rep@kestrel.test"] }),
+      SETTINGS,
+    );
+    expect(unread?.details?.facts).toContainEqual({
+      label: "Current attendees",
+      value: "Not read in this run",
+    });
     const cleared = classifyGoogleCalendar(
       "GOOGLECALENDAR_UPDATE_EVENT",
       event({ event_id: "ev1" }),
@@ -394,5 +500,163 @@ describe("classifyGoogleCalendar", () => {
         `${tool} ${JSON.stringify(input)}`,
       ).toBeNull();
     }
+  });
+});
+
+describe("updating an event this run read", () => {
+  const listed = (items: JsonValue[]): JsonValue => ({
+    successful: true,
+    data: { kind: "calendar#events", items },
+    error: null,
+  });
+  const resource = (id: string, attendees?: JsonValue[]): JsonObject => ({
+    kind: "calendar#event",
+    id,
+    summary: "Acme collections call",
+    start: { dateTime: "2026-10-01T10:00:00-04:00" },
+    ...(attendees === undefined ? {} : { attendees }),
+  });
+  const owner = { email: "maya@kestrel.test", self: true, organizer: true };
+  const update = (extra: JsonObject): JsonObject => ({
+    event_id: "ev-with-customer",
+    summary: "Acme collections call",
+    start_datetime: "2026-10-01T15:00:00",
+    timezone: "America/New_York",
+    ...extra,
+  });
+  const memoryWith = (items: JsonValue[], tool = "GOOGLECALENDAR_EVENTS_LIST") => {
+    const memory = new GoogleCalendarRunMemory(SETTINGS);
+    memory.record(tool, {}, listed(items), false);
+    return memory;
+  };
+  const refined = (memory: GoogleCalendarRunMemory, input: JsonObject) => {
+    const base = classifyGoogleCalendar("GOOGLECALENDAR_UPDATE_EVENT", input, SETTINGS);
+    if (base === null) throw new Error("unclassifiable");
+    return memory.refine("GOOGLECALENDAR_UPDATE_EVENT", input, base);
+  };
+
+  it("asks when the update drops an outside guest, even with an internal-only list", () => {
+    const memory = memoryWith([
+      resource("ev-with-customer", [
+        owner,
+        { email: "ana@acme.test" },
+        { email: "rep@kestrel.test" },
+      ]),
+    ]);
+    for (const attendees of [[], ["rep@kestrel.test"]]) {
+      const classification = refined(memory, update({ attendees, send_updates: "all" }));
+      expect(classification.actionClass, JSON.stringify(attendees)).toBe("outbound");
+      expect(classification.details?.facts).toContainEqual({
+        label: "Current attendees",
+        value: "ana@acme.test, rep@kestrel.test",
+      });
+      expect(classification.details?.facts).toContainEqual({
+        label: "Outside the company",
+        value: "ana@acme.test",
+      });
+    }
+    const dropped = refined(memory, update({ attendees: ["rep@kestrel.test"] }));
+    expect(dropped.details?.facts).toContainEqual({ label: "Removed", value: "ana@acme.test" });
+    expect(dropped.details?.consequence).toBe(
+      'Replace event ev-with-customer with "Acme collections call" with rep@kestrel.test, removing ana@acme.test',
+    );
+    expect(dropped.details?.recipients).toEqual(["rep@kestrel.test", "ana@acme.test"]);
+    // Keeping the outside guest still e-mails them the change.
+    expect(
+      refined(memory, update({ attendees: ["ana@acme.test", "rep@kestrel.test"] })).actionClass,
+    ).toBe("outbound");
+  });
+
+  it("keeps an update internal when the event's known guests are all internal and stay", () => {
+    const memory = memoryWith([
+      resource("ev-with-customer", [owner, { email: "rep@kestrel.test" }]),
+    ]);
+    const kept = refined(memory, update({ attendees: ["rep@kestrel.test"], send_updates: "all" }));
+    expect(kept.actionClass).toBe("internal_write");
+    expect(kept.details?.facts).toContainEqual({
+      label: "Current attendees",
+      value: "rep@kestrel.test",
+    });
+    // Dropping an internal guest with a notification asks; without one it does not.
+    expect(refined(memory, update({ attendees: [], send_updates: "all" })).actionClass).toBe(
+      "outbound",
+    );
+    expect(refined(memory, update({ attendees: [], send_updates: "none" })).actionClass).toBe(
+      "internal_write",
+    );
+    // An event without guests has nobody to drop.
+    const solo = memoryWith([resource("ev-with-customer")]);
+    expect(refined(solo, update({})).actionClass).toBe("internal_write");
+    expect(refined(solo, update({})).details?.facts).toContainEqual({
+      label: "Current attendees",
+      value: "None",
+    });
+  });
+
+  it("learns from searches, creates and updates, never from inputs or failures", () => {
+    const memory = new GoogleCalendarRunMemory(SETTINGS);
+    memory.record(
+      "GOOGLECALENDAR_FIND_EVENT",
+      {},
+      {
+        successful: true,
+        data: { items: [resource("ev-a", [owner, { email: "ana@acme.test" }])] },
+      },
+      false,
+    );
+    memory.record(
+      "GOOGLECALENDAR_CREATE_EVENT",
+      { attendees: ["rep@kestrel.test"] },
+      {
+        successful: true,
+        data: { response_data: resource("ev-b", [owner, { email: "rep@kestrel.test" }]) },
+      },
+      false,
+    );
+    expect(memory.event("ev-a")?.guests).toEqual(["ana@acme.test"]);
+    expect(memory.event("ev-b")?.guests).toEqual(["rep@kestrel.test"]);
+    // An update's result is the event's new guest list.
+    memory.record(
+      "GOOGLECALENDAR_UPDATE_EVENT",
+      {},
+      { successful: true, data: { response_data: resource("ev-a", [owner]) } },
+      false,
+    );
+    expect(memory.event("ev-a")?.guests).toEqual([]);
+    // Failures and other tools teach nothing.
+    memory.record("GOOGLECALENDAR_EVENTS_LIST", {}, listed([resource("ev-c", [])]), true);
+    memory.record(
+      "GOOGLECALENDAR_EVENTS_LIST",
+      {},
+      { successful: false, data: { items: [resource("ev-c", [])] }, error: "boom" },
+      false,
+    );
+    memory.record("GOOGLECALENDAR_FIND_FREE_SLOTS", {}, listed([resource("ev-c", [])]), false);
+    expect(memory.event("ev-c")).toBeUndefined();
+  });
+
+  it("forgets guests it can no longer read in full", () => {
+    const memory = memoryWith([resource("ev-a", [{ email: "rep@kestrel.test" }])]);
+    expect(memory.event("ev-a")).toBeDefined();
+    // Compacted output can cut an attendee list short.
+    memory.record(
+      "GOOGLECALENDAR_EVENTS_LIST",
+      {},
+      listed([resource("ev-a", [{ email: "rep@kestrel.test" }, "… 3 more items"])]),
+      false,
+    );
+    expect(memory.event("ev-a")).toBeUndefined();
+    expect(
+      refined(memory, update({ event_id: "ev-a", attendees: ["rep@kestrel.test"] })).actionClass,
+    ).toBe("outbound");
+  });
+
+  it("is the Calendar integration's run memory", () => {
+    const memory = createGoogleCalendarIntegration().runMemory?.(SETTINGS);
+    expect(memory).toBeInstanceOf(GoogleCalendarRunMemory);
+    // Other tools pass through unchanged.
+    const create = classifyGoogleCalendar("GOOGLECALENDAR_CREATE_EVENT", update({}), SETTINGS);
+    if (create === null || memory === undefined) throw new Error("unexpected");
+    expect(memory.refine("GOOGLECALENDAR_CREATE_EVENT", update({}), create)).toBe(create);
   });
 });

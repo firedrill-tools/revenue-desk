@@ -7,6 +7,7 @@ import { resolveComposioConfig } from "../composio/resolve.js";
 import { allowedTools } from "../composio/session.js";
 import { classifyGoogleCalendar } from "./classify.js";
 import { GOOGLE_CALENDAR_PROFILE } from "./profile.js";
+import { GoogleCalendarRunMemory } from "./run-memory.js";
 
 export function createGoogleCalendarIntegration(
   connectors: ComposioConnectors = new ComposioConnectors(),
@@ -41,5 +42,7 @@ export function createGoogleCalendarIntegration(
       probeComposio(connectors.forConnection(connection), "googlecalendar", signal),
     allowlist: (access) => allowedTools("googlecalendar", access),
     connector: (connection) => connectors.forConnection(connection),
+    // An update's reach depends on the event's guests, which only the run's earlier results show.
+    runMemory: (settings) => new GoogleCalendarRunMemory(settings),
   };
 }

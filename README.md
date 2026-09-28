@@ -106,8 +106,9 @@ are not offered; there is no fallback to sample data or to another model.
 
 4. In the app, open **Settings** and fill in the company profile, the
    internal email domains (recipients and attendees outside them are
-   external), the Slack channels the agent may post to without asking, and
-   the time zone.
+   external), any shared Google calendars the company owns (every other
+   calendar except your primary one counts as external), the Slack channels
+   the agent may post to without asking, and the time zone.
 
 ## Running
 
@@ -224,8 +225,8 @@ and the class's mode decides what happens:
 | Action class | Examples | Default |
 |---|---|---|
 | `read` | Any lookup, search or list | automatic |
-| `internal_write` | Gmail drafts and labels, HubSpot notes and tasks, Slack posts to allowlisted channels, calendar events whose attendees are all internal, creating a QuickBooks customer | automatic |
-| `outbound` | Sending or replying to email, calendar events with an external attendee, Slack posts to any other channel | asks |
+| `internal_write` | Gmail drafts and labels, HubSpot notes and tasks, Slack posts to allowlisted channels, calendar events on your own or a listed company calendar whose attendees are all internal, creating a QuickBooks customer | automatic |
+| `outbound` | Sending or replying to email, calendar events with an external attendee or on a calendar that is not listed as the company's, an update of an event whose current guests the run has not read (an update replaces the guest list), Slack posts to any other channel | asks |
 | `financial` | Stripe refunds and subscription cancellations; QuickBooks invoice create, send and void, and recording a payment | asks |
 | `destructive` | (no tool is destructive today) | denied |
 
@@ -278,7 +279,7 @@ Tables:
 
 | Table | Holds |
 |---|---|
-| `workspace_settings` | The single settings row: company profile, sender and signature, internal email domains, Slack notification channel and allowlist, time zone, currency, default model and effort. |
+| `workspace_settings` | The single settings row: company profile, sender and signature, internal email domains, company calendars, Slack notification channel and allowlist, time zone, currency, default model and effort. |
 | `policies` | The saved approval mode per action class. |
 | `connections` | The last known status of each integration: state, endpoint host, masked account hint, missing variable names, last check. |
 | `conversations` | Title, source (`ui` or `cli`), status, SDK session id, cost and token totals. |

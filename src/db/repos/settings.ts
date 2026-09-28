@@ -17,6 +17,7 @@ export function toWorkspaceSettings(row: WorkspaceSettingsRow): WorkspaceSetting
     internalEmailDomains: row.internalEmailDomains,
     notifySlackChannel: row.notifySlackChannel,
     allowedSlackChannels: row.allowedSlackChannels,
+    internalCalendarIds: row.internalCalendarIds,
     timezone: row.timezone,
     currency: row.currency,
     defaultModel: row.defaultModel,
@@ -64,6 +65,9 @@ export function updateSettings(
     values.notifySlackChannel = update.notifySlackChannel;
   if (update.allowedSlackChannels !== undefined) {
     values.allowedSlackChannels = [...update.allowedSlackChannels];
+  }
+  if (update.internalCalendarIds !== undefined) {
+    values.internalCalendarIds = [...update.internalCalendarIds];
   }
   if (update.timezone !== undefined) values.timezone = update.timezone;
   if (update.currency !== undefined) values.currency = update.currency;

@@ -39,6 +39,7 @@ import {
   draftFromSettings,
   type FieldErrors,
   isEmptyPatch,
+  normalizeCalendarId,
   normalizeChannel,
   normalizeDomain,
   policiesPatch,
@@ -154,7 +155,7 @@ const SECTION_FIELDS: Record<SectionKey, readonly (keyof SettingsDraft)[]> = {
     "defaultEffort",
   ],
   slack: ["notifySlackChannel", "allowedSlackChannels"],
-  email: ["internalEmailDomains"],
+  email: ["internalEmailDomains", "internalCalendarIds"],
 };
 
 function pickPatch(patch: SettingsUpdate, keys: readonly (keyof SettingsDraft)[]): SettingsUpdate {
@@ -420,8 +421,8 @@ function EmailSection({ form }: { form: ReturnType<typeof useSettingsForm> }) {
   const { draft, update } = form;
   return (
     <Section
-      title="Internal email domains"
-      description="Recipients and calendar attendees outside these domains are external, so the action asks first."
+      title="Internal domains and calendars"
+      description="Recipients and calendar attendees outside these domains are external, and so is any calendar except your own and the ones listed here, so the action asks first."
       footer={
         state.dirty ? (
           <SaveBar
@@ -434,16 +435,32 @@ function EmailSection({ form }: { form: ReturnType<typeof useSettingsForm> }) {
         ) : null
       }
     >
-      <Field label="Domains" htmlFor={`${id}-domains`}>
-        <ListEditor
-          label="Internal email domains"
-          values={draft.internalEmailDomains}
-          onChange={(values) => update("internalEmailDomains", values)}
-          normalize={normalizeDomain}
-          placeholder="Add a domain, e.g. example.com"
-          emptyText="No internal domains: every recipient counts as external."
-        />
-      </Field>
+      <div className="space-y-5">
+        <Field label="Domains" htmlFor={`${id}-domains`}>
+          <ListEditor
+            label="Internal email domains"
+            values={draft.internalEmailDomains}
+            onChange={(values) => update("internalEmailDomains", values)}
+            normalize={normalizeDomain}
+            placeholder="Add a domain, e.g. example.com"
+            emptyText="No internal domains: every recipient counts as external."
+          />
+        </Field>
+        <Field
+          label="Company calendars"
+          hint="Shared Google calendars the company owns. Your primary calendar is always internal."
+          htmlFor={`${id}-calendars`}
+        >
+          <ListEditor
+            label="Company calendars"
+            values={draft.internalCalendarIds}
+            onChange={(values) => update("internalCalendarIds", values)}
+            normalize={normalizeCalendarId}
+            placeholder="Add a calendar id, e.g. team@group.calendar.google.com"
+            emptyText="None: events on shared calendars ask first."
+          />
+        </Field>
+      </div>
     </Section>
   );
 }

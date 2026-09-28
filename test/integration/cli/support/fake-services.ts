@@ -85,6 +85,7 @@ export const DEFAULT_SETTINGS: WorkspaceSettings = {
   internalEmailDomains: ["northwind.test"],
   notifySlackChannel: "#billing",
   allowedSlackChannels: ["#billing"],
+  internalCalendarIds: [],
   timezone: "America/New_York",
   currency: "USD",
   defaultModel: null,

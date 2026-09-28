@@ -44,6 +44,7 @@ const companySchema = z.object({
     internalEmailDomains: z.array(z.string()),
     notifySlackChannel: z.string().nullable(),
     allowedSlackChannels: z.array(z.string()),
+    internalCalendarIds: z.array(z.string()),
     timezone: z.string(),
     currency: z.string(),
     defaultModel: z.string().nullable(),

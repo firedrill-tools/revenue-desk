@@ -75,6 +75,7 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
 export const SETTINGS: ClassifierSettings = {
   internalEmailDomains: ["kestrel.test"],
   allowedSlackChannels: ["#billing", "#sales-ops"],
+  internalCalendarIds: [],
   currency: "USD",
 };
 

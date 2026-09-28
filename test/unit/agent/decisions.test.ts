@@ -36,6 +36,7 @@ function registry(): ToolRegistry {
   const settings = {
     internalEmailDomains: TEST_SETTINGS.internalEmailDomains,
     allowedSlackChannels: TEST_SETTINGS.allowedSlackChannels,
+    internalCalendarIds: TEST_SETTINGS.internalCalendarIds,
     currency: "USD",
   };
   const stripeTools = catalog.stripe.tools(

@@ -1,0 +1,1 @@
+ALTER TABLE `workspace_settings` ADD `internal_calendar_ids` text DEFAULT '[]' NOT NULL;
