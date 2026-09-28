@@ -78,7 +78,9 @@ are not offered; there is no fallback to sample data or to another model.
      an unavailable model fails the run instead of falling back to another.
    - **Gmail and Google Calendar.** `COMPOSIO_API_KEY` (a Composio project
      key) and `COMPOSIO_USER_ID` (the Composio user whose Google accounts the
-     agent uses; there is no default). Then start the app, open
+     agent uses; there is no default). `COMPOSIO_USER_ID` is any stable id you
+     choose, for example your email address; Connect creates the Google
+     connections under it. Then start the app, open
      **Connections** and click **Connect** for Gmail and for Google Calendar:
      Composio's hosted sign-in opens in a new tab. Use **Check** afterwards.
      Revenue Desk starts a Composio sign-in only from that click.
@@ -114,7 +116,7 @@ are not offered; there is no fallback to sample data or to another model.
 
 | Command | What it runs |
 |---|---|
-| `pnpm dev` | The API server on 127.0.0.1:4320 (`tsx watch`) and Vite on http://127.0.0.1:4321, which proxies `/api` to the server. Open port 4321. |
+| `pnpm dev` | The API server on 127.0.0.1:4320 (`tsx watch`) and Vite on http://127.0.0.1:4321, which proxies `/api` to the server. Open port 4321; port 4320 answers only the API (and a page pointing to 4321). |
 | `pnpm build && pnpm start` | Builds the web app into `dist/web` and the server and CLI into `dist/`, then serves the API and the built app on http://127.0.0.1:4320. |
 | `pnpm dev:sandbox` | The labelled demo: see [Sandbox demo](#sandbox-demo). |
 | `node dist/cli/main.js ask "…"` | The headless CLI (after `pnpm build`); see [Command line](#command-line). |
@@ -268,8 +270,12 @@ and the class's mode decides what happens:
   Revenue Desk's. A redactor removes configured
   secret values and token shapes (`Bearer …`, `sk_`, `rk_`, `xox…`, `pat-`)
   from logs, stored rows, streamed output and CLI output.
-- **Local only.** The server binds to 127.0.0.1 and refuses requests whose
-  `Host` is not loopback. Every `/api` request except `/api/health` and
+- **Local only, single user.** The server binds to 127.0.0.1 and refuses
+  requests whose `Host` is not loopback. It assumes a single-user machine:
+  loopback, `Origin` and CSRF checks stop other websites, not other programs
+  or other accounts on the same host, which can reach 127.0.0.1, take a
+  session and act with this configuration's credentials. Do not run it on a
+  shared host. Every `/api` request except `/api/health` and
   `/api/session` needs the per-session cookie, reads included. Changing
   requests also need a matching `x-rd-csrf` header and
   `Content-Type: application/json`, and are refused when the browser sends a

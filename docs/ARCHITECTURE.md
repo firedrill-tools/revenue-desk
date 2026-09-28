@@ -1210,6 +1210,16 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
 
 **Integration follow-ups (open).**
 
+- **Other local users and programs.** Loopback, `Origin`, CSRF and the
+  session cookie stop other websites, not another program or OS account on
+  the same host: `GET /api/session` hands the cookie and token to any local
+  caller. The README states that Revenue Desk assumes a single-user host. The
+  fix is a per-boot capability: the server prints a launch URL with a random
+  token (kept `0600` in the state directory so `tsx watch` restarts keep it),
+  the SPA exchanges it for the cookie, and `/api/session` answers only a
+  caller holding the cookie or the token. It needs the test harness, the
+  Playwright sandbox and the live script to carry the token; not built yet.
+
 - The approval card for `GMAIL_SEND_DRAFT` cannot name the recipients (the
   input has only the draft id) and says "to the recipients saved in it". The
   core should fill them in from the run's earlier `GMAIL_CREATE_EMAIL_DRAFT`

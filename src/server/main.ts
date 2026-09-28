@@ -8,7 +8,8 @@
 // shutdown), close the listener and the database, then exit; a second signal
 // exits at once.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRunTurn } from "../agent/run-turn.js";
 import { loadAgentEnv, withDotenvFile } from "../config/env.js";
@@ -16,6 +17,7 @@ import { createRedactor } from "../config/redact.js";
 import type { AgentEnv, ConfigProblem } from "../contracts/env.js";
 import { stateDirUsageBaselines } from "../db/usage-baseline.js";
 import { integrations } from "../integrations/registry.js";
+import { listeningLines } from "./app.js";
 import { type RunningServer, startServer } from "./runtime.js";
 
 /** Exit code for refused configuration (the CLI's CLI_EXIT_CODES.config). */
@@ -56,6 +58,9 @@ async function main(): Promise<void> {
   const redact = createRedactor(env);
   const version = readVersion();
   const catalog = integrations();
+  // dist/server/main.js serves dist/web; under tsx this resolves to src/web,
+  // which does not exist, and Vite serves the SPA instead.
+  const webRoot = fileURLToPath(new URL("../web", import.meta.url));
 
   let server: RunningServer;
   try {
@@ -67,16 +72,16 @@ async function main(): Promise<void> {
       redact,
       version,
       log,
-      // dist/server/main.js serves dist/web; under tsx this resolves to src/web,
-      // which does not exist, and Vite serves the SPA instead.
-      webRoot: fileURLToPath(new URL("../web", import.meta.url)),
+      webRoot,
     });
   } catch (error) {
     log(`Revenue Desk failed to start: ${redact(messageOf(error))}`);
     process.exit(1);
   }
 
-  log(`Revenue Desk listening on ${server.url}`);
+  for (const line of listeningLines(server.url, existsSync(join(webRoot, "index.html")))) {
+    log(line);
+  }
   if (env.runtime.sandbox) log("Local sandbox — no real services");
   if (env.model.apiKey === null) {
     log("ANTHROPIC_API_KEY is not set: runs will fail until it is configured.");

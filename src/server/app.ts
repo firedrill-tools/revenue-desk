@@ -33,6 +33,28 @@ export interface AppOptions {
   readonly api?: ApiServices;
 }
 
+/** Where Vite serves the app under `pnpm dev` (vite.config.ts). */
+export const DEV_APP_URL = "http://127.0.0.1:4321";
+
+/** The API port's only page without a built app: where the app is. */
+const DEV_HOME_PAGE = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Revenue Desk API</title></head>
+<body style="font: 15px/1.5 system-ui, sans-serif; margin: 3rem auto; max-width: 36rem; padding: 0 1rem">
+<h1 style="font-size: 1.25rem">This is Revenue Desk's API</h1>
+<p>Under <code>pnpm dev</code> the app runs on Vite: open <a href="${DEV_APP_URL}">${DEV_APP_URL}</a>.</p>
+<p>To serve the app from this port, run <code>pnpm build &amp;&amp; pnpm start</code>.</p>
+</body>
+</html>
+`;
+
+/** What the server says when it listens: where to open the app. */
+export function listeningLines(url: string, servesApp: boolean): string[] {
+  return servesApp
+    ? [`Revenue Desk listening on ${url}`]
+    : [`Revenue Desk API on ${url} — open the app at ${DEV_APP_URL} (Vite)`];
+}
+
 export function createApp(options: AppOptions): Hono {
   const app = new Hono();
   const { api } = options;
@@ -66,6 +88,9 @@ export function createApp(options: AppOptions): Hono {
     app.use("/*", serveStatic({ root: webRoot }));
     // Client-side routes fall back to the SPA entry point.
     app.get("/*", serveStatic({ root: webRoot, path: "index.html" }));
+  } else {
+    // Under `pnpm dev` Vite serves the app; this port answers only /api.
+    app.get("/", (c) => c.html(DEV_HOME_PAGE));
   }
 
   return app;

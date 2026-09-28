@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createApp } from "../../src/server/app.js";
+import { createApp, DEV_APP_URL, listeningLines } from "../../src/server/app.js";
 import { CONTENT_SECURITY_POLICY } from "../../src/server/security.js";
 
 describe("GET /api/health", () => {
@@ -45,5 +45,26 @@ describe("security headers", () => {
     } finally {
       rmSync(webRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the API port without a built app (pnpm dev)", () => {
+  it("answers / with a page pointing to the app on Vite", async () => {
+    const app = createApp({ version: "1.2.3" });
+    const response = await app.request("/");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toMatch(/^text\/html/);
+    const html = await response.text();
+    expect(html).toContain(`href="${DEV_APP_URL}"`);
+    expect(DEV_APP_URL).toBe("http://127.0.0.1:4321");
+  });
+
+  it("says at start where to open the app", () => {
+    expect(listeningLines("http://127.0.0.1:4320", false)).toEqual([
+      "Revenue Desk API on http://127.0.0.1:4320 — open the app at http://127.0.0.1:4321 (Vite)",
+    ]);
+    expect(listeningLines("http://127.0.0.1:4320", true)).toEqual([
+      "Revenue Desk listening on http://127.0.0.1:4320",
+    ]);
   });
 });
