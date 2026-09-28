@@ -77,7 +77,6 @@ describe("startServer", () => {
       runTurn: scriptedCore(heldScript().script).runTurn,
       integrations: integrations.definitions,
       redact: testRedact,
-      authorizeComposio: async () => ({ redirectUrl: "https://example.test" }),
       version: "9.9.9",
       log: (line) => logs.push(line),
     });
@@ -120,7 +119,6 @@ describe("startServer", () => {
       runTurn: core.runTurn,
       integrations: fakeIntegrations().definitions,
       redact: testRedact,
-      authorizeComposio: async () => ({ redirectUrl: "https://example.test" }),
       version: "9.9.9",
       log: () => {},
     });

@@ -197,7 +197,7 @@ describe("resolution and availability", () => {
       kind: "api",
       profile: "quickbooks-api",
       state: "not_configured",
-      detail: "Not configured: set QBO_ACCESS_TOKEN and QBO_REALM_ID.",
+      detail: "Not configured. Set QBO_ACCESS_TOKEN and QBO_REALM_ID.",
       endpointLabel: null,
       accountHint: null,
       missing: ["QBO_ACCESS_TOKEN", "QBO_REALM_ID"],
@@ -206,7 +206,7 @@ describe("resolution and availability", () => {
     const refused = statusFromResolution("slack", resolveAll(createIntegrations(), env).slack);
     expect(refused).toMatchObject({
       state: "invalid",
-      detail: "SLACK_BOT_TOKEN must be a bot token (xoxb-…)",
+      detail: "SLACK_BOT_TOKEN must be a bot token (xoxb-…).",
       missing: [],
     });
     expect(JSON.stringify(refused)).not.toContain("xoxp-not-a-bot");
@@ -265,7 +265,7 @@ describe("checking connections", () => {
       checkConnection(throwing, "stripe", env, new AbortController().signal, now),
     ).resolves.toMatchObject({
       state: "error",
-      detail: "Check failed: unexpected",
+      detail: "The check failed: unexpected",
       checkedAt: "2026-09-28T12:00:00.000Z",
     });
   });
@@ -342,7 +342,7 @@ describe("connectionSnapshot", () => {
         profile: "hubspot-mcp-0.4",
         availability: "unavailable",
         state: "not_configured",
-        detail: "Not configured: set HUBSPOT_ACCESS_TOKEN.",
+        detail: "Not configured. Set HUBSPOT_ACCESS_TOKEN.",
         endpointLabel: null,
       },
       {
@@ -360,7 +360,7 @@ describe("connectionSnapshot", () => {
         profile: "quickbooks-api",
         availability: "unavailable",
         state: "not_configured",
-        detail: "Not configured: set QBO_ACCESS_TOKEN and QBO_REALM_ID.",
+        detail: "Not configured. Set QBO_ACCESS_TOKEN and QBO_REALM_ID.",
         endpointLabel: null,
       },
       {
@@ -370,7 +370,7 @@ describe("connectionSnapshot", () => {
         availability: "unavailable",
         state: "invalid",
         detail:
-          "SLACK_API_BASE_URL must use https (plain http is accepted only for loopback hosts)",
+          "SLACK_API_BASE_URL must use https (plain http is accepted only for loopback hosts).",
         endpointLabel: null,
       },
     ]);

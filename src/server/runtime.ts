@@ -23,8 +23,7 @@ import { createApprovalGate } from "../policy/approvals.js";
 import { createApp } from "./app.js";
 import { createApprovalStore } from "./approval-store.js";
 import { ChatService } from "./chat-service.js";
-import { createComposioAuthorizer } from "./composio-connect.js";
-import { type ComposioAuthorizer, ConnectionService } from "./connections.js";
+import { ConnectionService } from "./connections.js";
 import { OrphanSweeper, type OrphanSweeperOptions } from "./orphans.js";
 import { describeError, type Redact } from "./redaction.js";
 import { RunRegistry } from "./run-registry.js";
@@ -44,8 +43,6 @@ export type ServerDependencies = {
   readonly integrations: readonly IntegrationDefinition[];
   /** Default: the redactor for the snapshot's secrets (src/config/redact.ts). */
   readonly redact?: Redact;
-  /** Default: Composio's hosted sign-in through ComposioSessionManager. */
-  readonly authorizeComposio?: ComposioAuthorizer;
   readonly version: string;
   readonly log?: (line: string) => void;
   readonly now?: () => Date;
@@ -77,7 +74,6 @@ export function createApiServices(
     db: deps.db,
     env: deps.env,
     integrations: deps.integrations,
-    authorizeComposio: deps.authorizeComposio ?? createComposioAuthorizer(),
     redact,
     now,
   });

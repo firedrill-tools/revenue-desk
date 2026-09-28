@@ -327,7 +327,7 @@ describe("connections", () => {
       kind: "composio",
       profile: "composio",
       missing: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
-      detail: "Not configured. Set COMPOSIO_API_KEY, COMPOSIO_USER_ID.",
+      detail: "Not configured. Set COMPOSIO_API_KEY and COMPOSIO_USER_ID.",
       endpointLabel: null,
     });
     expect(items[3]?.detail).toBe("STRIPE_SECRET_KEY: Live keys are refused.");
@@ -384,15 +384,19 @@ describe("connections", () => {
     expect((await check("salesforce")).status).toBe(404);
   });
 
-  it("starts Composio's sign-in with a callback on the server's own origin", async () => {
-    const calls: { toolkit: string; callbackUrl: string }[] = [];
+  it("starts Composio's sign-in through the integration's connector, with a callback on the server's own origin", async () => {
     const server = createTestServer({
-      integrations: { configuration: { gmail: "configured", stripe: "configured" } },
-      authorizeComposio: async (connection, callbackUrl) => {
-        calls.push({ toolkit: connection.composio.toolkit, callbackUrl });
-        return { redirectUrl: "https://connect.composio.test/link/abc" };
+      integrations: {
+        configuration: { gmail: "configured", stripe: "configured" },
+        authorize: async () => ({ redirectUrl: "https://connect.composio.test/link/abc" }),
       },
     });
+    const calls = server.integrations.authorizeCalls;
+    // Listing, checking and planning never start a sign-in: only the click does.
+    await server.request("GET", "/api/connections");
+    await server.request("POST", "/api/connections/gmail/check");
+    server.services.connections.plans();
+    expect(calls).toEqual([]);
     const response = await server.request(
       "POST",
       "/api/connections/gmail/connect",
@@ -420,9 +424,11 @@ describe("connections", () => {
 
   it("reports a failing Composio sign-in as 502 without the secret", async () => {
     const server = createTestServer({
-      integrations: { configuration: { google_calendar: "configured" } },
-      authorizeComposio: async () => {
-        throw new Error(`denied for key ${TEST_SECRET}`);
+      integrations: {
+        configuration: { google_calendar: "configured" },
+        authorize: async () => {
+          throw new Error(`denied for key ${TEST_SECRET}`);
+        },
       },
     });
     const response = await server.request("POST", "/api/connections/google_calendar/connect");

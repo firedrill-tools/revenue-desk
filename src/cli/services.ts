@@ -38,6 +38,7 @@ import {
   connectionSnapshot,
   integrations,
   type KnownConnection,
+  knownFromCheck,
 } from "../integrations/registry.js";
 import { titleFromPrompt } from "../server/chat-service.js";
 import { RunPersistence } from "../server/run-persistence.js";
@@ -76,10 +77,12 @@ export function createServices(options: ServiceOptions = {}): Promise<AskService
   return Promise.resolve(services);
 }
 
+/** The app's last checks; a stored configuration state is not a check. */
 function knownConnections(db: DbExecutor): { [I in IntegrationId]?: KnownConnection } {
   const known: { [I in IntegrationId]?: KnownConnection } = {};
   for (const [integration, row] of readConnectionRows(db)) {
-    known[integration] = { state: row.status, detail: row.statusDetail };
+    const check = knownFromCheck(row.status, row.statusDetail);
+    if (check !== undefined) known[integration] = check;
   }
   return known;
 }

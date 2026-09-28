@@ -41,6 +41,7 @@ import { QUICKBOOKS_PROFILE } from "./quickbooks/profile.js";
 import type { ApiIntegration } from "./shared/definition.js";
 import type { HttpDeps } from "./shared/http.js";
 import { specOf } from "./shared/profile.js";
+import { listOf, sentence } from "./shared/text.js";
 import { createSlackIntegration } from "./slack/definition.js";
 import { SLACK_PROFILE } from "./slack/profile.js";
 import { createStripeIntegration } from "./stripe/definition.js";
@@ -59,7 +60,24 @@ export type Integrations = {
   readonly slack: ApiIntegration<"slack">;
 };
 
-type DefinitionMap = { readonly [I in IntegrationId]: IntegrationDefinition<I> };
+/**
+ * One definition per integration, keyed by id: the production Integrations,
+ * or a test's fakes. Everything below reads definitions through it.
+ */
+export type IntegrationSet = { readonly [I in IntegrationId]: IntegrationDefinition<I> };
+
+/** The set of a list of definitions. Throws unless there is exactly one per integration. */
+export function integrationSet(list: readonly IntegrationDefinition[]): IntegrationSet {
+  const byId = new Map<IntegrationId, IntegrationDefinition>();
+  for (const definition of list) {
+    if (byId.has(definition.id))
+      throw new Error(`Two integration definitions for ${definition.id}`);
+    byId.set(definition.id, definition);
+  }
+  const missing = INTEGRATION_IDS.filter((id) => !byId.has(id));
+  if (missing.length > 0) throw new Error(`No integration definition for ${missing.join(", ")}`);
+  return Object.fromEntries(byId) as unknown as IntegrationSet;
+}
 
 /** Test seams; production passes nothing. */
 export type IntegrationDeps = {
@@ -89,7 +107,7 @@ export function integrations(): Integrations {
   return shared;
 }
 
-function definitions(set: Integrations): DefinitionMap {
+function definitions(set: IntegrationSet): IntegrationSet {
   return set;
 }
 
@@ -146,7 +164,7 @@ export function describeTool(sdkName: string): ToolDescriptor | null {
  * cannot judge the input. Both mean deny.
  */
 export function classifyCall(
-  set: Integrations,
+  set: IntegrationSet,
   sdkName: string,
   input: JsonObject,
   settings: ClassifierSettings,
@@ -160,7 +178,7 @@ export function classifyCall(
 }
 
 function classifyWith<I extends IntegrationId>(
-  set: Integrations,
+  set: IntegrationSet,
   id: I,
   tool: string,
   input: JsonObject,
@@ -177,7 +195,7 @@ function classifyWith<I extends IntegrationId>(
 export type Resolutions = { readonly [I in IntegrationId]: ConnectionResolution<I> };
 
 function resolveOne<I extends IntegrationId>(
-  set: Integrations,
+  set: IntegrationSet,
   id: I,
   env: AgentEnv,
 ): ConnectionResolution<I> {
@@ -186,7 +204,7 @@ function resolveOne<I extends IntegrationId>(
 }
 
 /** Every integration's resolution from the snapshot. Never contacts a system. */
-export function resolveAll(set: Integrations, env: AgentEnv): Resolutions {
+export function resolveAll(set: IntegrationSet, env: AgentEnv): Resolutions {
   return {
     gmail: resolveOne(set, "gmail", env),
     google_calendar: resolveOne(set, "google_calendar", env),
@@ -198,7 +216,7 @@ export function resolveAll(set: Integrations, env: AgentEnv): Resolutions {
 }
 
 /** The configured connections, in the fixed integration order. */
-export function available(set: Integrations, env: AgentEnv): readonly ResolvedConnection[] {
+export function available(set: IntegrationSet, env: AgentEnv): readonly ResolvedConnection[] {
   const resolutions: readonly ConnectionResolution[] = Object.values(resolveAll(set, env));
   return resolutions.flatMap((resolution) =>
     resolution.status === "configured" ? [resolution.connection] : [],
@@ -224,7 +242,7 @@ export function statusFromResolution(
       return {
         ...baseStatus(id),
         state: "unknown",
-        detail: "Configured; not checked yet.",
+        detail: "Not checked yet.",
         endpointLabel: resolution.connection.endpointLabel,
         accountHint: null,
         missing: [],
@@ -234,7 +252,7 @@ export function statusFromResolution(
       return {
         ...baseStatus(id),
         state: "not_configured",
-        detail: `Not configured: set ${resolution.missing.join(" and ")}.`,
+        detail: `Not configured. Set ${listOf(resolution.missing, resolution.missing.length)}.`,
         endpointLabel: null,
         accountHint: null,
         missing: [...resolution.missing],
@@ -244,7 +262,14 @@ export function statusFromResolution(
       return {
         ...baseStatus(id),
         state: "invalid",
-        detail: resolution.problems.map((problem) => problem.message).join("; "),
+        // Each problem names its variable (never its value).
+        detail: resolution.problems
+          .map((problem) =>
+            problem.message.includes(problem.variable)
+              ? sentence(problem.message)
+              : `${problem.variable}: ${sentence(problem.message)}`,
+          )
+          .join(" "),
         endpointLabel: null,
         accountHint: null,
         missing: [],
@@ -254,7 +279,7 @@ export function statusFromResolution(
 }
 
 async function probeOne<I extends IntegrationId>(
-  set: Integrations,
+  set: IntegrationSet,
   id: I,
   env: AgentEnv,
   signal: AbortSignal,
@@ -268,7 +293,7 @@ async function probeOne<I extends IntegrationId>(
     const message = error instanceof Error ? error.message : String(error);
     return {
       resolution,
-      probe: { state: "error", detail: `Check failed: ${message}`, accountHint: null },
+      probe: { state: "error", detail: `The check failed: ${message}`, accountHint: null },
     };
   }
 }
@@ -278,7 +303,7 @@ async function probeOne<I extends IntegrationId>(
  * probe. Never throws for a failed check: the status says what happened.
  */
 export async function checkConnection(
-  set: Integrations,
+  set: IntegrationSet,
   id: IntegrationId,
   env: AgentEnv,
   signal: AbortSignal,
@@ -298,7 +323,7 @@ export async function checkConnection(
 
 /** checkConnection for all six integrations, concurrently, in the fixed order. */
 export function checkConnections(
-  set: Integrations,
+  set: IntegrationSet,
   env: AgentEnv,
   signal: AbortSignal,
   now?: () => Date,
@@ -312,6 +337,22 @@ export function checkConnections(
 
 /** What is known about a connection from its last check (the connections table). */
 export type KnownConnection = Pick<ConnectionStatus, "state" | "detail">;
+
+/** States only a check (a probe) leaves; the others describe configuration. */
+export const CHECKED_STATES: ReadonlySet<ConnectionState> = new Set([
+  "connected",
+  "needs_auth",
+  "expired",
+  "error",
+]);
+
+/** A stored state as the last check's result, or undefined when no check produced it. */
+export function knownFromCheck(
+  state: ConnectionState,
+  detail: string,
+): KnownConnection | undefined {
+  return CHECKED_STATES.has(state) ? { state, detail } : undefined;
+}
 
 /** Probe states that make a configured integration unavailable for a run. */
 const UNAVAILABLE_AFTER_CHECK: ReadonlySet<ConnectionState> = new Set(["needs_auth", "expired"]);
@@ -331,7 +372,7 @@ export type ConnectionSnapshot = {
  * the gateway reports a failure to connect at run time.
  */
 export function connectionSnapshot(
-  set: Integrations,
+  set: IntegrationSet,
   env: AgentEnv,
   known: { readonly [I in IntegrationId]?: KnownConnection } = {},
 ): ConnectionSnapshot {

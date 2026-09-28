@@ -33,7 +33,6 @@ import type { JsonObject } from "../../../src/contracts/json.js";
 import type { RevenueDeskDatabase } from "../../../src/db/client.js";
 import { USER_DENIAL_REASON } from "../../../src/policy/approvals.js";
 import { createApp } from "../../../src/server/app.js";
-import type { ComposioAuthorizer } from "../../../src/server/connections.js";
 import type { Redact } from "../../../src/server/redaction.js";
 import {
   createApiServices,
@@ -140,11 +139,19 @@ export const testRedact: Redact = (text) =>
 
 export type FakeConfiguration = "configured" | "not_configured" | "invalid";
 
+/** Composio's hosted sign-in, as a fake connector's authorize(). */
+export type FakeAuthorize = (
+  toolkit: string,
+  callbackUrl: string,
+) => Promise<{ readonly redirectUrl: string }>;
+
 export type FakeIntegrationOptions = {
   /** Default: not_configured. */
   readonly configuration?: Partial<Record<IntegrationId, FakeConfiguration>>;
   /** Default: connected. An Error makes the probe throw. */
   readonly probes?: Partial<Record<IntegrationId, ProbeResult | Error>>;
+  /** The Composio integrations' connector.authorize (Connect). Default: throws, unexpected. */
+  readonly authorize?: FakeAuthorize;
 };
 
 export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<I> } = {
@@ -225,10 +232,20 @@ export type FakeIntegrations = {
   readonly definitions: readonly IntegrationDefinition[];
   /** How many times each probe ran. */
   readonly probeCalls: Map<IntegrationId, number>;
+  /** Every Connect link asked of a connector. */
+  readonly authorizeCalls: { readonly toolkit: string; readonly callbackUrl: string }[];
 };
 
 export function fakeIntegrations(options: FakeIntegrationOptions = {}): FakeIntegrations {
   const probeCalls = new Map<IntegrationId, number>();
+  const authorizeCalls: { toolkit: string; callbackUrl: string }[] = [];
+  const connector = () => ({
+    async authorize(toolkit: string, callbackUrl: string) {
+      authorizeCalls.push({ toolkit, callbackUrl });
+      if (options.authorize === undefined) throw new Error("Connect was not expected in this test");
+      return options.authorize(toolkit, callbackUrl);
+    },
+  });
   const definition = <I extends IntegrationId>(id: I): IntegrationDefinition<I> => ({
     id,
     label: INTEGRATIONS[id].label,
@@ -261,8 +278,13 @@ export function fakeIntegrations(options: FakeIntegrationOptions = {}): FakeInte
     },
   });
   return {
-    definitions: INTEGRATION_IDS.map((id) => definition(id) as IntegrationDefinition),
+    definitions: INTEGRATION_IDS.map((id) => {
+      const fake = definition(id) as IntegrationDefinition;
+      // Gmail and Calendar connect through their connector, as ComposioIntegration does.
+      return INTEGRATIONS[id].kind === "composio" ? Object.assign(fake, { connector }) : fake;
+    }),
     probeCalls,
+    authorizeCalls,
   };
 }
 
@@ -567,7 +589,6 @@ export type TestServerOptions = {
   readonly runTurn?: RunTurn;
   readonly integrations?: FakeIntegrationOptions;
   readonly runtime?: Partial<AgentEnv["runtime"]>;
-  readonly authorizeComposio?: ComposioAuthorizer;
   readonly maxConcurrentRuns?: number;
   readonly stopGraceMs?: number;
   readonly stateDir?: string;
@@ -610,11 +631,6 @@ export function createTestServer(options: TestServerOptions = {}): TestServer {
     runTurn,
     integrations: integrations.definitions,
     redact: testRedact,
-    authorizeComposio:
-      options.authorizeComposio ??
-      (async () => {
-        throw new Error("Connect was not expected in this test");
-      }),
     version: "0.0.0-test",
     log: (line) => logs.push(line),
     ...(options.maxConcurrentRuns === undefined
