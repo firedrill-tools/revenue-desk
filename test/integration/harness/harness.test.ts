@@ -77,7 +77,8 @@ describe("harness servers", () => {
     open.push(harness);
     const health = await fetch(`${harness.url}/api/health`);
     expect(await health.json()).toMatchObject({ status: "ok", service: "revenue-desk" });
-    expect(harness.serverLog()).toContain(`listening on ${harness.url}`);
+    // From source the API port serves no app: it says where the app is.
+    expect(harness.serverLog()).toContain(`Revenue Desk API on ${harness.url} — open the app at`);
     expect(["applied", "unsupported"]).toContain(harness.workspace);
     await harness.close();
     open.splice(0);

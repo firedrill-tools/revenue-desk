@@ -27,7 +27,10 @@ describe("dev:sandbox", () => {
       expect(harness.env.ANTHROPIC_BASE_URL).toBe(harness.model?.url);
       const health = await fetch(`http://127.0.0.1:${apiPort}/api/health`);
       expect(health.ok).toBe(true);
-      expect(output.join("")).toContain("listening");
+      // From source the API port serves no app: it says where the app is.
+      expect(output.join("")).toContain(
+        `Revenue Desk API on http://127.0.0.1:${apiPort} — open the app at`,
+      );
       expect(output.join("")).toContain("Local sandbox — no real services");
       // The full API is wired into src/server/main.ts: the workspace settings were applied.
       expect(harness.workspace).toBe("applied");
