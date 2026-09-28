@@ -59,7 +59,7 @@ function ModelLabel() {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="inline-flex cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 font-medium text-meta text-warning">
+          <span className="hidden cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 font-medium text-meta text-warning sm:inline-flex">
             <StatusDot tone="warning" />
             No model key
           </span>

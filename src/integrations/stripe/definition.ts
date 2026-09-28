@@ -49,7 +49,7 @@ export async function probeStripe(
       accountHint: null,
     };
   } catch (error) {
-    return probeFailure("Stripe", error, STRIPE_CREDENTIAL);
+    return probeFailure(INTEGRATIONS.stripe.label, error, STRIPE_CREDENTIAL);
   }
 }
 

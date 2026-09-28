@@ -50,7 +50,7 @@ export async function probeSlack(
       accountHint: teamId === undefined ? null : maskIdentifier(teamId),
     };
   } catch (error) {
-    return probeFailure("Slack", error, {
+    return probeFailure(INTEGRATIONS.slack.label, error, {
       ...SLACK_CALL_CREDENTIAL_RULES,
       rejected: (failure) =>
         failure.status === 401 ||

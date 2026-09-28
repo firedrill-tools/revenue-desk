@@ -78,7 +78,7 @@ test("every connection state reads plainly: connected, sign-in, not configured, 
   const quickbooks = connection(page, "QuickBooks Online", phone);
   await expect(quickbooks).toContainText("Error");
   // A plain sentence with the next step, then QuickBooks' own words.
-  await expect(quickbooks).toContainText("QuickBooks did not answer the check");
+  await expect(quickbooks).toContainText("QuickBooks Online did not answer the check");
   await expect(quickbooks).toContainText("Try Check again later.");
 
   // The three connection kinds are explained on the page.

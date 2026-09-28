@@ -12,11 +12,19 @@ import { type Resource, useResource } from "./use-resource";
 // Resource hooks for the screens. Each reloads when its topic is invalidated
 // (hooks/use-resource.ts) and polls only while something is in flight.
 
+/** While a configured integration has not been checked yet (the server's boot checks), poll often. */
+const UNCHECKED_POLL_MS = 2_000;
+
 export function useConnections(): Resource<readonly ConnectionView[]> {
   return useResource(
     "connections",
     async (signal) => (await api.request("GET /api/connections", { signal })).items,
-    { topics: ["connections"], pollMs: 60_000 },
+    {
+      topics: ["connections"],
+      // Every view of the connections (app bar, empty chat, Connections) settles on the checks.
+      pollMs: (items) =>
+        items?.some((item) => item.state === "unknown") ? UNCHECKED_POLL_MS : 60_000,
+    },
   );
 }
 

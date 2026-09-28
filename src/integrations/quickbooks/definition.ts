@@ -50,7 +50,7 @@ export async function probeQuickBooks(
       accountHint: maskIdentifier(connection.api.realmId),
     };
   } catch (error) {
-    return probeFailure("QuickBooks", error, QUICKBOOKS_CREDENTIAL_RULES);
+    return probeFailure(INTEGRATIONS.quickbooks.label, error, QUICKBOOKS_CREDENTIAL_RULES);
   }
 }
 
