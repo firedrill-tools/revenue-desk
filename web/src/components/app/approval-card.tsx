@@ -1,5 +1,6 @@
 import type { DynamicToolUIPart } from "ai";
 import { useId, useState } from "react";
+import { Link } from "@/app/router";
 import {
   Confirmation,
   ConfirmationAccepted,
@@ -71,6 +72,24 @@ function Expiry({ expiresAt }: { expiresAt: string }) {
       {remaining === 0 ? "Expiring" : `Expires in ${formatCountdown(remaining)}`}
     </span>
   );
+}
+
+/**
+ * The policy's reason in plain words. The server's text is written for the
+ * model ("Blocked by policy: … The action was not run; do not retry it."),
+ * so the prefix and the instruction to the model are left out.
+ */
+export function plainBlockedReason(reason: string | null): string {
+  const fallback = "The workspace's approval policy does not allow this action.";
+  if (reason === null || reason.trim() === "") return fallback;
+  const stripped = reason.replace(/^\s*Blocked by policy:\s*/i, "").trim();
+  const plain = stripped
+    .split(/(?<=[.;])\s+/)
+    .filter((sentence) => !/\bretry\b/i.test(sentence) && !/was not run/i.test(sentence))
+    .join(" ")
+    .trim()
+    .replace(/;$/, ".");
+  return plain === "" ? fallback : plain;
 }
 
 export type ApprovalCardProps = {
@@ -230,16 +249,27 @@ export function ApprovalCard({
       </ConfirmationAccepted>
       <ConfirmationRejected>
         <StatusDot tone={APPROVAL_STATE_LABELS[approval.state].tone} className="mt-[5px]" />
-        <p className="min-w-0 text-muted-foreground">
-          <span className="font-medium text-foreground">
-            {APPROVAL_STATE_LABELS[approval.state].label}
-          </span>
-          <span aria-hidden="true"> · </span>
-          {facts.consequence}
-          {approval.reason && approval.reason !== facts.consequence ? (
-            <span className="mt-0.5 block text-meta">{approval.reason}</span>
-          ) : null}
-        </p>
+        {approval.state === "blocked" ? (
+          <p className="min-w-0 text-muted-foreground">
+            <span className="font-medium text-foreground">Blocked by policy</span>
+            <span aria-hidden="true"> · </span>
+            {plainBlockedReason(approval.reason ?? facts.consequence)}{" "}
+            <Link href="/settings" className="whitespace-nowrap">
+              Review the policy
+            </Link>
+          </p>
+        ) : (
+          <p className="min-w-0 text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {APPROVAL_STATE_LABELS[approval.state].label}
+            </span>
+            <span aria-hidden="true"> · </span>
+            {facts.consequence}
+            {approval.reason && approval.reason !== facts.consequence ? (
+              <span className="mt-0.5 block text-meta">{approval.reason}</span>
+            ) : null}
+          </p>
+        )}
       </ConfirmationRejected>
     </Confirmation>
   );
