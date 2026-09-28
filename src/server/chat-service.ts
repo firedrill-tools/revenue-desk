@@ -14,11 +14,10 @@ import { insertRun, runningRunOf } from "../db/repos/runs.js";
 import type { DbExecutor } from "../db/repos/types.js";
 import type { ApprovalGateController } from "../policy/approvals.js";
 import type { ConnectionService } from "./connections.js";
+import { titleFromMessage } from "./conversation-title.js";
 import type { OrphanSweeper } from "./orphans.js";
 import { prepareRunContext } from "./run-context.js";
 import type { ActiveRun, RunRegistry } from "./run-registry.js";
-
-export const MAX_TITLE_FROM_PROMPT = 80;
 
 export type UserTurn = {
   /** The client's UIMessage id. */
@@ -125,7 +124,8 @@ export class ChatService {
         parts: turn.texts.map((text) => ({ type: "text", text })),
         now,
       });
-      nameConversationIfBlank(tx, conversationId, titleFromPrompt(prompt), now);
+      // A title the client gave (a suggestion's) stays; otherwise the message names the chat.
+      nameConversationIfBlank(tx, conversationId, titleFromMessage(prompt), now);
       setConversationStatus(tx, conversationId, "running", now);
     });
 
@@ -154,16 +154,4 @@ export class ChatService {
     });
     return { ok: true, run };
   }
-}
-
-/** The first line of the prompt, whitespace collapsed, at most 80 characters. */
-export function titleFromPrompt(prompt: string): string {
-  const firstLine = prompt.split(/\r?\n/).find((line) => line.trim() !== "") ?? "";
-  const collapsed = firstLine.replace(/\s+/g, " ").trim();
-  const characters = [...collapsed];
-  if (characters.length <= MAX_TITLE_FROM_PROMPT) return collapsed;
-  return `${characters
-    .slice(0, MAX_TITLE_FROM_PROMPT - 1)
-    .join("")
-    .trimEnd()}…`;
 }

@@ -40,7 +40,7 @@ import {
   type KnownConnection,
   knownFromCheck,
 } from "../integrations/registry.js";
-import { titleFromPrompt } from "../server/chat-service.js";
+import { titleFromMessage } from "../server/conversation-title.js";
 import { RunPersistence } from "../server/run-persistence.js";
 import type { AskServices, CliWorkspace, ConversationRecord, RunRecorder } from "./ports.js";
 import { packageVersion } from "./version.js";
@@ -168,7 +168,7 @@ function openCliWorkspace(
           nameConversationIfBlank(
             tx,
             input.conversationId,
-            titleFromPrompt(input.prompt),
+            titleFromMessage(input.prompt),
             startedAt,
           );
           setConversationStatus(tx, input.conversationId, "running", startedAt);

@@ -16,6 +16,7 @@ import {
 } from "../../db/repos/conversations.js";
 import { listMessages } from "../../db/repos/messages.js";
 import { decodeCursor, MAX_PAGE_LIMIT } from "../../db/repos/pagination.js";
+import { normalizeTitle } from "../conversation-title.js";
 import { apiError, parseJsonBody, parseQuery } from "../http.js";
 import type { ApiServices } from "../services.js";
 
@@ -23,7 +24,8 @@ const booleanParam = z
   .enum(["true", "false", "1", "0"])
   .transform((v) => v === "true" || v === "1");
 const limitParam = z.coerce.number().int().min(1).max(MAX_PAGE_LIMIT);
-const title = z.string().trim().max(MAX_TITLE_LENGTH);
+/** A title as given (a suggestion's, a rename), whitespace collapsed. */
+const title = z.string().transform(normalizeTitle).pipe(z.string().max(MAX_TITLE_LENGTH));
 
 const listQuery = z.object({
   q: z.string().max(200).optional(),

@@ -110,11 +110,13 @@ describe("conversationTitle", () => {
     );
   });
 
-  it("shortens long prompts to 80 characters with an ellipsis", () => {
+  it("names the conversation as the app does: the first sentence, whole words, about 60 characters", () => {
     const title = conversationTitle(`${"refund ".repeat(30)}now`);
-    expect([...title]).toHaveLength(80);
-    expect(title.endsWith("…")).toBe(true);
-    expect(title.startsWith("refund refund")).toBe(true);
+    expect([...title].length).toBeLessThanOrEqual(60);
+    expect(title).toMatch(/^(refund )+refund…$/);
+    expect(conversationTitle("Chase overdue invoices. Then post to #billing.")).toBe(
+      "Chase overdue invoices",
+    );
   });
 });
 

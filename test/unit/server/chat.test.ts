@@ -273,7 +273,7 @@ describe("POST /api/chat: the refund turn", () => {
     });
     expect(getConversation(db, conversationId)).toMatchObject({
       status: "idle",
-      title: "Refund Kestrel's duplicate charge, please.",
+      title: "Refund Kestrel's duplicate charge, please",
       sdkSessionId: "sess_refund",
       totalCostUsd: 0.0123,
       inputTokens: 1200,
@@ -894,18 +894,37 @@ describe("the agent core's input and its failures", () => {
     });
   });
 
-  it("names a conversation after its first message", async () => {
+  it("names a conversation after the first sentence of its first message, in whole words", async () => {
     const server = createTestServer({ script: answerScript });
     const conversationId = await server.createConversation();
     await sendTurn(
       server,
       conversationId,
-      `\n\n  ${"Why was Kestrel charged twice ".repeat(4)}\nsecond line`,
+      "\n\n  Dana Whitfield from Harbor & Pine says they were charged twice in September. Look into it and reply to her.",
     );
     await activeRunDone(server);
-    const title = getConversation(server.services.db, conversationId)?.title ?? "";
-    expect([...title]).toHaveLength(80);
-    expect(title.endsWith("…")).toBe(true);
-    expect(title.startsWith("Why was Kestrel charged twice")).toBe(true);
+    expect(getConversation(server.services.db, conversationId)?.title).toBe(
+      "Dana Whitfield from Harbor & Pine says they were charged…",
+    );
+    // Later messages never rename it.
+    await sendTurn(server, conversationId, "Now refund the duplicate.");
+    await activeRunDone(server);
+    expect(getConversation(server.services.db, conversationId)?.title).toBe(
+      "Dana Whitfield from Harbor & Pine says they were charged…",
+    );
+  });
+
+  it("keeps the title the client gave, e.g. a suggestion's, over one derived from the message", async () => {
+    const server = createTestServer({ script: answerScript });
+    const conversationId = await server.createConversation("  Answer a\nbilling inquiry ");
+    await sendTurn(
+      server,
+      conversationId,
+      "Find the most recent customer email with a billing question, look the customer up in Stripe, QuickBooks and HubSpot, and draft a reply in Gmail.",
+    );
+    await activeRunDone(server);
+    expect(getConversation(server.services.db, conversationId)?.title).toBe(
+      "Answer a billing inquiry",
+    );
   });
 });

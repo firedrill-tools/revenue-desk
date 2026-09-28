@@ -47,22 +47,8 @@ export function modelSettings(
   });
 }
 
-const TITLE_LIMIT = 80;
-
-/** A conversation title from the prompt's first non-empty line. */
-export function conversationTitle(prompt: string): string {
-  const line =
-    prompt
-      .split(/\r?\n/)
-      .map((candidate) => candidate.replace(/\s+/g, " ").trim())
-      .find((candidate) => candidate !== "") ?? "";
-  const characters = [...line];
-  if (characters.length <= TITLE_LIMIT) return line;
-  return `${characters
-    .slice(0, TITLE_LIMIT - 1)
-    .join("")
-    .trimEnd()}…`;
-}
+/** A conversation title from the prompt, as the app derives one. */
+export { titleFromMessage as conversationTitle } from "../server/conversation-title.js";
 
 /** What the run will report about each integration before the core says otherwise. */
 export function plannedConnections(plans: readonly ConnectionPlan[]): RunConnection[] {
