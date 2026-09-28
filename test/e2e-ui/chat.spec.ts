@@ -79,6 +79,10 @@ test.describe("Revenue Desk in the sandbox", () => {
     });
     await expect(page.getByRole("region", { name: APPROVAL })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+    // After the answer's actions, one line says how the run ended, how long it took and its cost.
+    await expect(page.locator('[data-slot="run-facts"]').last()).toHaveText(
+      /^Stopped\s*·\s*[\d.]+\s?m?s · (<)?\$[\d.]+$/,
+    );
   });
 
   test("a suggestion names the conversation after its job", async ({ page }, testInfo) => {

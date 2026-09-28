@@ -217,9 +217,13 @@ export function ConversationRail({
         {error ? (
           <div className="px-4.5 py-3 text-body-sm text-muted-foreground">
             <p>Conversations did not load.</p>
-            <Button variant="link" className="h-auto px-0 text-brand" onClick={reload}>
+            <button
+              type="button"
+              onClick={reload}
+              className="rd-hit relative mt-1 font-medium text-body-sm text-brand hover:underline"
+            >
               Try again
-            </Button>
+            </button>
           </div>
         ) : null}
         {data && data.items.length === 0 ? (

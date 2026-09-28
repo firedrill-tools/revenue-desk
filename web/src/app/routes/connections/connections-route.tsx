@@ -190,23 +190,28 @@ function ConnectionsList({
           {connection.detail && connection.state !== "connected" ? (
             <p className="text-body-sm text-muted-foreground">{connection.detail}</p>
           ) : null}
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-meta">
-            <dt className="text-muted-foreground">Endpoint</dt>
-            <dd className="min-w-0 break-all font-mono">{connection.endpointLabel ?? "–"}</dd>
-            <dt className="text-muted-foreground">Checked</dt>
-            <dd>
-              <LastChecked iso={connection.checkedAt} />
-            </dd>
-            {connection.missing.length > 0 ? (
-              <>
-                <dt className="text-muted-foreground">Missing</dt>
-                <dd>
-                  <Missing connection={connection} />
-                </dd>
-              </>
-            ) : null}
-          </dl>
-          <Actions connection={connection} actions={actions} />
+          {/* The actions sit beside the facts when they fit, so each item is a line shorter. */}
+          <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2.5">
+            <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-meta">
+              <dt className="text-muted-foreground">Endpoint</dt>
+              <dd className="min-w-0 break-all font-mono">{connection.endpointLabel ?? "–"}</dd>
+              <dt className="text-muted-foreground">Checked</dt>
+              <dd>
+                <LastChecked iso={connection.checkedAt} />
+              </dd>
+              {connection.missing.length > 0 ? (
+                <>
+                  <dt className="text-muted-foreground">Missing</dt>
+                  <dd>
+                    <Missing connection={connection} />
+                  </dd>
+                </>
+              ) : null}
+            </dl>
+            <div className="ml-auto">
+              <Actions connection={connection} actions={actions} />
+            </div>
+          </div>
         </li>
       ))}
     </ul>

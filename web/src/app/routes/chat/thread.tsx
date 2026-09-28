@@ -128,37 +128,48 @@ function AssistantFooter({
     usage ? formatCost(usage.costUsd) : "",
   ].filter((fact) => fact !== "");
 
+  const showStatus = status !== undefined && status !== "completed" && status !== "running";
+
+  // Actions first, then one quiet line of facts: "Stopped · 477 ms · <$0.01".
   return (
-    <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1">
-      {status && status !== "completed" && status !== "running" ? (
-        <span className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">
-          <StatusDot tone={RUN_STATUS_LABELS[status].tone} />
-          {RUN_STATUS_LABELS[status].label}
-          {status === "failed" && run?.error ? (
-            <span className="text-danger">{run.error.message}</span>
+    <div className="space-y-1">
+      {status === "failed" && run?.error ? (
+        <p className="text-body-sm text-danger">{run.error.message}</p>
+      ) : null}
+      <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1">
+        <MessageActions className="-ml-1.5 gap-0.5">
+          {text !== "" ? <CopyAction text={text} /> : null}
+          {runId ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href={runHref(runId)}
+                  aria-label="Open run"
+                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground pointer-coarse:size-11"
+                >
+                  <ReceiptTextIcon className="size-3.5" />
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent>Open run</TooltipContent>
+            </Tooltip>
           ) : null}
-        </span>
-      ) : null}
-      <MessageActions className="-ml-1.5 gap-0.5">
-        {text !== "" ? <CopyAction text={text} /> : null}
-        {runId ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Link
-                href={runHref(runId)}
-                aria-label="Open run"
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground pointer-coarse:size-11"
-              >
-                <ReceiptTextIcon className="size-3.5" />
-              </Link>
-            </TooltipTrigger>
-            <TooltipContent>Open run</TooltipContent>
-          </Tooltip>
+        </MessageActions>
+        {showStatus || facts.length > 0 ? (
+          <span
+            data-slot="run-facts"
+            className="inline-flex flex-wrap items-center gap-x-1.5 text-meta text-muted-foreground tabular-nums"
+          >
+            {showStatus ? (
+              <>
+                <StatusDot tone={RUN_STATUS_LABELS[status].tone} />
+                <span className="text-foreground">{RUN_STATUS_LABELS[status].label}</span>
+                {facts.length > 0 ? <span aria-hidden="true">·</span> : null}
+              </>
+            ) : null}
+            {facts.length > 0 ? <span>{facts.join(" · ")}</span> : null}
+          </span>
         ) : null}
-      </MessageActions>
-      {facts.length > 0 ? (
-        <span className="text-meta text-muted-foreground tabular-nums">{facts.join(" · ")}</span>
-      ) : null}
+      </div>
     </div>
   );
 }

@@ -135,7 +135,8 @@ export function Composer({
             status={submitStatus}
             disabled={!canSend}
             aria-label="Send"
-            className="size-8 rounded-lg"
+            // Idle, it is a quiet tile rather than a greyed-out ink button.
+            className="size-8 rounded-lg disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
           >
             {busy ? (
               <Spinner aria-hidden="true" className="size-4" />
