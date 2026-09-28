@@ -716,14 +716,9 @@ class StopReading extends Error {
   }
 }
 
-describe("runTurn without a model key", () => {
-  it("fails with config_missing before starting the SDK", async () => {
-    const state = tempStateDir();
-    cleanups.push(state.cleanup);
-    const runTurn = createRunTurn({ catalog: testCatalog() });
-    const env = testEnv({ AGENT_STATE_DIR: state.dir });
-    const events: AgentEvent[] = [];
-    for await (const event of runTurn({
+describe("runTurn that ends before the SDK starts", () => {
+  function headlessInput(env: ReturnType<typeof testEnv>, signal: AbortSignal): RunTurnInput {
+    return {
       runId: "run_x",
       conversationId: "conv_x",
       source: "cli",
@@ -740,16 +735,45 @@ describe("runTurn without a model key", () => {
       settings: TEST_SETTINGS,
       policy: DEFAULT_POLICY,
       businessDate: BUSINESS_DATE,
-      connections: plansWith([]),
-      signal: new AbortController().signal,
+      connections: plansWith([
+        { integration: "stripe", status: "available", connection: stripeConnection() },
+      ]),
+      signal,
       mode: "headless",
-    })) {
-      events.push(event);
-    }
+    };
+  }
+
+  async function collectRun(input: RunTurnInput): Promise<AgentEvent[]> {
+    const events: AgentEvent[] = [];
+    for await (const event of createRunTurn({ catalog: testCatalog() })(input)) events.push(event);
+    return events;
+  }
+
+  it("fails with config_missing when there is no model key", async () => {
+    const state = tempStateDir();
+    cleanups.push(state.cleanup);
+    const events = await collectRun(
+      headlessInput(testEnv({ AGENT_STATE_DIR: state.dir }), new AbortController().signal),
+    );
     expect(events.map((event) => event.type)).toEqual(["run.started", "run.finished"]);
     expect(finished(events)).toMatchObject({
       status: "failed",
       error: { code: "config_missing", message: "ANTHROPIC_API_KEY is not set." },
+    });
+  });
+
+  it("is cancelled or timed out when its signal was already aborted", async () => {
+    const state = tempStateDir();
+    cleanups.push(state.cleanup);
+    const env = testEnv({ AGENT_STATE_DIR: state.dir, ANTHROPIC_API_KEY: KEY });
+    const cancelled = await collectRun(headlessInput(env, AbortSignal.abort("shutdown")));
+    expect(cancelled.map((event) => event.type)).toEqual(["run.started", "run.finished"]);
+    expect(finished(cancelled)).toMatchObject({ status: "cancelled", stopReason: "shutdown" });
+    const timedOut = await collectRun(headlessInput(env, AbortSignal.abort("timeout")));
+    expect(finished(timedOut)).toMatchObject({
+      status: "timed_out",
+      stopReason: "timeout",
+      error: { code: "timeout" },
     });
   });
 });
