@@ -339,7 +339,7 @@ describe("runTurn on the real Claude Agent SDK", () => {
       });
 
       const system = systemText(a.mainBodies()[0] as MessagesBody);
-      expect(system).toContain("Today's business date is 2026-09-28");
+      expect(system).toContain("Today's business date is Monday, 2026-09-28");
       expect(system).toContain("Company: Kestrel Analytics");
       expect(system).not.toContain("mcp__");
       expect(strayTraffic(a.mock.requests)).toEqual([]);
