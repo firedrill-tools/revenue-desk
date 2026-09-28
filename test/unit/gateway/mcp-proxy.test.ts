@@ -67,16 +67,21 @@ describe("connectUpstream", () => {
     expect(upstream.unauthorized).toBe(0);
   });
 
-  it("fails clearly when the HTTP upstream refuses the token", async () => {
+  it("fails clearly when the HTTP upstream refuses the token, keeping the HTTP status", async () => {
     const upstream = await startHttpUpstream({ token: TOKEN, tools: MAIL_TOOLS });
     cleanups.push(() => upstream.close());
-    await expect(
-      connectUpstream({
-        transport: "http",
-        url: upstream.url,
-        headers: { Authorization: "Bearer no" },
-      }),
-    ).rejects.toThrow(/could not connect to the http MCP server/);
+    const failure = await connectUpstream({
+      transport: "http",
+      url: upstream.url,
+      headers: { Authorization: "Bearer no" },
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/could not connect to the http MCP server/);
+    // The transport's error stays reachable, with its status (401).
+    expect(JSON.stringify((failure as Error).cause, ["code"])).toContain("401");
     expect(upstream.unauthorized).toBeGreaterThan(0);
   });
 

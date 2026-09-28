@@ -118,8 +118,11 @@ export const connectUpstream: UpstreamConnector = async (config, options = {}) =
     await client.close().catch(() => {});
     const detail = stderr().trim();
     const message = error instanceof Error ? error.message : String(error);
+    // The cause keeps the transport's error (a StreamableHTTPError carries the
+    // HTTP status, so a refused token reads as needs_auth, not a generic error).
     throw new Error(
       `could not connect to the ${config.transport} MCP server: ${message}${detail ? `\n${detail}` : ""}`,
+      { cause: error },
     );
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
