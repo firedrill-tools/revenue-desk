@@ -110,7 +110,7 @@ export function Composer({
         placeholder={placeholder}
         aria-label="Message Revenue Desk"
         autoFocus={autoFocus}
-        className="min-h-[52px] px-3.5 pt-3 text-base placeholder:text-muted-foreground/80 md:text-body"
+        className="min-h-[52px] px-3.5 pt-3 text-base placeholder:text-muted-foreground md:text-body"
       />
       <PromptInputFooter className="px-2 pb-2">
         <PromptInputTools>
