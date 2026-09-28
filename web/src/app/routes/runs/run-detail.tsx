@@ -250,9 +250,19 @@ function DetailSkeleton() {
   );
 }
 
-export function RunDetailSheet({ runId, onClose }: { runId: string | null; onClose: () => void }) {
+export function RunDetailSheet({
+  runId,
+  titles,
+  onClose,
+}: {
+  runId: string | null;
+  /** Conversation titles by id: the sheet is named after what the run was about. */
+  titles?: ReadonlyMap<string, string>;
+  onClose: () => void;
+}) {
   const phone = useMediaQuery(PHONE_QUERY);
   const { data: run, error, loading, reload } = useRunDetail(runId);
+  const title = run ? titles?.get(run.conversationId) : undefined;
 
   return (
     <Sheet open={runId !== null} onOpenChange={(open) => (open ? undefined : onClose())}>
@@ -266,29 +276,34 @@ export function RunDetailSheet({ runId, onClose }: { runId: string | null; onClo
         }
       >
         <div className="border-b px-5 pt-4 pb-3.5 pr-12">
-          <SheetTitle className="flex flex-wrap items-center gap-x-2.5 gap-y-1 font-semibold text-base">
-            Run
-            {runId ? (
-              <span className="font-mono font-normal text-meta text-muted-foreground">
-                {shortId(runId, 12)}
-              </span>
-            ) : null}
-            {run ? (
-              <StatusText
-                status={RUN_STATUS_LABELS[run.status]}
-                className="font-normal text-body-sm"
-              />
-            ) : null}
+          <SheetTitle className="flex min-w-0 items-center gap-2.5 font-semibold text-base">
+            {title ? (
+              <>
+                <span className="sr-only">Run: </span>
+                <span className="truncate">{title}</span>
+              </>
+            ) : (
+              <>
+                Run
+                {runId ? (
+                  <span className="font-mono font-normal text-meta text-muted-foreground">
+                    {shortId(runId, 12)}
+                  </span>
+                ) : null}
+              </>
+            )}
           </SheetTitle>
-          <SheetDescription className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta">
+          <SheetDescription className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta">
             {run ? (
               <>
+                <StatusText status={RUN_STATUS_LABELS[run.status]} className="text-foreground" />
+                <span aria-hidden="true">·</span>
                 <span>{formatDateTime(run.startedAt)}</span>
                 <span aria-hidden="true">·</span>
                 <span className="font-mono">
                   {run.model} / {run.effort}
                 </span>
-                <MetaChip>{run.source === "cli" ? "CLI" : "App"}</MetaChip>
+                {run.source === "cli" ? <MetaChip>CLI</MetaChip> : null}
                 {run.mode === "headless" ? <MetaChip>Headless</MetaChip> : null}
                 <Link
                   href={chatHref(run.conversationId)}

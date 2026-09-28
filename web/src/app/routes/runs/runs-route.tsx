@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { navigate } from "@/app/router";
 import { ErrorState, Page, PageHeader, Panel } from "@/components/app/page";
 import { MetaChip, StatusText } from "@/components/app/status";
@@ -20,9 +20,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useConversations } from "@/hooks/use-api";
 import { useResource } from "@/hooks/use-resource";
 import { api, errorMessage } from "@/lib/api";
 import { RUN_STATUSES, type RunSource, type RunStatus, type RunSummaryView } from "@/lib/contracts";
+import { conversationTitle } from "@/lib/conversations";
 import { formatCost, formatDateTime, formatDuration, formatRelativeTime } from "@/lib/format";
 import { KIND_LABELS, KIND_ORDER, RUN_STATUS_LABELS } from "@/lib/labels";
 import { runHref } from "@/lib/routes";
@@ -81,11 +83,28 @@ function StartedCell({ iso }: { iso: string }) {
   );
 }
 
+/**
+ * Conversation titles by id, from the rail's list (the 100 most recent), so
+ * a run says what it was about. A run of an older or archived conversation
+ * has no title here and shows without one.
+ */
+export type RunTitles = ReadonlyMap<string, string>;
+
+export function useRunTitles(): RunTitles {
+  const { data } = useConversations("");
+  return useMemo(
+    () => new Map((data?.items ?? []).map((item) => [item.id, conversationTitle(item)])),
+    [data],
+  );
+}
+
 function RunsTable({
   runs,
+  titles,
   selectedId,
 }: {
   runs: readonly RunSummaryView[];
+  titles: RunTitles;
   selectedId: string | null;
 }) {
   return (
@@ -95,8 +114,10 @@ function RunsTable({
           <TableHead className="h-9 pl-4 font-medium text-meta text-muted-foreground">
             Started
           </TableHead>
+          <TableHead className="h-9 font-medium text-meta text-muted-foreground">
+            Conversation
+          </TableHead>
           <TableHead className="h-9 font-medium text-meta text-muted-foreground">Status</TableHead>
-          <TableHead className="h-9 font-medium text-meta text-muted-foreground">Source</TableHead>
           <TableHead className="h-9 font-medium text-meta text-muted-foreground">Model</TableHead>
           <TableHead className="h-9 text-right font-medium text-meta text-muted-foreground">
             Duration
@@ -132,11 +153,14 @@ function RunsTable({
                 <StartedCell iso={run.startedAt} />
               </a>
             </TableCell>
-            <TableCell>
-              <StatusText status={RUN_STATUS_LABELS[run.status]} />
+            <TableCell className="max-w-[16rem]">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate">{titles.get(run.conversationId) ?? "–"}</span>
+                {run.source === "cli" ? <MetaChip>CLI</MetaChip> : null}
+              </span>
             </TableCell>
             <TableCell>
-              {run.source === "cli" ? <MetaChip>CLI</MetaChip> : <MetaChip>App</MetaChip>}
+              <StatusText status={RUN_STATUS_LABELS[run.status]} />
             </TableCell>
             <TableCell className="font-mono text-meta text-muted-foreground">
               {run.model}
@@ -160,31 +184,45 @@ function RunsTable({
   );
 }
 
-function RunsList({ runs }: { runs: readonly RunSummaryView[] }) {
+function RunsList({ runs, titles }: { runs: readonly RunSummaryView[]; titles: RunTitles }) {
   return (
     <ul className="divide-y">
-      {runs.map((run) => (
-        <li key={run.id}>
-          <button
-            type="button"
-            onClick={() => navigate(runHref(run.id))}
-            className="flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors hover:bg-surface-subtle"
-          >
-            <span className="flex items-center justify-between gap-3">
-              <StatusText status={RUN_STATUS_LABELS[run.status]} className="text-body-sm" />
-              <span className="text-meta text-muted-foreground">
-                {formatRelativeTime(run.startedAt)}
+      {runs.map((run) => {
+        const title = titles.get(run.conversationId);
+        const status = (
+          <StatusText
+            status={RUN_STATUS_LABELS[run.status]}
+            className={title ? "text-meta" : "text-body-sm"}
+          />
+        );
+        return (
+          <li key={run.id}>
+            <button
+              type="button"
+              onClick={() => navigate(runHref(run.id))}
+              className="flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors hover:bg-surface-subtle"
+            >
+              <span className="flex items-baseline justify-between gap-3">
+                {title ? (
+                  <span className="min-w-0 truncate font-medium text-body-sm">{title}</span>
+                ) : (
+                  status
+                )}
+                <span className="shrink-0 text-meta text-muted-foreground">
+                  {formatRelativeTime(run.startedAt)}
+                </span>
               </span>
-            </span>
-            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground tabular-nums">
-              {run.source === "cli" ? <MetaChip>CLI</MetaChip> : null}
-              <span>{runDuration(run) || "–"}</span>
-              <span>{run.usage ? formatCost(run.usage.costUsd) : "–"}</span>
-              <ToolCounts run={run} />
-            </span>
-          </button>
-        </li>
-      ))}
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground tabular-nums">
+                {title ? <span className="text-foreground">{status}</span> : null}
+                {run.source === "cli" ? <MetaChip>CLI</MetaChip> : null}
+                <span>{runDuration(run) || "–"}</span>
+                <span>{run.usage ? formatCost(run.usage.costUsd) : "–"}</span>
+                <ToolCounts run={run} />
+              </span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -236,6 +274,7 @@ export default function RunsRoute({ runId }: { runId: string | null }) {
     if (pages > 1) reload();
   }, [pages, reload]);
   const runs = data?.items ?? [];
+  const titles = useRunTitles();
   const filtered = filters.status !== ALL || filters.source !== ALL;
 
   return (
@@ -305,10 +344,10 @@ export default function RunsRoute({ runId }: { runId: string | null }) {
         {runs.length > 0 ? (
           <>
             <div className="hidden md:block">
-              <RunsTable runs={runs} selectedId={runId} />
+              <RunsTable runs={runs} titles={titles} selectedId={runId} />
             </div>
             <div className="md:hidden">
-              <RunsList runs={runs} />
+              <RunsList runs={runs} titles={titles} />
             </div>
           </>
         ) : null}
@@ -321,7 +360,7 @@ export default function RunsRoute({ runId }: { runId: string | null }) {
         </div>
       ) : null}
 
-      <RunDetailSheet runId={runId} onClose={() => navigate(runHref(null))} />
+      <RunDetailSheet runId={runId} titles={titles} onClose={() => navigate(runHref(null))} />
     </Page>
   );
 }
