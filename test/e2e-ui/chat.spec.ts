@@ -53,7 +53,8 @@ test.describe("Revenue Desk in the sandbox", () => {
   test("a billing inquiry: tool rows, the approval card, approve, the answer", async ({ page }) => {
     await startBillingInquiry(page);
     const card = page.getByRole("region", { name: APPROVAL });
-    await expect(card).toContainText("Send Gmail draft");
+    // The card names who receives the email: the draft this run created was for Dana.
+    await expect(card).toContainText("Send the Gmail draft to dana@harborpine.test");
     await expect(page.locator("[data-status]").first()).toBeVisible();
     await expect(page.getByText(/Checked \d+ sources/).first()).toBeVisible();
     await card.getByRole("button", { name: "Approve" }).click();
