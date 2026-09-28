@@ -64,6 +64,12 @@
       "Name": "Analytics seats (annual add-on)",
       "Description": "Additional analyst seat, twelve months",
       "UnitPrice": 240
+    },
+    {
+      "Id": "6",
+      "Name": "Services",
+      "Description": "Services (the company's default item for lines without an item)",
+      "UnitPrice": 0
     }
   ],
   "customers": [

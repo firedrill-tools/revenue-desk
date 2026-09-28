@@ -1092,9 +1092,11 @@ export class QuickBooksFake {
       line.SalesItemLineDetail === undefined
         ? {}
         : asObject(line.SalesItemLineDetail, `Line[${index}].SalesItemLineDetail`);
-    if (detail.ItemRef === undefined)
-      throw requiredMissing(`Line[${index}].SalesItemLineDetail.ItemRef`);
-    const item = this.reference("Item", detail.ItemRef);
+    // Without an ItemRef QuickBooks uses the company's default "Services" item.
+    const item =
+      detail.ItemRef === undefined
+        ? this.defaultItem(index)
+        : this.reference("Item", detail.ItemRef);
     const qty = detail.Qty === undefined ? undefined : Number(detail.Qty);
     const unitPrice = detail.UnitPrice === undefined ? undefined : Number(detail.UnitPrice);
     if (
@@ -1168,6 +1170,12 @@ export class QuickBooksFake {
       customer.Balance = round(open);
       customer.BalanceWithJobs = round(open);
     }
+  }
+
+  private defaultItem(index: number): Entity {
+    const item = [...this.entities.Item.values()].find((entity) => entity.Name === "Services");
+    if (item === undefined) throw requiredMissing(`Line[${index}].SalesItemLineDetail.ItemRef`);
+    return item;
   }
 
   private reference(name: "Customer" | "Item" | "Term", ref: JsonValue | undefined): Entity {

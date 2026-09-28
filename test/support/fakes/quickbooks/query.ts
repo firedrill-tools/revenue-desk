@@ -60,8 +60,8 @@ function tokenize(text: string): Token[] {
       let closed = false;
       while (index < text.length) {
         const current = text[index] as string;
-        if (current === "\\" && text[index + 1] === "'") {
-          value += "'";
+        if (current === "\\" && (text[index + 1] === "'" || text[index + 1] === "\\")) {
+          value += text[index + 1];
           index += 2;
         } else if (current === "'") {
           closed = true;

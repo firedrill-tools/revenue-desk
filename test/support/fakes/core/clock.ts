@@ -86,3 +86,42 @@ export function isoInZone(instant: Date, timeZone: string): string {
 export function dateInZone(instant: Date, timeZone: string): string {
   return isoInZone(instant, timeZone).slice(0, 10);
 }
+
+/**
+ * An instant from a date-time string: one with `Z` or an offset is absolute;
+ * a naive `YYYY-MM-DD[T ]HH:MM[:SS]` (or a bare date) is a wall time in
+ * `timeZone`. Null when the text is neither.
+ */
+export function instantFromLocal(text: string, timeZone: string): Date | null {
+  const value = text.trim();
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(value) && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    const absolute = Date.parse(value);
+    return Number.isNaN(absolute) ? null : new Date(absolute);
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?)?$/.exec(
+    value,
+  );
+  if (match === null) return null;
+  const [, year, month, day, hour = "00", minute = "00", second = "00"] = match;
+  const wall = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+  );
+  // The zone's offset at the guessed instant, then once more at the corrected one (DST edges).
+  let instant = wall - offsetMs(new Date(wall), timeZone);
+  instant = wall - offsetMs(new Date(instant), timeZone);
+  return new Date(instant);
+}
+
+/** The UTC offset of a time zone at an instant, in milliseconds. */
+function offsetMs(instant: Date, timeZone: string): number {
+  const text = isoInZone(instant, timeZone);
+  const match = /([+-])(\d{2}):(\d{2})$/.exec(text);
+  if (match === null) return 0;
+  const [, sign, hours, minutes] = match;
+  return (sign === "-" ? -1 : 1) * (Number(hours) * 60 + Number(minutes)) * 60_000;
+}
