@@ -98,6 +98,31 @@ describe("Slack formatting and times", () => {
     expect(createSlackIntegration().checkInput).toBe(checkSlackInput);
   });
 
+  it("refuses Markdown that Slack does not render: tables, # headings, **bold**", () => {
+    // The shape of the live J5 digests.
+    const digest = [
+      "## Revenue digest",
+      "*AR aging*",
+      "| Customer | Invoice | Balance |",
+      "|---|---|---:|",
+      "| Copperleaf Studios | #1043 | $3,600.00 |",
+      "**Total open AR:** $27,028.00",
+    ].join("\n");
+    expect(
+      checkSlackInput("post_message", { channel: "#revenue", text: digest }).map(
+        (issue) => issue.message.split(",")[0],
+      ),
+    ).toEqual(["has a Markdown table", "has a Markdown # heading", "uses **double asterisks**"]);
+    // Slack mrkdwn passes: *bold*, bullets, a channel name at a line start, prices with pipes.
+    const mrkdwn = [
+      "*Revenue digest — Sep 21–28*",
+      "• Copperleaf Studios — invoice 1043 — $3,600.00 — 70 days overdue",
+      "#billing has the details | ask there",
+      "- Net: $590.00",
+    ].join("\n");
+    expect(checkSlackInput("post_message", { channel: "#revenue", text: mrkdwn })).toEqual([]);
+  });
+
   it("writes message times in the workspace time zone", async () => {
     const { run } = setup(
       () => ({ json: { ok: true, channel: "C0BILLING01", ts: "1790600465.632000" } }),
