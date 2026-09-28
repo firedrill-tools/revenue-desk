@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   RUN_ENDED_REASON,
   SdkMessageMapper,
+  STOPPED_BEFORE_RUN_REASON,
   type ToolView,
 } from "../../../src/agent/sdk-mapper.js";
 import { ToolCallLedger } from "../../../src/agent/tool-calls.js";
@@ -359,7 +360,7 @@ describe("SdkMessageMapper", () => {
     ]);
   });
 
-  it("reports an error tool_result during a stop as stopped", () => {
+  it("reports an error tool_result during a stop as stopped, with a plain reason", () => {
     let stopping = false;
     const { events, mapper } = setup({ stopping: () => stopping });
     mapper.handle(messageStart("msg_1"));
@@ -376,7 +377,7 @@ describe("SdkMessageMapper", () => {
         type: "tool.denied",
         toolCallId: "toolu_sibling",
         decision: "stopped",
-        reason: "The user doesn't want to proceed with this tool use.",
+        reason: STOPPED_BEFORE_RUN_REASON,
       },
     ]);
   });

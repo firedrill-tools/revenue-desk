@@ -48,6 +48,13 @@ type Block =
 
 const SYNTHETIC_MODEL = "<synthetic>";
 export const RUN_ENDED_REASON = "The run ended before this call ran.";
+/**
+ * A call the SDK refused because the run was being stopped (a sibling queued
+ * behind a pending approval, say). The Claude CLI's own text for it is an
+ * instruction to the model ("The user doesn't want to proceed…"), which is
+ * neither true nor useful to a person reading the action log.
+ */
+export const STOPPED_BEFORE_RUN_REASON = "Not run: the run was stopped before this call ran.";
 const UNKNOWN_TOOL = /No such tool available/;
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -383,12 +390,13 @@ export class SdkMessageMapper {
   #settleFromResult(toolCallId: string, rawText: string, isError: boolean): void {
     const text = this.#redact(rawText);
     if (isError && this.#isStopping()) {
+      // Every call the gateway ran was settled by the gateway, so this one never ran.
       if (!this.#ledger.settle(toolCallId, "stopped")) return;
       this.#ledger.emitFor(toolCallId, {
         type: "tool.denied",
         toolCallId,
         decision: "stopped",
-        reason: text,
+        reason: STOPPED_BEFORE_RUN_REASON,
       });
       return;
     }
