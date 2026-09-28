@@ -1,12 +1,14 @@
-// Compact views of Slack objects for the model. Absent fields stay absent.
+// Compact views of Slack objects for the model. Absent fields stay absent;
+// times are in the workspace time zone with their offset (shared/time.ts).
 
 import type { JsonObject } from "../../contracts/json.js";
 import { bool, compact, obj, pick, str } from "../shared/json.js";
+import { zonedIso } from "../shared/time.js";
 
-/** The ISO time of a Slack ts ("1727512345.000200"). */
-export function isoFromTs(ts: string | undefined): string | undefined {
+/** The ISO time of a Slack ts ("1727512345.000200"), in `timezone` (UTC without one). */
+export function isoFromTs(ts: string | undefined, timezone?: string): string | undefined {
   if (ts === undefined || !/^\d+(\.\d+)?$/.test(ts)) return undefined;
-  return new Date(Math.floor(Number(ts) * 1000)).toISOString();
+  return zonedIso(Math.floor(Number(ts) * 1000), timezone);
 }
 
 export function channel(object: JsonObject): JsonObject {
@@ -17,11 +19,11 @@ export function channel(object: JsonObject): JsonObject {
   });
 }
 
-export function message(object: JsonObject): JsonObject {
+export function message(object: JsonObject, timezone?: string): JsonObject {
   const ts = str(object, "ts");
   return compact({
     ts,
-    time: isoFromTs(ts),
+    time: isoFromTs(ts, timezone),
     ...pick(object, ["user", "bot_id", "text", "thread_ts", "reply_count", "subtype"]),
   });
 }

@@ -1,7 +1,7 @@
 // The Slack tools (docs/ARCHITECTURE.md §2).
 
 import type { JsonObject } from "../../contracts/json.js";
-import { type ApiTool, apiTool } from "../shared/api-tool.js";
+import { type ApiTool, type ApiToolOptions, apiTool } from "../shared/api-tool.js";
 import { ApiToolError } from "../shared/errors.js";
 import { bool, obj, objects, str } from "../shared/json.js";
 import { unixSeconds } from "../shared/schema.js";
@@ -25,7 +25,12 @@ function matchesUser(user: JsonObject, needle: string): boolean {
   return haystack.some((value) => value?.toLowerCase().includes(needle) === true);
 }
 
-export function createSlackTools(client: SlackClient): readonly ApiTool[] {
+export function createSlackTools(
+  client: SlackClient,
+  options: Pick<ApiToolOptions, "timezone"> = {},
+): readonly ApiTool[] {
+  const { timezone } = options;
+  const message = (item: JsonObject) => view.message(item, timezone);
   return [
     apiTool({
       name: "list_channels",
@@ -72,7 +77,7 @@ export function createSlackTools(client: SlackClient): readonly ApiTool[] {
           call.signal,
         );
         return {
-          messages: objects(body, "messages").map(view.message),
+          messages: objects(body, "messages").map(message),
           has_more: bool(body, "has_more") ?? false,
           next_cursor: view.nextCursor(body),
         };
@@ -90,7 +95,7 @@ export function createSlackTools(client: SlackClient): readonly ApiTool[] {
           call.signal,
         );
         return {
-          messages: objects(body, "messages").map(view.message),
+          messages: objects(body, "messages").map(message),
           has_more: bool(body, "has_more") ?? false,
           next_cursor: view.nextCursor(body),
         };
@@ -133,7 +138,9 @@ export function createSlackTools(client: SlackClient): readonly ApiTool[] {
     apiTool({
       name: "post_message",
       description:
-        "Post a message to a Slack channel, or reply in a thread. Posting to the workspace's " +
+        "Post a message to a Slack channel, or reply in a thread. The text is Slack mrkdwn, " +
+        "not Markdown: *bold*, bullets, <@USERID> mentions; tables and # headings are not " +
+        "rendered. Post about an action only after it succeeded. Posting to the workspace's " +
         "allowed channels is automatic; anywhere else, or a message that notifies everyone, " +
         "needs the user's approval.",
       input: SLACK_INPUTS.post_message,
@@ -154,7 +161,7 @@ export function createSlackTools(client: SlackClient): readonly ApiTool[] {
         return {
           channel: str(body, "channel") ?? channelLabel(args.channel),
           ts: ts ?? null,
-          time: view.isoFromTs(ts) ?? null,
+          time: view.isoFromTs(ts, timezone) ?? null,
         };
       },
     }),

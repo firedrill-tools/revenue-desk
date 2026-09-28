@@ -1,14 +1,19 @@
 // Compact views of QuickBooks entities for the model: snake_case names,
 // amounts converted from QuickBooks decimals to integer minor units with their
-// currency, references as {id, name}. Absent fields stay absent.
+// currency, references as {id, name}, timestamps in the workspace time zone
+// with their offset (shared/time.ts; dates stay dates). Absent fields stay
+// absent.
 
 import type { JsonObject, JsonValue } from "../../contracts/json.js";
 import { bool, compact, num, obj, objects, str } from "../shared/json.js";
 import { decimalToMinor } from "../shared/money.js";
+import { zonedFromIso } from "../shared/time.js";
 
 export type ProjectionContext = {
   /** Used when an entity has no CurrencyRef (multicurrency off). */
   readonly currency: string;
+  /** The workspace time zone; timestamps keep QuickBooks' own offset without it. */
+  readonly timezone?: string;
 };
 
 function refOf(entity: JsonObject, key: string): JsonObject | undefined {
@@ -27,11 +32,11 @@ function minor(entity: JsonObject, key: string, currency: string): number | unde
   return value === undefined ? undefined : decimalToMinor(value, currency);
 }
 
-function created(entity: JsonObject): string | undefined {
-  return str(obj(entity, "MetaData"), "CreateTime");
+function created(entity: JsonObject, context: ProjectionContext): string | undefined {
+  return zonedFromIso(str(obj(entity, "MetaData"), "CreateTime"), context.timezone);
 }
 
-export function companyInfo(body: JsonObject): JsonObject {
+export function companyInfo(body: JsonObject, context?: ProjectionContext): JsonObject {
   const company = obj(body, "CompanyInfo");
   return compact({
     company_name: str(company, "CompanyName"),
@@ -41,7 +46,7 @@ export function companyInfo(body: JsonObject): JsonObject {
     fiscal_year_start_month: str(company, "FiscalYearStartMonth"),
     company_start_date: str(company, "CompanyStartDate"),
     /** The QuickBooks server's clock at the time of the request. */
-    server_time: str(body, "time"),
+    server_time: zonedFromIso(str(body, "time"), context?.timezone),
   });
 }
 
@@ -70,7 +75,7 @@ export function customer(entity: JsonObject, context: ProjectionContext): JsonOb
             country: str(address, "Country"),
           }),
     notes: str(entity, "Notes"),
-    created: created(entity),
+    created: created(entity, context),
     sync_token: str(entity, "SyncToken"),
   });
 }

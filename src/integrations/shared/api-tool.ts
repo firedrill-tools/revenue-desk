@@ -36,6 +36,12 @@ export type ApiToolOptions = {
    * currency on transactions when multicurrency is off; amounts then use it.
    */
   readonly currency: string;
+  /**
+   * The workspace time zone (WorkspaceSettings.timezone, IANA). Timestamps the
+   * tools return are written in it with their offset (shared/time.ts); UTC
+   * when absent.
+   */
+  readonly timezone?: string;
 };
 
 /**

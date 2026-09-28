@@ -32,9 +32,34 @@ export const STRIPE_INPUTS = {
     email: z
       .email()
       .optional()
-      .describe("Exact email address to match (Stripe matches it case-sensitively)."),
+      .describe(
+        "Exact email address (Stripe matches it exactly). Take it from a system (the Gmail " +
+          "sender, a HubSpot contact, a QuickBooks customer) or the user; never guess one or " +
+          "build it from a company name. When you know only the name, search by name.",
+      ),
+    name: z
+      .string()
+      .min(3)
+      .max(100)
+      .optional()
+      .describe(
+        "Text contained in the customer's name, e.g. a company or person name (at least 3 " +
+          "characters, any case). Uses Stripe's customer search, which can miss customers " +
+          "created in the last minute.",
+      ),
     limit: pageSize(100, 10, "customers"),
-    starting_after: startingAfter,
+    starting_after: startingAfter.describe(
+      "Cursor for the next page of an email lookup: pass next_starting_after from the " +
+        "previous result.",
+    ),
+    page: z
+      .string()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe(
+        "Cursor for the next page of a name search: pass next_page from the previous result.",
+      ),
   },
   get_customer: {
     customer: customerId("The customer id, e.g. cus_P3x9…"),

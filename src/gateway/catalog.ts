@@ -29,6 +29,8 @@ import type { UpstreamConfig } from "./mcp-proxy.js";
 export type ApiToolFactoryOptions = {
   /** WorkspaceSettings.currency (QuickBooks omits it when multicurrency is off). */
   readonly currency: string;
+  /** WorkspaceSettings.timezone: timestamps returned to the model are written in it. */
+  readonly timezone?: string;
 };
 
 /** An API integration's tools for one connection. */

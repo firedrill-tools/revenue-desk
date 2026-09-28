@@ -11,7 +11,12 @@ const read = (
 ): ToolSpec => ({ name, upstream, operation, title, baseClass: "read", readOnly: true });
 
 export const STRIPE_PROFILE = defineProfile("stripe-api", "stripe", [
-  read("find_customers", "GET /v1/customers", "stripe.customers.list", "Find customers in Stripe"),
+  read(
+    "find_customers",
+    "GET /v1/customers (by name: GET /v1/customers/search)",
+    "stripe.customers.list",
+    "Find customers in Stripe",
+  ),
   read(
     "get_customer",
     "GET /v1/customers/{id}",

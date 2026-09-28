@@ -391,3 +391,52 @@ describe("Stripe fake: injected provider failures", () => {
     expect(JSON.stringify(stripe.requests)).not.toContain(KEY);
   });
 });
+
+describe("Stripe fake: customer search", () => {
+  const search = (query: string, extra: Record<string, string> = {}) =>
+    call("GET", `/v1/customers/search?${new URLSearchParams({ query, ...extra }).toString()}`);
+  const names = (reply: Reply) =>
+    (reply.body.data as JsonObject[]).map((customer) => customer.name);
+
+  it("finds customers whose name contains the text, in any case", async () => {
+    const reply = await search('name~"harbor"');
+    expect(reply.status).toBe(200);
+    expect(reply.body).toMatchObject({
+      object: "search_result",
+      has_more: false,
+      next_page: null,
+      url: "/v1/customers/search",
+    });
+    expect(names(reply)).toEqual(["Harbor & Pine Outfitters"]);
+    const exact = await search('name~"Harbor" AND email:"DANA@harborpine.test"');
+    expect(names(exact)).toEqual(["Harbor & Pine Outfitters"]);
+    expect(names(await search('name~"Harbor" AND email:"billing@harborpine.test"'))).toEqual([]);
+  });
+
+  it("pages with page and next_page", async () => {
+    const first = await search('email~".test"', { limit: "2" });
+    expect(first.body.has_more).toBe(true);
+    expect(first.body.next_page).toBe("page_2");
+    const second = await search('email~".test"', { limit: "2", page: "page_2" });
+    expect(names(second)).not.toEqual(names(first));
+  });
+
+  it("refuses queries Stripe would refuse", async () => {
+    for (const query of [
+      'name~"ab"',
+      "name~harbor",
+      'website:"x"',
+      'name:"a" AND email:"b" OR name:"c"',
+    ]) {
+      const reply = await search(query);
+      expect(reply.status, query).toBe(400);
+      expect(errorOf(reply), query).toMatchObject({
+        type: "invalid_request_error",
+        param: "query",
+      });
+    }
+    const missingQuery = await call("GET", "/v1/customers/search");
+    expect(missingQuery.status).toBe(400);
+    expect(errorOf(missingQuery)).toMatchObject({ code: "parameter_missing", param: "query" });
+  });
+});

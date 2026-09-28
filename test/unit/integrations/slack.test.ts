@@ -28,11 +28,15 @@ const connection: SlackConnection = {
   api: { baseUrl: "https://slack.test/prefix", botToken: secret(TOKEN) },
 };
 
-function setup(reply: (index: number, body: Record<string, string>) => Reply | Error) {
+function setup(
+  reply: (index: number, body: Record<string, string>) => Reply | Error,
+  timezone?: string,
+) {
   const mock = mockFetch((request, index) => reply(index, paramsOf(request.body)));
+  const options = timezone === undefined ? { currency: "USD" } : { currency: "USD", timezone };
   const tools = new Map(
     createSlackIntegration({ http: mock.http })
-      .tools(connection, { currency: "USD" })
+      .tools(connection, options)
       .map((tool) => [tool.name, tool]),
   );
   const run = (name: string, args: JsonObject): Promise<JsonValue> => {
@@ -46,6 +50,34 @@ function setup(reply: (index: number, body: Record<string, string>) => Reply | E
   };
   return { mock, tools, run, call };
 }
+
+describe("Slack formatting and times", () => {
+  it("tells the model that post text is Slack mrkdwn: no tables, headings or emoji", () => {
+    const { tools } = setup(() => ({ json: { ok: true } }));
+    const post = tools.get("post_message");
+    expect(post?.description).toContain("Slack mrkdwn, not Markdown");
+    expect(post?.description).toContain("Post about an action only after it succeeded");
+    const text = post?.input.text as { description?: string } | undefined;
+    expect(text?.description).toContain("<@U123> to mention a person");
+    expect(text?.description).toContain("a plain @name mentions nobody");
+    expect(text?.description).toContain("Markdown tables, # headings and **double asterisks**");
+    expect(text?.description).toContain("No emoji.");
+  });
+
+  it("writes message times in the workspace time zone", async () => {
+    const { run } = setup(
+      () => ({ json: { ok: true, channel: "C0BILLING01", ts: "1790600465.632000" } }),
+      "America/New_York",
+    );
+    await expect(
+      run("post_message", { channel: "#billing", text: "Refund issued." }),
+    ).resolves.toEqual({
+      channel: "C0BILLING01",
+      ts: "1790600465.632000",
+      time: "2026-09-28T09:01:05.632-04:00",
+    });
+  });
+});
 
 describe("SlackClient", () => {
   it("posts form bodies to /api/<method> under the prefix with the bot token", async () => {

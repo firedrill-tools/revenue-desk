@@ -114,10 +114,10 @@ function messageOf(error: unknown): string {
 function apiTools(
   catalog: IntegrationCatalog,
   connection: ResolvedConnection,
-  currency: string,
+  settings: Pick<WorkspaceSettings, "currency" | "timezone">,
   descriptors: readonly ToolDescriptor[],
 ): GatewayTool[] {
-  const options = { currency };
+  const options = { currency: settings.currency, timezone: settings.timezone };
   const definitions =
     connection.integration === "stripe"
       ? catalog.stripe.tools(connection, options)
@@ -234,7 +234,7 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
     let tools: readonly GatewayTool[];
     try {
       if (INTEGRATIONS[integration].kind === "api") {
-        tools = apiTools(options.catalog, plan.connection, options.settings.currency, descriptors);
+        tools = apiTools(options.catalog, plan.connection, options.settings, descriptors);
       } else {
         const upstream = integration === "hubspot" ? hubspot : composio;
         if (upstream instanceof Error) throw upstream;

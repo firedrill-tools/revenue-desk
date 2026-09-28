@@ -87,7 +87,13 @@ export const SLACK_INPUTS = {
       .string()
       .min(1)
       .max(4000)
-      .describe("The message, in Slack mrkdwn. Do not mention @channel or @here unless asked."),
+      .describe(
+        "The message in Slack mrkdwn: *bold*, _italic_, `code`, lines starting with • or - " +
+          "for bullets, <@U123> to mention a person (get the id with find_user; a plain " +
+          "@name mentions nobody). Markdown tables, # headings and **double asterisks** are " +
+          "not rendered, so use short lines instead. No emoji. Do not mention @channel or " +
+          "@here unless asked.",
+      ),
     thread_ts: identifier(SLACK_ID.ts, "Reply in the thread of this message ts.").optional(),
   },
   add_reaction: {

@@ -61,6 +61,7 @@ export function createStripeIntegration(deps: ApiIntegrationDeps = {}): ApiInteg
     resolve: resolveStripe,
     classify: classifyStripe,
     probe: (connection, signal) => probeStripe(connection, signal, deps.http),
-    tools: (connection) => createStripeTools(stripeClientFor(connection, deps.http)),
+    tools: (connection, options) =>
+      createStripeTools(stripeClientFor(connection, deps.http), options),
   };
 }

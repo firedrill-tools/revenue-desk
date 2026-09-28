@@ -68,6 +68,7 @@ export function createSlackIntegration(deps: ApiIntegrationDeps = {}): ApiIntegr
     resolve: resolveSlack,
     classify: classifySlack,
     probe: (connection, signal) => probeSlack(connection, signal, deps.http),
-    tools: (connection) => createSlackTools(slackClientFor(connection, deps.http)),
+    tools: (connection, options) =>
+      createSlackTools(slackClientFor(connection, deps.http), options),
   };
 }

@@ -3,7 +3,7 @@ import type { JsonObject, JsonValue } from "../../../src/contracts/json.js";
 import type { ApiTool } from "../../../src/integrations/shared/api-tool.js";
 import { StripeClient } from "../../../src/integrations/stripe/client.js";
 import { STRIPE_PROFILE } from "../../../src/integrations/stripe/profile.js";
-import { createStripeTools } from "../../../src/integrations/stripe/tools.js";
+import { createStripeTools, customerSearchQuery } from "../../../src/integrations/stripe/tools.js";
 import {
   at,
   callContext,
@@ -14,7 +14,7 @@ import {
   secret,
 } from "./helpers.js";
 
-function setup(reply: Reply | ((index: number) => Reply)) {
+function setup(reply: Reply | ((index: number) => Reply), timezone?: string) {
   const mock = mockFetch((_, index) => (typeof reply === "function" ? reply(index) : reply));
   const client = new StripeClient({
     baseUrl: "https://api.stripe.test",
@@ -23,7 +23,8 @@ function setup(reply: Reply | ((index: number) => Reply)) {
     allowLive: false,
     http: mock.http,
   });
-  const tools = new Map(createStripeTools(client).map((tool) => [tool.name, tool]));
+  const options = timezone === undefined ? {} : { timezone };
+  const tools = new Map(createStripeTools(client, options).map((tool) => [tool.name, tool]));
   return { mock, tools };
 }
 
@@ -99,6 +100,74 @@ describe("Stripe tools", () => {
       has_more: true,
       next_starting_after: "cus_1",
     });
+  });
+
+  it("find_customers searches by name when no system gave an email", async () => {
+    const { mock, tools } = setup({
+      json: {
+        object: "search_result",
+        has_more: true,
+        next_page: "page_2",
+        url: "/v1/customers/search",
+        data: [{ id: "cus_1", email: "ap@acme.test", name: "Acme & Co", created: 1_790_000_000 }],
+      },
+    });
+    const result = await run(tools, "find_customers", { name: ' Acme "&" Co ', limit: 5 });
+    const request = only(mock);
+    expect(request.url.pathname).toBe("/v1/customers/search");
+    // Quotes are escaped in Stripe's search query language.
+    expect(request.query).toEqual({ query: 'name~"Acme \\"&\\" Co"', limit: "5" });
+    expect(result).toEqual({
+      data: [
+        {
+          id: "cus_1",
+          name: "Acme & Co",
+          email: "ap@acme.test",
+          created: "2026-09-21T14:13:20.000Z",
+        },
+      ],
+      has_more: true,
+      next_page: "page_2",
+    });
+  });
+
+  it("find_customers narrows a name search by email and pages it with page", async () => {
+    const { mock, tools } = setup({ json: { object: "search_result", has_more: false, data: [] } });
+    await run(tools, "find_customers", { name: "Acme", email: "ap@acme.test", page: "page_2" });
+    expect(only(mock).query).toEqual({
+      query: 'name~"Acme" AND email:"ap@acme.test"',
+      page: "page_2",
+    });
+    expect(customerSearchQuery("a\\b", undefined)).toBe('name~"a\\\\b"');
+  });
+
+  it("find_customers refuses mixed paging cursors without calling Stripe", async () => {
+    const { mock, tools } = setup({ json: {} });
+    await expect(
+      run(tools, "find_customers", { name: "Acme", starting_after: "cus_1" }),
+    ).rejects.toThrow(/page \(next_page\), not starting_after/);
+    await expect(run(tools, "find_customers", { page: "page_2" })).rejects.toThrow(
+      /give the same name/,
+    );
+    expect(mock.requests).toHaveLength(0);
+  });
+
+  it("describes find_customers so an email is never guessed", () => {
+    const { tools } = setup({ json: {} });
+    const tool = tools.get("find_customers");
+    expect(tool?.description).toContain("search by name");
+    const email = tool?.input.email as { description?: string } | undefined;
+    expect(email?.description).toContain("never guess one or build it from a company name");
+  });
+
+  it("writes timestamps in the workspace time zone with their offset", async () => {
+    const { tools } = setup(
+      { json: { object: "list", has_more: false, data: [{ ...CHARGE, created: 1_790_082_012 }] } },
+      "America/New_York",
+    );
+    const result = await run(tools, "list_charges", { customer: "cus_1" });
+    // 2026-09-22T13:00:12Z is 9:00:12 AM in New York (EDT, UTC-4).
+    expect(at(result, "data", 0, "created")).toBe("2026-09-22T09:00:12-04:00");
   });
 
   it("list_charges filters by customer and creation window and returns compact charges", async () => {

@@ -1,7 +1,9 @@
 // Compact views of Stripe objects for the model. Stripe objects carry many
 // fields an agent never needs; these keep what the revenue jobs use, keep
 // Stripe's field names and minor-unit amounts, and turn Unix timestamps into
-// ISO 8601 strings. Absent fields stay absent: nothing is invented.
+// ISO 8601 strings in the workspace time zone with their offset
+// (shared/time.ts), so "created" reads as the local time it was. Absent
+// fields stay absent: nothing is invented.
 
 import type { JsonObject, JsonValue } from "../../contracts/json.js";
 import {
@@ -16,15 +18,26 @@ import {
   pick,
   str,
 } from "../shared/json.js";
+import { zonedFromUnix } from "../shared/time.js";
 
-/** A Unix timestamp (seconds) as an ISO string; undefined when absent. */
-export function isoFromUnix(seconds: number | undefined): string | undefined {
-  if (seconds === undefined) return undefined;
-  return new Date(seconds * 1000).toISOString();
+/** How the views write what is not Stripe's own data. */
+export type ViewContext = {
+  /** The workspace time zone (IANA); timestamps are UTC without it. */
+  readonly timezone?: string;
+};
+
+const UTC: ViewContext = {};
+
+/** A Unix timestamp (seconds) as an ISO string in the context's zone; undefined when absent. */
+export function isoFromUnix(
+  seconds: number | undefined,
+  context: ViewContext = UTC,
+): string | undefined {
+  return zonedFromUnix(seconds, context.timezone);
 }
 
-function time(object: JsonObject, key: string): string | undefined {
-  return isoFromUnix(num(object, key));
+function time(object: JsonObject, key: string, context: ViewContext): string | undefined {
+  return isoFromUnix(num(object, key), context);
 }
 
 /** An expandable reference: the id string, or the id of an expanded object. */
@@ -39,7 +52,7 @@ function metadata(object: JsonObject): JsonValue | undefined {
   return value !== undefined && Object.keys(value).length > 0 ? value : undefined;
 }
 
-export function customer(object: JsonObject): JsonObject {
+export function customer(object: JsonObject, context: ViewContext = UTC): JsonObject {
   return compact({
     ...pick(object, [
       "id",
@@ -51,12 +64,12 @@ export function customer(object: JsonObject): JsonObject {
       "balance",
       "delinquent",
     ]),
-    created: time(object, "created"),
+    created: time(object, "created", context),
     metadata: metadata(object),
   });
 }
 
-export function charge(object: JsonObject): JsonObject {
+export function charge(object: JsonObject, context: ViewContext = UTC): JsonObject {
   const billing = obj(object, "billing_details");
   const card = obj(obj(object, "payment_method_details"), "card");
   const outcome = obj(object, "outcome");
@@ -80,7 +93,7 @@ export function charge(object: JsonObject): JsonObject {
     customer: ref(object, "customer"),
     payment_intent: ref(object, "payment_intent"),
     invoice: ref(object, "invoice"),
-    created: time(object, "created"),
+    created: time(object, "created", context),
     billing_name: str(billing, "name"),
     billing_email: str(billing, "email"),
     card: card === undefined ? undefined : pick(card, ["brand", "last4", "exp_month", "exp_year"]),
@@ -89,7 +102,7 @@ export function charge(object: JsonObject): JsonObject {
   });
 }
 
-export function paymentIntent(object: JsonObject): JsonObject {
+export function paymentIntent(object: JsonObject, context: ViewContext = UTC): JsonObject {
   const lastError = obj(object, "last_payment_error");
   return compact({
     ...pick(object, [
@@ -104,23 +117,27 @@ export function paymentIntent(object: JsonObject): JsonObject {
     customer: ref(object, "customer"),
     latest_charge: ref(object, "latest_charge"),
     invoice: ref(object, "invoice"),
-    created: time(object, "created"),
+    created: time(object, "created", context),
     last_payment_error:
       lastError === undefined ? undefined : pick(lastError, ["code", "decline_code", "message"]),
     metadata: metadata(object),
   });
 }
 
-function invoiceLine(object: JsonObject): JsonObject {
+function invoiceLine(object: JsonObject, context: ViewContext): JsonObject {
   const period = obj(object, "period");
   return compact({
     ...pick(object, ["id", "description", "amount", "currency", "quantity"]),
-    period_start: period === undefined ? undefined : time(period, "start"),
-    period_end: period === undefined ? undefined : time(period, "end"),
+    period_start: period === undefined ? undefined : time(period, "start", context),
+    period_end: period === undefined ? undefined : time(period, "end", context),
   });
 }
 
-export function invoice(object: JsonObject, withLines: boolean): JsonObject {
+export function invoice(
+  object: JsonObject,
+  withLines: boolean,
+  context: ViewContext = UTC,
+): JsonObject {
   const transitions = obj(object, "status_transitions");
   const lines = objects(obj(object, "lines"), "data");
   return compact({
@@ -142,15 +159,15 @@ export function invoice(object: JsonObject, withLines: boolean): JsonObject {
     ]),
     customer: ref(object, "customer"),
     subscription: ref(object, "subscription"),
-    created: time(object, "created"),
-    due_date: time(object, "due_date"),
-    paid_at: transitions === undefined ? undefined : time(transitions, "paid_at"),
-    lines: withLines ? lines.map(invoiceLine) : undefined,
+    created: time(object, "created", context),
+    due_date: time(object, "due_date", context),
+    paid_at: transitions === undefined ? undefined : time(transitions, "paid_at", context),
+    lines: withLines ? lines.map((line) => invoiceLine(line, context)) : undefined,
     metadata: metadata(object),
   });
 }
 
-function subscriptionItem(object: JsonObject): JsonObject {
+function subscriptionItem(object: JsonObject, context: ViewContext): JsonObject {
   const price = obj(object, "price");
   const recurring = obj(price, "recurring");
   return compact({
@@ -160,32 +177,32 @@ function subscriptionItem(object: JsonObject): JsonObject {
     unit_amount: num(price, "unit_amount"),
     currency: str(price, "currency"),
     interval: str(recurring, "interval"),
-    current_period_end: time(object, "current_period_end"),
+    current_period_end: time(object, "current_period_end", context),
   });
 }
 
-export function subscription(object: JsonObject): JsonObject {
+export function subscription(object: JsonObject, context: ViewContext = UTC): JsonObject {
   return compact({
     ...pick(object, ["id", "status", "currency", "collection_method", "cancel_at_period_end"]),
     customer: ref(object, "customer"),
     latest_invoice: ref(object, "latest_invoice"),
-    created: time(object, "created"),
-    current_period_end: time(object, "current_period_end"),
-    cancel_at: time(object, "cancel_at"),
-    canceled_at: time(object, "canceled_at"),
-    ended_at: time(object, "ended_at"),
-    trial_end: time(object, "trial_end"),
-    items: objects(obj(object, "items"), "data").map(subscriptionItem),
+    created: time(object, "created", context),
+    current_period_end: time(object, "current_period_end", context),
+    cancel_at: time(object, "cancel_at", context),
+    canceled_at: time(object, "canceled_at", context),
+    ended_at: time(object, "ended_at", context),
+    trial_end: time(object, "trial_end", context),
+    items: objects(obj(object, "items"), "data").map((item) => subscriptionItem(item, context)),
     metadata: metadata(object),
   });
 }
 
-export function refund(object: JsonObject): JsonObject {
+export function refund(object: JsonObject, context: ViewContext = UTC): JsonObject {
   return compact({
     ...pick(object, ["id", "amount", "currency", "status", "reason", "failure_reason"]),
     charge: ref(object, "charge"),
     payment_intent: ref(object, "payment_intent"),
-    created: time(object, "created"),
+    created: time(object, "created", context),
     metadata: metadata(object),
   });
 }
@@ -214,5 +231,21 @@ export function list(body: JsonObject, project: (item: JsonObject) => JsonObject
     data,
     has_more: hasMore,
     next_starting_after: hasMore && last !== undefined ? (str(last, "id") ?? null) : null,
+  };
+}
+
+/**
+ * A Stripe search result as {data, has_more, next_page}: pass next_page back
+ * as page for the next page.
+ */
+export function searchList(
+  body: JsonObject,
+  project: (item: JsonObject) => JsonObject,
+): JsonObject {
+  const hasMore = bool(body, "has_more") ?? false;
+  return {
+    data: objects(body, "data").map(project),
+    has_more: hasMore,
+    next_page: hasMore ? (str(body, "next_page") ?? null) : null,
   };
 }

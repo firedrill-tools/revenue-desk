@@ -23,12 +23,11 @@ const connection: QuickBooksConnection = {
   },
 };
 
-function setup(reply: (index: number) => Reply, currency = "USD") {
+function setup(reply: (index: number) => Reply, currency = "USD", timezone?: string) {
   const mock = mockFetch((_, index) => reply(index));
   const definition = createQuickBooksIntegration({ http: mock.http });
-  const tools = new Map(
-    definition.tools(connection, { currency }).map((tool) => [tool.name, tool]),
-  );
+  const options = timezone === undefined ? { currency } : { currency, timezone };
+  const tools = new Map(definition.tools(connection, options).map((tool) => [tool.name, tool]));
   const run = (name: string, args: JsonObject, context = callContext()): Promise<JsonValue> => {
     const tool: ApiTool | undefined = tools.get(name);
     if (tool === undefined) throw new Error(`no tool ${name}`);
@@ -179,6 +178,36 @@ describe("QuickBooks tools", () => {
       server_time: "2026-09-28T09:00:00.000-07:00",
     });
     expect(mock.requests[0]?.url.pathname).toBe("/v3/company/9130000001/companyinfo/9130000001");
+  });
+
+  it("writes the server time and record creation times in the workspace time zone", async () => {
+    const { run } = setup(
+      (index): Reply =>
+        index === 0
+          ? {
+              json: {
+                CompanyInfo: { CompanyName: "Kestrel Analytics" },
+                time: "2026-09-28T06:00:00.000-07:00",
+              },
+            }
+          : {
+              json: {
+                Customer: {
+                  Id: "58",
+                  DisplayName: "Acme",
+                  MetaData: { CreateTime: "2026-03-22T07:00:00-07:00" },
+                },
+              },
+            },
+      "USD",
+      "America/New_York",
+    );
+    await expect(run("get_company_info", {})).resolves.toMatchObject({
+      server_time: "2026-09-28T09:00:00-04:00",
+    });
+    await expect(run("get_customer", { customer_id: "58" })).resolves.toMatchObject({
+      created: "2026-03-22T10:00:00-04:00",
+    });
   });
 
   it("get_invoice keeps sales lines only, in minor units", async () => {

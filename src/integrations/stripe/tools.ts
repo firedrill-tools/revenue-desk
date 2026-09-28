@@ -1,7 +1,12 @@
 // The Stripe tools (docs/ARCHITECTURE.md §2): each is one REST operation.
 
 import type { JsonObject } from "../../contracts/json.js";
-import { type ApiTool, apiTool, requireIdempotencyKey } from "../shared/api-tool.js";
+import {
+  type ApiTool,
+  type ApiToolOptions,
+  apiTool,
+  requireIdempotencyKey,
+} from "../shared/api-tool.js";
 import { ApiToolError } from "../shared/errors.js";
 import { unixSeconds } from "../shared/schema.js";
 import type { StripeClient } from "./client.js";
@@ -22,22 +27,68 @@ function createdRange(after: string | undefined, before: string | undefined): Fo
 
 const path = (template: string, id: string) => template.replace("{id}", encodeURIComponent(id));
 
-export function createStripeTools(client: StripeClient): readonly ApiTool[] {
+/** A value in Stripe's search query language: double-quoted, with quotes and backslashes escaped. */
+export function searchValue(value: string): string {
+  return `"${value.replace(/[\\"]/g, (character) => `\\${character}`)}"`;
+}
+
+/** The customer search query for a name (contains) and, optionally, an exact email. */
+export function customerSearchQuery(name: string, email: string | undefined): string {
+  const clauses = [`name~${searchValue(name.trim())}`];
+  if (email !== undefined) clauses.push(`email:${searchValue(email)}`);
+  return clauses.join(" AND ");
+}
+
+export function createStripeTools(
+  client: StripeClient,
+  options: Pick<ApiToolOptions, "timezone"> = {},
+): readonly ApiTool[] {
+  const context: view.ViewContext =
+    options.timezone === undefined ? {} : { timezone: options.timezone };
   const tools = [
     apiTool({
       name: "find_customers",
       description:
-        "Find Stripe customers, usually by exact email address. Returns compact customer " +
-        "records (id, name, email, balance in minor units, created). Page with starting_after.",
+        "Find Stripe customers by exact email address or by name (text contained in the " +
+        "customer's name, such as the company name). Use an email only when a system or the " +
+        "user gave it to you; otherwise search by name. With neither, lists customers. " +
+        "Returns compact customer records (id, name, email, balance in minor units, created). " +
+        "Page an email lookup with starting_after and a name search with page.",
       input: STRIPE_INPUTS.find_customers,
       readOnly: true,
-      async run(args, context) {
+      async run(args, call) {
+        if (args.name !== undefined) {
+          if (args.starting_after !== undefined) {
+            throw new ApiToolError(
+              STRIPE_PROVIDER,
+              "A name search pages with page (next_page), not starting_after.",
+              { code: "invalid_request" },
+            );
+          }
+          const body = await client.get(
+            "/v1/customers/search",
+            {
+              query: customerSearchQuery(args.name, args.email),
+              limit: args.limit,
+              page: args.page,
+            },
+            call.signal,
+          );
+          return view.searchList(body, (item) => view.customer(item, context));
+        }
+        if (args.page !== undefined) {
+          throw new ApiToolError(
+            STRIPE_PROVIDER,
+            "page continues a name search; give the same name with it.",
+            { code: "invalid_request" },
+          );
+        }
         const body = await client.get(
           "/v1/customers",
           { email: args.email, limit: args.limit, starting_after: args.starting_after },
-          context.signal,
+          call.signal,
         );
-        return view.list(body, view.customer);
+        return view.list(body, (item) => view.customer(item, context));
       },
     }),
     apiTool({
@@ -45,13 +96,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
       description: "Get one Stripe customer by id (cus_…).",
       input: STRIPE_INPUTS.get_customer,
       readOnly: true,
-      async run(args, context) {
-        const body = await client.get(
-          path("/v1/customers/{id}", args.customer),
-          {},
-          context.signal,
-        );
-        return view.customer(body);
+      async run(args, call) {
+        const body = await client.get(path("/v1/customers/{id}", args.customer), {}, call.signal);
+        return view.customer(body, context);
       },
     }),
     apiTool({
@@ -62,7 +109,7 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         "and what was already refunded (amount_refunded).",
       input: STRIPE_INPUTS.list_charges,
       readOnly: true,
-      async run(args, context) {
+      async run(args, call) {
         const body = await client.get(
           "/v1/charges",
           {
@@ -72,9 +119,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
             limit: args.limit,
             starting_after: args.starting_after,
           },
-          context.signal,
+          call.signal,
         );
-        return view.list(body, view.charge);
+        return view.list(body, (item) => view.charge(item, context));
       },
     }),
     apiTool({
@@ -84,7 +131,7 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         "creation window. Shows status and the last payment error (e.g. a declined card).",
       input: STRIPE_INPUTS.list_payment_intents,
       readOnly: true,
-      async run(args, context) {
+      async run(args, call) {
         const body = await client.get(
           "/v1/payment_intents",
           {
@@ -93,9 +140,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
             limit: args.limit,
             starting_after: args.starting_after,
           },
-          context.signal,
+          call.signal,
         );
-        return view.list(body, view.paymentIntent);
+        return view.list(body, (item) => view.paymentIntent(item, context));
       },
     }),
     apiTool({
@@ -105,7 +152,7 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         "Shows totals, amount due and paid (minor units) and due dates.",
       input: STRIPE_INPUTS.list_invoices,
       readOnly: true,
-      async run(args, context) {
+      async run(args, call) {
         const body = await client.get(
           "/v1/invoices",
           {
@@ -116,9 +163,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
             limit: args.limit,
             starting_after: args.starting_after,
           },
-          context.signal,
+          call.signal,
         );
-        return view.list(body, (item) => view.invoice(item, false));
+        return view.list(body, (item) => view.invoice(item, false, context));
       },
     }),
     apiTool({
@@ -126,9 +173,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
       description: "Get one Stripe invoice by id (in_…), including its line items.",
       input: STRIPE_INPUTS.get_invoice,
       readOnly: true,
-      async run(args, context) {
-        const body = await client.get(path("/v1/invoices/{id}", args.invoice), {}, context.signal);
-        return view.invoice(body, true);
+      async run(args, call) {
+        const body = await client.get(path("/v1/invoices/{id}", args.invoice), {}, call.signal);
+        return view.invoice(body, true, context);
       },
     }),
     apiTool({
@@ -138,7 +185,7 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         "quantities and billing periods.",
       input: STRIPE_INPUTS.list_subscriptions,
       readOnly: true,
-      async run(args, context) {
+      async run(args, call) {
         const body = await client.get(
           "/v1/subscriptions",
           {
@@ -147,9 +194,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
             limit: args.limit,
             starting_after: args.starting_after,
           },
-          context.signal,
+          call.signal,
         );
-        return view.list(body, view.subscription);
+        return view.list(body, (item) => view.subscription(item, context));
       },
     }),
     apiTool({
@@ -159,7 +206,7 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         "Check it before refunding so a charge is never refunded twice.",
       input: STRIPE_INPUTS.list_refunds,
       readOnly: true,
-      async run(args, context) {
+      async run(args, call) {
         const body = await client.get(
           "/v1/refunds",
           {
@@ -169,9 +216,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
             limit: args.limit,
             starting_after: args.starting_after,
           },
-          context.signal,
+          call.signal,
         );
-        return view.list(body, view.refund);
+        return view.list(body, (item) => view.refund(item, context));
       },
     }),
     apiTool({
@@ -179,8 +226,8 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
       description: "Get the Stripe account balance: available and pending funds per currency.",
       input: STRIPE_INPUTS.get_balance,
       readOnly: true,
-      async run(_args, context) {
-        return view.balance(await client.get("/v1/balance", {}, context.signal));
+      async run(_args, call) {
+        return view.balance(await client.get("/v1/balance", {}, call.signal));
       },
     }),
     apiTool({
@@ -191,14 +238,14 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         "first, then state the exact amount in minor units.",
       input: STRIPE_INPUTS.create_refund,
       readOnly: false,
-      async run(args, context) {
+      async run(args, call) {
         const target = refundTarget(args);
         if (target === null) {
           throw new ApiToolError(STRIPE_PROVIDER, "Give exactly one of charge or payment_intent.", {
             code: "invalid_request",
           });
         }
-        const idempotencyKey = requireIdempotencyKey(STRIPE_PROVIDER, context);
+        const idempotencyKey = requireIdempotencyKey(STRIPE_PROVIDER, call);
         const body = await client.post(
           "/v1/refunds",
           {
@@ -207,9 +254,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
             reason: args.reason,
             metadata: args.metadata,
           },
-          { idempotencyKey, signal: context.signal },
+          { idempotencyKey, signal: call.signal },
         );
-        return view.refund(body);
+        return view.refund(body, context);
       },
     }),
     apiTool({
@@ -219,8 +266,8 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         "cannot be undone and needs the user's approval.",
       input: STRIPE_INPUTS.cancel_subscription,
       readOnly: false,
-      async run(args, context) {
-        const idempotencyKey = requireIdempotencyKey(STRIPE_PROVIDER, context);
+      async run(args, call) {
+        const idempotencyKey = requireIdempotencyKey(STRIPE_PROVIDER, call);
         const params: FormParams = {
           invoice_now: args.invoice_now,
           prorate: args.prorate,
@@ -229,9 +276,9 @@ export function createStripeTools(client: StripeClient): readonly ApiTool[] {
         const body: JsonObject = await client.delete(
           path("/v1/subscriptions/{id}", args.subscription),
           params,
-          { idempotencyKey, signal: context.signal },
+          { idempotencyKey, signal: call.signal },
         );
-        return view.subscription(body);
+        return view.subscription(body, context);
       },
     }),
   ];

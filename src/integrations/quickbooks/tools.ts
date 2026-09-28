@@ -40,7 +40,10 @@ export function createQuickBooksTools(
   client: QuickBooksClient,
   options: ApiToolOptions,
 ): readonly ApiTool[] {
-  const context = { currency: options.currency };
+  const context: view.ProjectionContext =
+    options.timezone === undefined
+      ? { currency: options.currency }
+      : { currency: options.currency, timezone: options.timezone };
   const decimal = (amountMinor: number) => minorToDecimal(amountMinor, options.currency);
   const path = (entity: string, id: string) => `${entity}/${encodeURIComponent(id)}`;
 
@@ -57,7 +60,7 @@ export function createQuickBooksTools(
           `companyinfo/${encodeURIComponent(client.realmId)}`,
           call.signal,
         );
-        return view.companyInfo(body);
+        return view.companyInfo(body, context);
       },
     }),
     apiTool({

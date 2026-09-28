@@ -15,6 +15,8 @@
  *   with a `Request-Id` header on every response.
  * - Cursor lists (`limit`, `starting_after`, `ending_before`), newest first,
  *   `created` range filters and `expand[]`.
+ * - Customer search (`/v1/customers/search`) with the query language subset
+ *   in search.ts, paged with `page` / `next_page`.
  * Provider failures (402 declines, 429, 5xx, dropped connections) are
  * injected with `faults`, so tests choose exactly which request fails.
  *
@@ -64,6 +66,7 @@ import {
   refundJson,
   subscriptionJson,
 } from "./render.js";
+import { matchesSearch, parseSearchQuery } from "./search.js";
 import { type Charge, type Refund, StripeState } from "./state.js";
 
 export interface StripeFakeOptions {
@@ -440,6 +443,48 @@ export class StripeFake {
             (customer) => (email === undefined ? true : customer.email === email),
             (customer) => customerJson(customer),
           );
+        },
+      },
+      {
+        method: "GET",
+        pattern: "/v1/customers/search",
+        allowed: ["query", "limit", "page"],
+        handler: ({ params }) => {
+          const text = stringParam(params, "query");
+          if (text === undefined) {
+            throw invalid("Missing required param: query.", {
+              code: "parameter_missing",
+              param: "query",
+              saved: false,
+            });
+          }
+          const query = parseSearchQuery(text);
+          const limit = intParam(params, "limit", { min: 1, max: 100 }) ?? 10;
+          const page = stringParam(params, "page");
+          const offset = page === undefined ? 0 : Number(/^page_(\d+)$/.exec(page)?.[1] ?? NaN);
+          if (!Number.isInteger(offset)) {
+            throw invalid(`Invalid page: ${page}`, { param: "page", saved: false });
+          }
+          const found = [...this.state.customers.values()]
+            .filter((customer) =>
+              matchesSearch(query, (field) => {
+                if (field === "name") return customer.name;
+                if (field === "email") return customer.email;
+                if (field === "phone") return null;
+                const key = /^metadata\["(.+)"\]$/.exec(field)?.[1];
+                return key === undefined ? null : (customer.metadata[key] ?? null);
+              }),
+            )
+            .sort(newestFirst);
+          const window = found.slice(offset, offset + limit);
+          const hasMore = found.length > offset + limit;
+          return {
+            object: "search_result",
+            data: window.map((customer) => customerJson(customer)),
+            has_more: hasMore,
+            next_page: hasMore ? `page_${offset + limit}` : null,
+            url: "/v1/customers/search",
+          };
         },
       },
       {
