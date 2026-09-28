@@ -1,7 +1,12 @@
 import { existsSync } from "node:fs";
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, STABLE_RULES, SYSTEM_NOTES } from "../../../src/agent/prompt.js";
+import {
+  buildSystemPrompt,
+  STABLE_RULES,
+  SYSTEM_NOTES,
+  weekdayOf,
+} from "../../../src/agent/prompt.js";
 import {
   buildQueryOptions,
   childEnvironment,
@@ -83,7 +88,11 @@ describe("buildSystemPrompt", () => {
   // The rules below come from the real-model runs against the sandbox (the live lane).
   it("moves money only when asked, and recommends instead", () => {
     expect(STABLE_RULES).toContain(
-      "Call a refund, invoice, payment or cancellation tool only when the user asked for that action in this conversation.",
+      "Call a refund, invoice, payment or cancellation tool only when the user asked for that action in this conversation;",
+    );
+    // J3 rerun 7 recorded a payment because the prompt asked it to look for unrecorded ones.
+    expect(STABLE_RULES).toContain(
+      "finding that one is needed (a duplicate charge, a payment never recorded) is not being asked to make it",
     );
     // J1 rerun 3 wrote "I'd like to refund…" and called the refund tool in the same step.
     expect(STABLE_RULES).toContain(
@@ -124,9 +133,25 @@ describe("buildSystemPrompt", () => {
     expect(STABLE_RULES).toContain("Never call a tool with a placeholder or guessed id");
   });
 
-  it("converts UTC timestamps before showing them", () => {
+  it("converts UTC timestamps before showing them, and gives tools times with their offset", () => {
     expect(STABLE_RULES).toContain("a timestamp ending in Z is UTC");
     expect(STABLE_RULES).toContain("convert it to the workspace time zone and name the zone");
+    // A live J3 task for a 1:00 PM ET call got hs_timestamp 13:00Z (9:00 AM ET).
+    expect(STABLE_RULES).toContain("never write a local time with Z");
+  });
+
+  it("names the business date's weekday", () => {
+    expect(weekdayOf("2026-09-28")).toBe("Monday");
+    expect(weekdayOf("2026-09-30")).toBe("Wednesday");
+    expect(weekdayOf("2027-01-01")).toBe("Friday");
+    expect(weekdayOf("not a date")).toBeNull();
+    const odd = buildSystemPrompt({
+      settings: TEST_SETTINGS,
+      businessDate: "someday",
+      connections: [],
+      mode: "interactive",
+    })[2];
+    expect(odd).toContain("Today's business date is someday (America/New_York)");
   });
 
   it("sends when asked to reply or send, and stops at a draft only when asked for one", () => {
@@ -141,6 +166,10 @@ describe("buildSystemPrompt", () => {
     expect(STABLE_RULES).toContain("wait for their results before you write the drafts");
     expect(STABLE_RULES).toContain("report a failure as a failure");
     expect(STABLE_RULES).toContain("describe a call or meeting as it was actually booked");
+    // A J3 draft told a customer "I'm having invoice 1048 resent to you now"; nothing was sent.
+    expect(STABLE_RULES).toContain(
+      "never describe an action you have not taken (such as resending an invoice) as done or under way",
+    );
   });
 
   it("checks payments before reporting receivables, and keeps tables and emoji out of Slack", () => {
@@ -191,7 +220,7 @@ describe("buildSystemPrompt", () => {
     expect(dynamic).toContain("- Stripe (via its API)");
     expect(dynamic).toContain("- QuickBooks Online: QuickBooks Online is not configured.");
     expect(dynamic).toContain("Google Calendar needs to be reconnected");
-    expect(dynamic).toContain("Today's business date is 2026-09-28 (America/New_York)");
+    expect(dynamic).toContain("Today's business date is Monday, 2026-09-28 (America/New_York)");
     expect(dynamic).toContain("Mode: interactive");
   });
 
