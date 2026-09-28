@@ -215,6 +215,167 @@ describe("classifyStripe", () => {
     expect(memory.refine("list_charges", {}, read)).toEqual(read);
   });
 
+  describe("after the run's own refunds", () => {
+    const CHARGES = {
+      data: [
+        {
+          id: "ch_big",
+          amount: 10_000,
+          amount_refunded: 0,
+          currency: "usd",
+          customer: "cus_1",
+          payment_intent: "pi_big",
+        },
+      ],
+    };
+    const refine = (memory: StripeRunMemory, input: JsonObject) => {
+      const base = classifyStripe("create_refund", input, SETTINGS);
+      if (base === null) throw new Error("expected a refund classification");
+      return memory.refine("create_refund", input, base);
+    };
+
+    it("counts a refund this run made in what is already refunded", () => {
+      const memory = new StripeRunMemory(SETTINGS);
+      memory.record("list_charges", {}, CHARGES, false);
+      memory.record(
+        "create_refund",
+        { charge: "ch_big", amount: 5_000 },
+        {
+          id: "re_1",
+          amount: 5_000,
+          charge: "ch_big",
+          payment_intent: "pi_big",
+          status: "succeeded",
+        },
+        false,
+      );
+      const second = refine(memory, { charge: "ch_big", amount: 5_000 });
+      expect(second.details?.facts).toContainEqual({ label: "Already refunded", value: "$50.00" });
+      expect(second.details?.facts).toContainEqual({
+        label: "Refunded in this run",
+        value: "$50.00 (re_1)",
+      });
+      // By payment intent too.
+      expect(
+        refine(memory, { payment_intent: "pi_big", amount: 5_000 }).details?.facts,
+      ).toContainEqual({ label: "Already refunded", value: "$50.00" });
+      // A third $50.00 is more than is left: flagged first, and in the consequence.
+      memory.record(
+        "create_refund",
+        { charge: "ch_big", amount: 5_000 },
+        { id: "re_2", amount: 5_000, charge: "ch_big", status: "pending" },
+        false,
+      );
+      const third = refine(memory, { charge: "ch_big", amount: 5_000 });
+      expect(third.details?.facts[0]).toEqual({
+        label: "Check",
+        value: "Nothing of this charge is left to refund; Stripe will refuse this refund.",
+      });
+      expect(third.details?.consequence).toBe(
+        "Refund $50.00 on Stripe charge ch_big (already refunded in full)",
+      );
+    });
+
+    it("flags a refund larger than what is left", () => {
+      const memory = new StripeRunMemory(SETTINGS);
+      memory.record(
+        "list_charges",
+        {},
+        { data: [{ ...CHARGES.data[0], amount_refunded: 7_500 }] },
+        false,
+      );
+      const card = refine(memory, { charge: "ch_big", amount: 5_000 });
+      expect(card.details?.facts[0]).toEqual({
+        label: "Check",
+        value: "Only $25.00 of this charge is left to refund; Stripe will refuse this refund.",
+      });
+      expect(card.details?.consequence).toBe(
+        "Refund $50.00 on Stripe charge ch_big (more than the $25.00 left to refund)",
+      );
+      expect(refine(memory, { charge: "ch_big", amount: 2_500 }).details?.facts[0]?.label).toBe(
+        "Amount",
+      );
+    });
+
+    it("takes a complete refund list as the refunded total", () => {
+      const memory = new StripeRunMemory(SETTINGS);
+      memory.record("list_charges", {}, CHARGES, false);
+      memory.record(
+        "list_refunds",
+        { charge: "ch_big" },
+        {
+          data: [
+            { id: "re_a", amount: 3_000, status: "succeeded", charge: "ch_big" },
+            { id: "re_b", amount: 9_999, status: "failed", charge: "ch_big" },
+          ],
+          has_more: false,
+        },
+        false,
+      );
+      expect(refine(memory, { charge: "ch_big", amount: 1_000 }).details?.facts).toContainEqual({
+        label: "Already refunded",
+        value: "$30.00",
+      });
+      // A partial page proves nothing.
+      memory.record(
+        "list_refunds",
+        { charge: "ch_big" },
+        { data: [{ id: "re_c", amount: 100, status: "succeeded" }], has_more: true },
+        false,
+      );
+      expect(refine(memory, { charge: "ch_big", amount: 1_000 }).details?.facts).toContainEqual({
+        label: "Already refunded",
+        value: "$30.00",
+      });
+    });
+
+    it("names a refund sent without an answer as possibly applied", () => {
+      const memory = new StripeRunMemory(SETTINGS);
+      memory.record("list_charges", {}, CHARGES, false);
+      memory.record(
+        "create_refund",
+        { charge: "ch_big", amount: 5_000 },
+        { error: { provider: "stripe", code: "outcome_unknown", message: "No answer" } },
+        true,
+      );
+      expect(refine(memory, { charge: "ch_big", amount: 5_000 }).details?.facts).toContainEqual({
+        label: "May already be applied",
+        value:
+          "$50.00 sent in this run got no answer from Stripe. Check the charge's refunds before approving another.",
+      });
+      // A declined refund teaches nothing.
+      const declined = new StripeRunMemory(SETTINGS);
+      declined.record("list_charges", {}, CHARGES, false);
+      declined.record(
+        "create_refund",
+        { charge: "ch_big", amount: 5_000 },
+        { error: { provider: "stripe", status: 402, code: "card_declined", message: "Declined" } },
+        true,
+      );
+      const facts = refine(declined, { charge: "ch_big", amount: 5_000 }).details?.facts ?? [];
+      expect(facts).toContainEqual({ label: "Already refunded", value: "$0.00" });
+      expect(facts.map((fact) => fact.label)).not.toContain("May already be applied");
+    });
+
+    it("shows metadata as what is stored on the refund, last", () => {
+      const card = classifyStripe(
+        "create_refund",
+        {
+          charge: "ch_big",
+          amount: 5_000,
+          reason: "duplicate",
+          metadata: { source: "revenue-desk", gmail_thread: "199a1e0c4b7f2001" },
+        },
+        SETTINGS,
+      );
+      expect(card?.details?.facts.at(-1)).toEqual({
+        label: "Stored on the refund",
+        value: "source=revenue-desk, gmail_thread=199a1e0c4b7f2001",
+      });
+      expect(card?.details?.facts.map((fact) => fact.label)).not.toContain("Note: source");
+    });
+  });
+
   it("denies unknown tools and inputs it cannot judge", () => {
     const denied: Array<[string, JsonObject]> = [
       ["delete_customer", {}],

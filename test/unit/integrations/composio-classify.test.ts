@@ -13,6 +13,7 @@ import { classifyGoogleCalendar } from "../../../src/integrations/google-calenda
 import { createGoogleCalendarIntegration } from "../../../src/integrations/google-calendar/definition.js";
 import { GOOGLE_CALENDAR_PROFILE } from "../../../src/integrations/google-calendar/profile.js";
 import { GoogleCalendarRunMemory } from "../../../src/integrations/google-calendar/run-memory.js";
+import { multilinePreview } from "../../../src/integrations/shared/text.js";
 import { SETTINGS } from "./helpers.js";
 
 const DRAFT_INPUT: JsonObject = {
@@ -143,7 +144,8 @@ describe("classifyGmail", () => {
           { label: "Cc", value: "finance@kestrel.test" },
           { label: "Subject", value: "Your duplicate charge" },
           { label: "Thread", value: "18c2f" },
-          { label: "Body", value: "Hi Ana, We refunded the duplicate charge." },
+          // Line breaks kept: the card shows the email as it will read.
+          { label: "Body", value: "Hi Ana,\n\nWe refunded the duplicate charge." },
         ],
         recipients: ["ana@acme.test", "bo@acme.test", "finance@kestrel.test"],
       },
@@ -258,6 +260,63 @@ describe("classifyGmail", () => {
       classifyGmail("GMAIL_FETCH_EMAILS", { user_id: "me", attachment: null }, SETTINGS)
         ?.actionClass,
     ).toBe("read");
+  });
+});
+
+describe("email bodies on cards", () => {
+  const LONG_REPLY = [
+    "Hi Dana,  ",
+    "",
+    "",
+    "",
+    "Thanks for flagging this.   We found two $490.00 charges on September 22.",
+    "\t",
+    ...Array.from(
+      { length: 60 },
+      (_, index) => `Line ${index + 1} of the detail the customer reads.`,
+    ),
+    "",
+    "Best,",
+    "Maya Lindqvist",
+    "Revenue Operations, Kestrel Analytics",
+  ].join("\r\n");
+
+  it("keeps paragraphs and the signature, and shows the whole of a long email", () => {
+    const known = draftFromCreate({ ...DRAFT_INPUT, body: LONG_REPLY }, { data: { id: "r-7400" } });
+    const body = classifySendDraft({ draft_id: "r-7400" }, known)?.details?.facts.find(
+      (fact) => fact.label === "Body",
+    )?.value;
+    expect(body?.startsWith("Hi Dana,\n\nThanks for flagging this. We found")).toBe(true);
+    // Blank-line runs collapse to one; nothing is cut before the sign-off.
+    expect(body).not.toContain("\n\n\n");
+    expect(body?.endsWith("Best,\nMaya Lindqvist\nRevenue Operations, Kestrel Analytics")).toBe(
+      true,
+    );
+    expect(body).not.toContain("…");
+  });
+
+  it("caps a body at about 4,000 characters, at a line end", () => {
+    const huge = Array.from({ length: 400 }, (_, index) => `Paragraph line ${index}.`).join("\n");
+    const value = multilinePreview(huge);
+    expect(value.length).toBeLessThanOrEqual(4_000);
+    expect(value.endsWith(".…")).toBe(true);
+    expect(multilinePreview("  one  \n\n\n  two  ")).toBe("one\n\ntwo");
+  });
+
+  it("keeps the shape of a reply's message", () => {
+    const reply = classifyGmail(
+      "GMAIL_REPLY_TO_THREAD",
+      {
+        thread_id: "19a1",
+        recipient_email: "dana@harborpine.test",
+        message_body: "Hi Dana,\n\nThe refund is under review.\n\nMaya",
+      },
+      SETTINGS,
+    );
+    expect(reply?.details?.facts).toContainEqual({
+      label: "Message",
+      value: "Hi Dana,\n\nThe refund is under review.\n\nMaya",
+    });
   });
 });
 

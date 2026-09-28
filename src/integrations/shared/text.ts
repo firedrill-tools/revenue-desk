@@ -6,6 +6,31 @@ export function preview(text: string, max = 160): string {
   return line.length <= max ? line : `${line.slice(0, max - 1).trimEnd()}…`;
 }
 
+/**
+ * A message body for an approval card, as the recipient will read it: line
+ * breaks kept, each line trimmed, runs of blank lines collapsed to one, at
+ * most `max` characters (cut at a line end when one is near, with an
+ * ellipsis). A reviewer must see the whole email, its sign-off included, in
+ * the shape it is sent.
+ */
+export function multilinePreview(text: string, max = 4_000): string {
+  const lines = text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[\t ]+/g, " ").trim());
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (line === "" && (kept.length === 0 || kept.at(-1) === "")) continue;
+    kept.push(line);
+  }
+  while (kept.at(-1) === "") kept.pop();
+  const body = kept.join("\n");
+  if (body.length <= max) return body;
+  const cut = body.slice(0, max - 1);
+  const lineEnd = cut.lastIndexOf("\n");
+  return `${(lineEnd > max * 0.8 ? cut.slice(0, lineEnd) : cut).trimEnd()}…`;
+}
+
 /** Ends a sentence with one period, even when the text already ends with one ("Inc."). */
 export function sentence(text: string): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;

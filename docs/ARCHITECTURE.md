@@ -1160,6 +1160,16 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
   prompt tells the model to check, never to repeat, such a write; a call
   the run ends while it executes is `outcome_unknown` with its key.
 
+- **Cards after the run's own writes.** `StripeRunMemory` counts the run's
+  refunds (and a complete `list_refunds`) in "Already refunded", lists them
+  as "Refunded in this run", and flags a refund larger than what is left
+  ("Check", first, and in the consequence); `QuickBooksRunMemory` lowers an
+  invoice's open balance by the run's payments and zeroes a voided one. A
+  refund or payment sent without an answer shows "May already be applied".
+  Refund metadata is one quiet "Stored on the refund" row, and the card's
+  button reads "Add a note for the agent". Email and Slack bodies keep their
+  line breaks, up to about 4,000 characters, folded behind "Show all".
+
 **Integration follow-ups (open).**
 
 - The approval card for `GMAIL_SEND_DRAFT` cannot name the recipients (the

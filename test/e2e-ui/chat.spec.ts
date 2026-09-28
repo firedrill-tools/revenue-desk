@@ -147,7 +147,7 @@ test.describe("Revenue Desk in the sandbox", () => {
     const card = page.getByRole("region", { name: APPROVAL });
     const approve = card.getByRole("button", { name: "Approve" });
     const deny = card.getByRole("button", { name: "Deny" });
-    const note = card.getByRole("button", { name: "Add a note" });
+    const note = card.getByRole("button", { name: "Add a note for the agent" });
     // From the composer, back into the card, then forward through it: note, Deny, Approve.
     await page.getByRole("textbox", { name: "Message Revenue Desk" }).focus();
     await tabTo(page, note, { backwards: true });

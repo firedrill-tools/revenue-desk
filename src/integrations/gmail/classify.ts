@@ -25,7 +25,7 @@ import type { JsonObject, JsonValue } from "../../contracts/json.js";
 import { parseAddress } from "../shared/email.js";
 import { asObject, field, obj, str, strings } from "../shared/json.js";
 import { fromSpec, specOf } from "../shared/profile.js";
-import { listOf, preview } from "../shared/text.js";
+import { listOf, multilinePreview, preview } from "../shared/text.js";
 import { GMAIL_PROFILE } from "./profile.js";
 
 export type Recipients = {
@@ -106,7 +106,7 @@ function createDraft(input: JsonObject): Classification | null {
   const thread = str(input, "thread_id");
   if (thread !== undefined) facts.push({ label: "Thread", value: thread });
   const body = str(input, "body") ?? str(input, "message_body");
-  if (body !== undefined) facts.push({ label: "Body", value: preview(body, 300) });
+  if (body !== undefined) facts.push({ label: "Body", value: multilinePreview(body) });
   return {
     actionClass: "internal_write",
     operation: "gmail.drafts.create",
@@ -193,7 +193,7 @@ export function classifySendDraft(
   if (confirmed.threadId !== null) facts.push({ label: "Thread", value: confirmed.threadId });
   // The person approving reads what the email says, not only who gets it.
   if (confirmed.body !== undefined && confirmed.body !== null) {
-    facts.push({ label: "Body", value: preview(confirmed.body, 600) });
+    facts.push({ label: "Body", value: multilinePreview(confirmed.body) });
   }
   facts.push({ label: "Draft", value: draft });
   return {
@@ -251,7 +251,7 @@ function reply(input: JsonObject): Classification | null {
   const facts = recipientFacts(recipients);
   facts.push({ label: "Thread", value: thread });
   const body = str(input, "message_body");
-  if (body !== undefined) facts.push({ label: "Message", value: preview(body, 300) });
+  if (body !== undefined) facts.push({ label: "Message", value: multilinePreview(body) });
   return {
     actionClass: "outbound",
     operation: "gmail.threads.reply",

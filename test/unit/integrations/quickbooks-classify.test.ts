@@ -321,6 +321,75 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
     expect(memory.refine("list_invoices", {}, read)).toEqual(read);
   });
 
+  it("shows the balance after the run's own payment, so a second one is not a duplicate by accident", () => {
+    const memory = new QuickBooksRunMemory(SETTINGS);
+    memory.record("list_invoices", {}, { invoices: [INVOICE_1051], count: 1 }, false);
+    const input = { customer_id: "63", invoice_id: "151", amount_minor: 198_000 };
+    memory.record(
+      "record_payment",
+      input,
+      {
+        id: "812",
+        customer: { id: "63", name: "Meridian Labs" },
+        total_minor: 198_000,
+        currency: "USD",
+        applied_to: [{ invoice_id: "151", amount_minor: 198_000 }],
+      },
+      false,
+    );
+    const second = classified(memory, "record_payment", input);
+    expect(second.details?.facts[0]).toEqual({
+      label: "Check",
+      value: "The invoice has no open balance; this payment would be left unapplied or refused.",
+    });
+    expect(second.details?.facts).toContainEqual({
+      label: "Applied to",
+      value: "Invoice 1051 (QuickBooks id 151), open balance $0.00",
+    });
+    expect(second.details?.facts).toContainEqual({
+      label: "Payment recorded in this run",
+      value: "$1,980.00 (payment 812)",
+    });
+    // Sending or voiding it afterwards shows the same balance.
+    expect(classified(memory, "send_invoice", { invoice_id: "151" }).details?.facts).toContainEqual(
+      { label: "Open balance", value: "$0.00" },
+    );
+  });
+
+  it("names a payment sent without an answer as possibly applied", () => {
+    const memory = new QuickBooksRunMemory(SETTINGS);
+    memory.record("get_invoice", {}, INVOICE_1051, false);
+    const input = { customer_id: "63", invoice_id: "151", amount_minor: 50_000 };
+    memory.record(
+      "record_payment",
+      input,
+      { error: { provider: "quickbooks", code: "outcome_unknown", message: "No answer" } },
+      true,
+    );
+    expect(classified(memory, "record_payment", input).details?.facts).toContainEqual({
+      label: "May already be applied",
+      value:
+        "$500.00 sent in this run got no answer from QuickBooks. Check the invoice's payments before approving another.",
+    });
+    // Any other failure teaches nothing.
+    const other = new QuickBooksRunMemory(SETTINGS);
+    other.record("get_invoice", {}, INVOICE_1051, false);
+    other.record("record_payment", input, { error: { code: "ValidationFault" } }, true);
+    expect(
+      classified(other, "record_payment", input).details?.facts.map((fact) => fact.label),
+    ).not.toContain("May already be applied");
+  });
+
+  it("sets a voided invoice's balance to zero", () => {
+    const memory = new QuickBooksRunMemory(SETTINGS);
+    memory.record("get_invoice", {}, INVOICE_1051, false);
+    // A void result that still carries the old balance.
+    memory.record("void_invoice", { invoice_id: "151" }, INVOICE_1051, false);
+    expect(classified(memory, "send_invoice", { invoice_id: "151" }).details?.facts).toContainEqual(
+      { label: "Open balance", value: "$0.00" },
+    );
+  });
+
   it("names a customer seen only through an invoice or payment reference", () => {
     const memory = new QuickBooksRunMemory(SETTINGS);
     memory.record(

@@ -2,27 +2,34 @@
 // RunMemory, src/gateway/catalog.ts). The writes name records by QuickBooks
 // id, so their approval cards take the customer's name, the invoice number,
 // its amounts and its billing email from this run's earlier QuickBooks
-// results (classify.ts). Only QuickBooks' own results are remembered, never
-// the model's inputs, and a failed call teaches nothing.
+// results (classify.ts). The run's own payments and voids count: a second
+// payment on an invoice must not show the balance from before the first.
+// Only QuickBooks' own results are remembered, never the model's inputs,
+// and a failed call teaches nothing, except a payment sent without an
+// answer (outcome_unknown), which is remembered as possibly applied.
 
 import type { Classification, ClassifierSettings } from "../../contracts/integration.js";
 import type { JsonObject, JsonValue } from "../../contracts/json.js";
 import type { RunMemory } from "../../gateway/catalog.js";
+import { OUTCOME_UNKNOWN } from "../../gateway/types.js";
 import { asObject, num, obj, objects, str } from "../shared/json.js";
 import {
   classifyQuickBooks,
   type KnownCustomer,
   type KnownInvoice,
   type QuickBooksKnown,
+  type RunPayment,
 } from "./classify.js";
 
 const CUSTOMER_RESULTS = new Set(["get_customer", "create_customer"]);
-const INVOICE_RESULTS = new Set(["get_invoice", "create_invoice", "send_invoice", "void_invoice"]);
+const INVOICE_RESULTS = new Set(["get_invoice", "create_invoice", "send_invoice"]);
 
 export class QuickBooksRunMemory implements RunMemory, QuickBooksKnown {
   readonly #settings: ClassifierSettings;
   readonly #customers = new Map<string, KnownCustomer>();
   readonly #invoices = new Map<string, KnownInvoice>();
+  /** This run's payments, by the invoice they were applied to. */
+  readonly #payments = new Map<string, RunPayment[]>();
 
   constructor(settings: ClassifierSettings) {
     this.#settings = settings;
@@ -36,9 +43,37 @@ export class QuickBooksRunMemory implements RunMemory, QuickBooksKnown {
     return this.#invoices.get(id);
   }
 
-  record(tool: string, _input: JsonObject, output: JsonValue, isError: boolean): void {
+  paymentsInRun(invoiceId: string): readonly RunPayment[] {
+    return this.#payments.get(invoiceId) ?? [];
+  }
+
+  record(tool: string, input: JsonObject, output: JsonValue, isError: boolean): void {
     const result = asObject(output);
-    if (isError || result === undefined) return;
+    if (isError) {
+      if (tool === "record_payment" && str(obj(result, "error"), "code") === OUTCOME_UNKNOWN) {
+        const invoice = str(input, "invoice_id");
+        const amount = num(input, "amount_minor");
+        if (invoice !== undefined && amount !== undefined) {
+          this.#addPayment(invoice, { id: null, amountMinor: amount, uncertain: true });
+        }
+      }
+      return;
+    }
+    if (result === undefined) return;
+    if (tool === "record_payment") {
+      this.#learnOwnPayment(result);
+      return;
+    }
+    if (tool === "void_invoice") {
+      this.#learnInvoice(result);
+      const id = str(result, "id");
+      const voided = id === undefined ? undefined : this.#invoices.get(id);
+      // A voided invoice has nothing left to pay, whatever the result carried.
+      if (id !== undefined && voided !== undefined) {
+        this.#invoices.set(id, { ...voided, balanceMinor: 0 });
+      }
+      return;
+    }
     if (tool === "find_customers") {
       for (const customer of objects(result, "customers")) this.#learnCustomer(customer);
     } else if (CUSTOMER_RESULTS.has(tool)) {
@@ -55,6 +90,29 @@ export class QuickBooksRunMemory implements RunMemory, QuickBooksKnown {
 
   refine(tool: string, input: JsonObject, classification: Classification): Classification {
     return classifyQuickBooks(tool, input, this.#settings, this) ?? classification;
+  }
+
+  /** A payment this run recorded lowers each invoice it was applied to. */
+  #learnOwnPayment(payment: JsonObject): void {
+    this.#learnReference(obj(payment, "customer"));
+    const id = str(payment, "id") ?? null;
+    for (const applied of objects(payment, "applied_to")) {
+      const invoice = str(applied, "invoice_id");
+      const amount = num(applied, "amount_minor");
+      if (invoice === undefined || amount === undefined) continue;
+      this.#addPayment(invoice, { id, amountMinor: amount, uncertain: false });
+      const known = this.#invoices.get(invoice);
+      if (known?.balanceMinor !== null && known?.balanceMinor !== undefined) {
+        this.#invoices.set(invoice, {
+          ...known,
+          balanceMinor: Math.max(0, known.balanceMinor - amount),
+        });
+      }
+    }
+  }
+
+  #addPayment(invoice: string, payment: RunPayment): void {
+    this.#payments.set(invoice, [...(this.#payments.get(invoice) ?? []), payment]);
   }
 
   #learnCustomer(customer: JsonObject): void {

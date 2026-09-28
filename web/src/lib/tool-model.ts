@@ -135,6 +135,36 @@ export function approvalFactRows(facts: ApprovalFacts): ApprovalFact[] {
   return rows;
 }
 
+/**
+ * How a fact row reads on the card:
+ * - warning: a problem the reviewer must see first (Stripe would refuse the
+ *   refund, the invoice belongs to someone else, a write may already be
+ *   applied);
+ * - text: a message body, shown with its line breaks;
+ * - muted: bookkeeping stored with the action (Stripe metadata);
+ * - plain: everything else.
+ */
+export type FactKind = "warning" | "text" | "muted" | "plain";
+
+const WARNING_FACTS = new Set(["Check", "Mismatch", "May already be applied"]);
+const TEXT_FACTS = new Set(["Body", "Message"]);
+const MUTED_FACTS = new Set(["Stored on the refund"]);
+
+export function factKind(label: string): FactKind {
+  if (WARNING_FACTS.has(label)) return "warning";
+  if (TEXT_FACTS.has(label)) return "text";
+  if (MUTED_FACTS.has(label)) return "muted";
+  return "plain";
+}
+
+/** A text fact taller than this many lines (or this long) starts folded, with "Show all". */
+export const FOLDED_TEXT_LINES = 8;
+const FOLDED_TEXT_CHARS = 600;
+
+export function isLongText(value: string): boolean {
+  return value.split("\n").length > FOLDED_TEXT_LINES || value.length > FOLDED_TEXT_CHARS;
+}
+
 // ---------------------------------------------------------------------------
 // Tool rows
 // ---------------------------------------------------------------------------

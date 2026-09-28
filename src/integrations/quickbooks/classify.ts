@@ -49,15 +49,27 @@ export type KnownInvoice = {
   readonly currency: string | null;
 };
 
+/** A payment this run recorded against an invoice, or sent without QuickBooks' answer. */
+export type RunPayment = {
+  /** QuickBooks' payment id; null when the answer never came. */
+  readonly id: string | null;
+  readonly amountMinor: number;
+  /** Sent, but QuickBooks' answer never arrived: it may have been recorded. */
+  readonly uncertain: boolean;
+};
+
 /** Lookups into what the run's earlier QuickBooks calls returned. */
 export interface QuickBooksKnown {
   customer(id: string): KnownCustomer | undefined;
   invoice(id: string): KnownInvoice | undefined;
+  /** Payments this run recorded (or may have recorded) against an invoice. */
+  paymentsInRun(invoiceId: string): readonly RunPayment[];
 }
 
 const NOTHING_KNOWN: QuickBooksKnown = {
   customer: () => undefined,
   invoice: () => undefined,
+  paymentsInRun: () => [],
 };
 
 function customerName(id: string, known: QuickBooksKnown): string | null {
@@ -257,6 +269,41 @@ function recordPayment(
       facts.push({
         label: "Mismatch",
         value: `The invoice belongs to ${customerLabel(seen.customerId, known)}, not this customer`,
+      });
+    }
+    const payments = known.paymentsInRun(invoice);
+    const recorded = payments.filter((payment) => !payment.uncertain);
+    if (recorded.length > 0) {
+      facts.push({
+        label: "Payment recorded in this run",
+        value: recorded
+          .map(
+            (payment) =>
+              `${formatMoney(money(payment.amountMinor, seen?.currency ?? settings.currency))}${payment.id === null ? "" : ` (payment ${payment.id})`}`,
+          )
+          .join(", "),
+      });
+    }
+    const unanswered = payments.filter((payment) => payment.uncertain);
+    if (unanswered.length > 0) {
+      facts.push({
+        label: "May already be applied",
+        value: `${unanswered
+          .map((payment) =>
+            formatMoney(money(payment.amountMinor, seen?.currency ?? settings.currency)),
+          )
+          .join(
+            ", ",
+          )} sent in this run got no answer from QuickBooks. Check the invoice's payments before approving another.`,
+      });
+    }
+    if (balance !== null && amountMinor > balance.amountMinor) {
+      facts.unshift({
+        label: "Check",
+        value:
+          balance.amountMinor === 0
+            ? "The invoice has no open balance; this payment would be left unapplied or refused."
+            : `The payment is more than the invoice's open balance of ${formatMoney(balance)}.`,
       });
     }
   }

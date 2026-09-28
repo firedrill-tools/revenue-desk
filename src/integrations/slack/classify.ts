@@ -9,7 +9,7 @@ import type {
 } from "../../contracts/integration.js";
 import type { JsonObject } from "../../contracts/json.js";
 import { fromSpec, specOf } from "../shared/profile.js";
-import { preview } from "../shared/text.js";
+import { multilinePreview } from "../shared/text.js";
 import { SLACK_PROFILE } from "./profile.js";
 import { channelLabel, mentionsEveryone, normaliseChannel, postMessageInput } from "./schemas.js";
 
@@ -27,7 +27,7 @@ function classifyPost(input: JsonObject, settings: ClassifierSettings): Classifi
   const broadcast = mentionsEveryone(text);
   const facts: ApprovalFact[] = [{ label: "Channel", value: label }];
   if (threadTs !== undefined) facts.push({ label: "In thread", value: threadTs });
-  facts.push({ label: "Message", value: preview(text, 300) });
+  facts.push({ label: "Message", value: multilinePreview(text) });
   if (broadcast) facts.push({ label: "Notifies", value: "Everyone in the channel" });
   if (!allowed) facts.push({ label: "Allowed channel", value: "No" });
   const where = threadTs === undefined ? `to ${label}` : `in a thread in ${label}`;

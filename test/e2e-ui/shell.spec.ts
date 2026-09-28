@@ -99,7 +99,7 @@ test.describe("phone ergonomics", () => {
       page.getByRole("button", { name: "Open conversations" }),
       page.getByRole("button", { name: /^Connections: / }),
       page.getByRole("button", { name: "Open inspector" }),
-      card.getByRole("button", { name: "Add a note" }),
+      card.getByRole("button", { name: "Add a note for the agent" }),
       card.getByRole("button", { name: "Deny" }),
       card.getByRole("button", { name: "Approve" }),
       page.getByRole("button", { name: /^Checked \d+ sources/ }),

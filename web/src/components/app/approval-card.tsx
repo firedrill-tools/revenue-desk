@@ -17,7 +17,13 @@ import { useNow } from "@/hooks/use-now";
 import { INTEGRATIONS } from "@/lib/contracts";
 import { formatCountdown, looksLikeRecordIds, msUntil } from "@/lib/format";
 import { ACTION_CLASS_LABELS, isHighRiskClass } from "@/lib/labels";
-import { APPROVAL_STATE_LABELS, approvalFactRows, type ToolApprovalModel } from "@/lib/tool-model";
+import {
+  APPROVAL_STATE_LABELS,
+  approvalFactRows,
+  factKind,
+  isLongText,
+  type ToolApprovalModel,
+} from "@/lib/tool-model";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "./status";
 
@@ -92,6 +98,53 @@ export function plainBlockedReason(reason: string | null): string {
   return plain === "" ? fallback : plain;
 }
 
+/** One fact of the card: warnings stand out, message bodies keep their lines, metadata is quiet. */
+function FactRow({ label, value }: { label: string; value: string }) {
+  const kind = factKind(label);
+  const long = kind === "text" && isLongText(value);
+  const [expanded, setExpanded] = useState(false);
+  const valueId = useId();
+  return (
+    <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 py-2 text-body-sm sm:grid-cols-[8.5rem_minmax(0,1fr)]">
+      <dt
+        className={cn(
+          "text-muted-foreground",
+          kind === "warning" && "font-medium text-warning",
+          kind === "muted" && "text-meta",
+        )}
+      >
+        {label}
+      </dt>
+      <dd className="min-w-0">
+        <div
+          id={valueId}
+          className={cn(
+            "min-w-0 break-words text-foreground tabular-nums",
+            kind === "warning" && "font-medium text-warning",
+            kind === "muted" && "font-mono text-meta text-muted-foreground leading-[18px]",
+            kind === "text" && "whitespace-pre-wrap",
+            long && !expanded && "max-h-40 overflow-hidden",
+            kind === "plain" && looksLikeRecordIds(value) && "font-mono text-meta leading-[18px]",
+          )}
+        >
+          {value}
+        </div>
+        {long ? (
+          <button
+            type="button"
+            className="mt-1 text-meta text-brand hover:underline"
+            aria-expanded={expanded}
+            aria-controls={valueId}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {expanded ? "Show less" : "Show all"}
+          </button>
+        ) : null}
+      </dd>
+    </div>
+  );
+}
+
 export type ApprovalCardProps = {
   approval: ToolApprovalModel;
   submission?: ApprovalSubmission | undefined;
@@ -159,20 +212,7 @@ export function ApprovalCard({
         {rows.length > 0 ? (
           <dl className="mx-4 mt-3 divide-y border-y">
             {rows.map((row) => (
-              <div
-                key={`${row.label}:${row.value}`}
-                className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 py-2 text-body-sm sm:grid-cols-[8.5rem_minmax(0,1fr)]"
-              >
-                <dt className="text-muted-foreground">{row.label}</dt>
-                <dd
-                  className={cn(
-                    "min-w-0 break-words text-foreground tabular-nums",
-                    looksLikeRecordIds(row.value) && "font-mono text-meta leading-[18px]",
-                  )}
-                >
-                  {row.value}
-                </dd>
-              </div>
+              <FactRow key={`${row.label}:${row.value}`} label={row.label} value={row.value} />
             ))}
           </dl>
         ) : null}
@@ -213,7 +253,7 @@ export function ApprovalCard({
             aria-expanded={noteOpen}
             onClick={() => setNoteOpen((open) => !open)}
           >
-            {noteOpen ? "Hide note" : "Add a note"}
+            {noteOpen ? "Hide note" : "Add a note for the agent"}
           </Button>
           <span className="flex items-center gap-2">
             <ConfirmationAction variant="outline" disabled={sending} onClick={() => decide(false)}>

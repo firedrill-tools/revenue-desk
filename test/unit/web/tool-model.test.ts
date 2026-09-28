@@ -14,7 +14,9 @@ import {
 import { presentValue } from "../../../web/src/lib/present.js";
 import {
   approvalFactRows,
+  factKind,
   humanizeToolName,
+  isLongText,
   layoutAssistantParts,
   mergeToolRow,
   READ_GROUP_MIN,
@@ -487,5 +489,25 @@ describe("presentValue", () => {
     expect(presentValue({ content: [{ type: "image", data: "…" }] })?.language).toBe("json");
     expect(presentValue(undefined)).toBeNull();
     expect(presentValue("")).toBeNull();
+  });
+});
+
+describe("approval card fact rows", () => {
+  it("marks problems, message bodies and stored metadata", () => {
+    expect(factKind("Check")).toBe("warning");
+    expect(factKind("Mismatch")).toBe("warning");
+    expect(factKind("May already be applied")).toBe("warning");
+    expect(factKind("Body")).toBe("text");
+    expect(factKind("Message")).toBe("text");
+    expect(factKind("Stored on the refund")).toBe("muted");
+    expect(factKind("Amount")).toBe("plain");
+  });
+
+  it("folds a long message body behind Show all", () => {
+    expect(isLongText("Hi Dana,\n\nThanks.\n\nMaya")).toBe(false);
+    expect(isLongText(Array.from({ length: 12 }, (_, index) => `Line ${index}`).join("\n"))).toBe(
+      true,
+    );
+    expect(isLongText("x".repeat(700))).toBe(true);
   });
 });

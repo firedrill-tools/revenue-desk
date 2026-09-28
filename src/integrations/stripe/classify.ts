@@ -4,8 +4,11 @@
 //
 // A refund names only a charge id. With what the run's earlier Stripe calls
 // returned (StripeRunMemory in run-memory.ts, `known` here), the card also
-// names the customer, the charge's amount, date and description, and what
-// was already refunded. Those facts come only from Stripe's own results.
+// names the customer, the charge's amount, date and description, what was
+// already refunded (including this run's own refunds, which the card lists),
+// and flags a refund larger than what is left, which Stripe would refuse.
+// Those facts come only from Stripe's own results; a refund this run sent
+// without an answer is named as possibly applied.
 
 import type {
   ApprovalFact,
@@ -40,6 +43,15 @@ export type KnownCharge = {
   readonly billingName: string | null;
 };
 
+/** A refund this run made on a charge, or sent without getting Stripe's answer. */
+export type RunRefund = {
+  /** Stripe's refund id; null when the answer never came. */
+  readonly id: string | null;
+  readonly amountMinor: number;
+  /** Sent, but Stripe's answer never arrived: it may have been applied. */
+  readonly uncertain: boolean;
+};
+
 /** Lookups into what the run's earlier Stripe calls returned. */
 export interface StripeKnown {
   customer(id: string): KnownStripeCustomer | undefined;
@@ -47,12 +59,15 @@ export interface StripeKnown {
   charge(id: string): KnownCharge | undefined;
   /** The customer of a subscription the run listed. */
   subscriptionCustomer(id: string): string | undefined;
+  /** This run's refunds of a charge, by the charge's or its payment intent's id. */
+  refundsInRun(id: string): readonly RunRefund[];
 }
 
 const NOTHING_KNOWN: StripeKnown = {
   customer: () => undefined,
   charge: () => undefined,
   subscriptionCustomer: () => undefined,
+  refundsInRun: () => [],
 };
 
 /** The customer's name (or email), when the run saw it. */
@@ -89,6 +104,24 @@ function classifyRefund(
       ? null
       : preview(charge.billingName, 80));
   const facts: ApprovalFact[] = [{ label: "Amount", value: formatted }];
+  const runRefunds = known.refundsInRun(target.id);
+  // What Stripe will still refund: the charge less what was refunded, this run's refunds included.
+  const left =
+    charge?.amountMinor === null ||
+    charge?.amountMinor === undefined ||
+    charge.refundedMinor === null
+      ? null
+      : Math.max(0, charge.amountMinor - charge.refundedMinor);
+  const tooMuch = left !== null && parsed.data.amount > left;
+  if (tooMuch) {
+    facts.unshift({
+      label: "Check",
+      value:
+        left === 0
+          ? "Nothing of this charge is left to refund; Stripe will refuse this refund."
+          : `Only ${formatMoney(money(left, currency))} of this charge is left to refund; Stripe will refuse this refund.`,
+    });
+  }
   if (customer !== null) {
     facts.push({
       label: "Customer",
@@ -114,21 +147,54 @@ function classifyRefund(
   } else {
     facts.push({ label: "Charge details", value: "Not read in this run" });
   }
+  const made = runRefunds.filter((refund) => !refund.uncertain);
+  if (made.length > 0) {
+    facts.push({
+      label: "Refunded in this run",
+      value: made
+        .map(
+          (refund) =>
+            `${formatMoney(money(refund.amountMinor, currency))}${refund.id === null ? "" : ` (${refund.id})`}`,
+        )
+        .join(", "),
+    });
+  }
+  const unanswered = runRefunds.filter((refund) => refund.uncertain);
+  if (unanswered.length > 0) {
+    facts.push({
+      label: "May already be applied",
+      value: `${unanswered
+        .map((refund) => formatMoney(money(refund.amountMinor, currency)))
+        .join(
+          ", ",
+        )} sent in this run got no answer from Stripe. Check the charge's refunds before approving another.`,
+    });
+  }
   if (parsed.data.reason !== undefined) {
     facts.push({ label: "Reason", value: REASONS[parsed.data.reason] });
   }
-  for (const [key, value] of Object.entries(parsed.data.metadata ?? {})) {
-    facts.push({ label: `Note: ${key}`, value: preview(value, 80) });
+  // Metadata is stored on the refund for bookkeeping; it is not a note to the reviewer.
+  const stored = Object.entries(parsed.data.metadata ?? {});
+  if (stored.length > 0) {
+    facts.push({
+      label: "Stored on the refund",
+      value: preview(stored.map(([key, value]) => `${key}=${value}`).join(", "), 160),
+    });
   }
+  const already = tooMuch
+    ? left === 0
+      ? " (already refunded in full)"
+      : ` (more than the ${formatMoney(money(left ?? 0, currency))} left to refund)`
+    : "";
   return {
     actionClass: "financial",
     operation: "stripe.refunds.create",
     title: "Refund charge in Stripe",
     details: {
       consequence:
-        customer === null
+        (customer === null
           ? `Refund ${formatted} on Stripe ${noun} ${target.id}`
-          : `Refund ${formatted} to ${customer} on Stripe ${noun} ${target.id}`,
+          : `Refund ${formatted} to ${customer} on Stripe ${noun} ${target.id}`) + already,
       facts,
       amount,
       recordIds: [target.id],
