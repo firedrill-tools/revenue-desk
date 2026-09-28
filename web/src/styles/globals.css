@@ -172,6 +172,11 @@
   line-height: 1.125rem;
   font-variant-numeric: tabular-nums;
 }
+/* Numeric columns (web/src/lib/tables.ts) align on the right, header included. */
+.rd-prose [data-streamdown="table-header-cell"][data-align="end"],
+.rd-prose [data-streamdown="table-cell"][data-align="end"] {
+  text-align: right;
+}
 
 /* Touch screens: every control is a 44px target (WCAG 2.5.5). Heights grow;
    the dense desktop sizes stay for mouse pointers. Buttons carry

@@ -42,7 +42,8 @@ export const Message = ({ className, from, ...props }: MessageProps) => (
   />
 );
 
-export type MessageContentProps = HTMLAttributes<HTMLDivElement>;
+// revenue-desk patch: ComponentProps, so a ref reaches the div (React 19).
+export type MessageContentProps = ComponentProps<"div">;
 
 export const MessageContent = ({
   children,

@@ -1,6 +1,6 @@
 import type { DynamicToolUIPart } from "ai";
 import { CheckIcon, CopyIcon, ReceiptTextIcon } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@/app/router";
 import {
   Message,
@@ -32,6 +32,7 @@ import {
   messageUsage,
 } from "@/lib/messages";
 import { runHref } from "@/lib/routes";
+import { alignNumericColumns } from "@/lib/tables";
 import {
   type AssistantBlock,
   layoutAssistantParts,
@@ -177,6 +178,11 @@ function AssistantMessage({
   );
   const settled = isRunSettled(message, streaming);
   const run = message.metadata?.runId ? context.runs.get(message.metadata.runId) : undefined;
+  // Once the answer is complete, numeric table columns align on the right.
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (settled && message.parts.length > 0) alignNumericColumns(contentRef.current);
+  }, [settled, message.parts]);
   // Nothing to show yet: the status line below the thread says what is happening.
   if (blocks.length === 0 && !settled) return null;
   const rowOf = (part: DynamicToolUIPart) =>
@@ -184,7 +190,7 @@ function AssistantMessage({
 
   return (
     <Message from="assistant" className="max-w-full">
-      <MessageContent className="w-full gap-3 overflow-visible">
+      <MessageContent ref={contentRef} className="w-full gap-3 overflow-visible">
         {blocks.map((block) => {
           if (block.kind === "reads") {
             return (
