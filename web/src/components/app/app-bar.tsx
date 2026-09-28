@@ -10,7 +10,7 @@ import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { BrandMark, Wordmark } from "./brand";
 import { ConnectionsHealth } from "./connections-health";
-import { MetaChip } from "./status";
+import { MetaChip, StatusDot } from "./status";
 
 export function isNavActive(route: Route, name: (typeof NAV_ITEMS)[number]["name"]): boolean {
   return route.name === name;
@@ -55,6 +55,21 @@ function ModelLabel() {
   if (state.status === "loading") return <Skeleton className="hidden h-4 w-36 md:block" />;
   if (state.status === "error") return null;
   const { session } = state;
+  if (!session.modelConfigured) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 font-medium text-meta text-warning">
+            <StatusDot tone="warning" />
+            No model key
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          ANTHROPIC_API_KEY is not set: add it and restart the server.
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -89,7 +104,13 @@ export function ThemeToggle({ className }: { className?: string }) {
   );
 }
 
-export function AppBar({ route }: { route: Route }) {
+export function AppBar({
+  route,
+  waitingApprovals = 0,
+}: {
+  route: Route;
+  waitingApprovals?: number;
+}) {
   const state = useSessionState();
   const { setRailOpen, inspectorAvailable, inspectorOpen, setInspectorOpen } = useShell();
   const sandbox = state.status === "ready" && state.session.mode === "sandbox";
@@ -99,11 +120,23 @@ export function AppBar({ route }: { route: Route }) {
       <Button
         variant="ghost"
         size="icon"
-        className="text-muted-foreground lg:hidden"
-        aria-label="Open conversations"
+        className="relative text-muted-foreground lg:hidden"
+        aria-label={
+          waitingApprovals > 0
+            ? `Open conversations, ${waitingApprovals} ${waitingApprovals === 1 ? "approval" : "approvals"} waiting`
+            : "Open conversations"
+        }
         onClick={() => setRailOpen(true)}
       >
         <MenuIcon />
+        {waitingApprovals > 0 ? (
+          <span
+            aria-hidden="true"
+            className="absolute top-1 right-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 font-semibold text-[10px] text-background tabular-nums leading-none"
+          >
+            {waitingApprovals}
+          </span>
+        ) : null}
       </Button>
       <Link
         href="/"

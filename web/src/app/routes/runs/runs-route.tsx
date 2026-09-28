@@ -25,7 +25,13 @@ import { useResource } from "@/hooks/use-resource";
 import { api, errorMessage } from "@/lib/api";
 import { RUN_STATUSES, type RunSource, type RunStatus, type RunSummaryView } from "@/lib/contracts";
 import { conversationTitle } from "@/lib/conversations";
-import { formatCost, formatDateTime, formatDuration, formatRelativeTime } from "@/lib/format";
+import {
+  approvalsSummary,
+  formatCost,
+  formatDateTime,
+  formatDuration,
+  formatRelativeTime,
+} from "@/lib/format";
 import { KIND_LABELS, KIND_ORDER, RUN_STATUS_LABELS } from "@/lib/labels";
 import { runHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -57,19 +63,17 @@ function ToolCounts({ run }: { run: RunSummaryView }) {
           </span>
         ) : null,
       )}
+      {run.failedToolCalls > 0 ? (
+        <span className="font-medium text-danger">{run.failedToolCalls} failed</span>
+      ) : null}
     </span>
   );
 }
 
 function Approvals({ run }: { run: RunSummaryView }) {
-  const { pending, approved, denied } = run.approvals;
-  if (pending + approved + denied === 0) return <span className="text-muted-foreground">–</span>;
-  const parts = [
-    pending > 0 ? `${pending} waiting` : null,
-    approved > 0 ? `${approved} approved` : null,
-    denied > 0 ? `${denied} denied` : null,
-  ].filter((part) => part !== null);
-  return <span className={cn(pending > 0 && "text-warning")}>{parts.join(", ")}</span>;
+  const text = approvalsSummary(run.approvals);
+  if (text === null) return <span className="text-muted-foreground">–</span>;
+  return <span className={cn(run.approvals.pending > 0 && "text-warning")}>{text}</span>;
 }
 
 function StartedCell({ iso }: { iso: string }) {
@@ -218,6 +222,7 @@ function RunsList({ runs, titles }: { runs: readonly RunSummaryView[]; titles: R
                 <span>{runDuration(run) || "–"}</span>
                 <span>{run.usage ? formatCost(run.usage.costUsd) : "–"}</span>
                 <ToolCounts run={run} />
+                {approvalsSummary(run.approvals) !== null ? <Approvals run={run} /> : null}
               </span>
             </button>
           </li>

@@ -158,6 +158,12 @@ export type ConversationSummary = {
   readonly status: ConversationStatus;
   readonly activeRunId: string | null;
   readonly pendingApprovals: number;
+  /**
+   * The newest pending approval's consequence ("Refund $490.00 to Harbor &
+   * Pine Outfitters"), so two waiting conversations with the same title can
+   * be told apart; null when nothing waits.
+   */
+  readonly pendingConsequence: string | null;
   readonly totalCostUsd: number;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -236,6 +242,12 @@ export type RunSummaryView = {
   readonly finishedAt: string | null;
   readonly usage: RunUsage | null;
   readonly toolCallsByKind: { readonly [K in ConnectionKind]: number };
+  /**
+   * Calls that reached a system and failed, or whose outcome is unknown (a
+   * write that ended without an answer). Calls rejected before they ran
+   * (invalid input, unknown tool) are not counted.
+   */
+  readonly failedToolCalls: number;
   readonly approvals: {
     readonly pending: number;
     readonly approved: number;
@@ -283,6 +295,11 @@ export type SessionInfo = {
   readonly effort: AgentEffort;
   readonly businessDate: string;
   readonly approvalTimeoutMs: number;
+  /**
+   * False when ANTHROPIC_API_KEY is not set: every run would fail, so the app
+   * says so up front and offers no job to start.
+   */
+  readonly modelConfigured: boolean;
 };
 
 // ---------------------------------------------------------------------------

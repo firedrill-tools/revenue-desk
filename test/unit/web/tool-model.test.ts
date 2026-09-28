@@ -14,7 +14,9 @@ import {
 import { presentValue } from "../../../web/src/lib/present.js";
 import {
   approvalFactRows,
+  approvalOutcome,
   factKind,
+  failureLine,
   humanizeToolName,
   isLongText,
   layoutAssistantParts,
@@ -23,6 +25,7 @@ import {
   readApprovalFacts,
   readToolMetadata,
   sourceLabels,
+  type ToolRowModel,
   toolRowFromPart,
   toolRowFromView,
 } from "../../../web/src/lib/tool-model.js";
@@ -509,5 +512,57 @@ describe("approval card fact rows", () => {
       true,
     );
     expect(isLongText("x".repeat(700))).toBe(true);
+  });
+});
+
+describe("an approved action that then failed", () => {
+  const approved = { state: "approved" as const };
+  const row = (status: ToolRowModel["status"], errorText: string | null = null) => ({
+    status,
+    errorText,
+    integrationLabel: "Stripe",
+  });
+
+  it("never reads as a success", () => {
+    expect(approvalOutcome(approved, row("failed", "Your card was declined."))).toEqual({
+      label: "Approved, then failed",
+      tone: "danger",
+      detail: "Stripe: Your card was declined.",
+    });
+    expect(approvalOutcome(approved, row("outcome_unknown", "No answer.\nCheck it."))).toEqual({
+      label: "Approved, outcome unknown",
+      tone: "warning",
+      detail: "Stripe: No answer.",
+    });
+    expect(approvalOutcome(approved, row("stopped"))).toMatchObject({
+      label: "Approved, then stopped",
+    });
+    expect(approvalOutcome(approved, row("succeeded"))).toEqual({
+      label: "Approved",
+      tone: "success",
+      detail: null,
+    });
+    expect(approvalOutcome(approved, null)).toMatchObject({ label: "Approved", tone: "success" });
+    expect(approvalOutcome({ state: "denied" }, row("denied"))).toMatchObject({ label: "Denied" });
+  });
+
+  it("names the system in a failure's first line", () => {
+    expect(
+      failureLine({ errorText: "\n  Rate limited.\nRetry later", integrationLabel: "Slack" }),
+    ).toBe("Slack: Rate limited.");
+    expect(
+      failureLine({ errorText: "Stripe declined the refund.", integrationLabel: "Stripe" }),
+    ).toBe("Stripe declined the refund.");
+    expect(failureLine({ errorText: null, integrationLabel: "Stripe" })).toBeNull();
+  });
+
+  it("reads an action-log row whose write got no answer as outcome unknown", () => {
+    const view = toolCall({
+      status: "interrupted",
+      decision: "approved",
+      isError: true,
+      error: { provider: "stripe", status: null, code: "outcome_unknown", message: "No answer." },
+    });
+    expect(toolRowFromView(view).status).toBe("outcome_unknown");
   });
 });

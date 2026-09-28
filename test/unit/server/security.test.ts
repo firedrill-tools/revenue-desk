@@ -212,6 +212,8 @@ describe("GET /api/session", () => {
       effort: "medium",
       businessDate: "2026-09-28",
       approvalTimeoutMs: 900_000,
+      // The test environment has a model key.
+      modelConfigured: true,
     });
 
     // The cookie and token from the session authorise a mutation.
@@ -227,6 +229,12 @@ describe("GET /api/session", () => {
       body: "{}",
     });
     expect(created.status).toBe(201);
+  });
+
+  it("says when the model key is missing, so the app can say so before any run", async () => {
+    const server = createTestServer({ model: { apiKey: null } });
+    const info = (await (await server.request("GET", "/api/session")).json()) as SessionInfo;
+    expect(info.modelConfigured).toBe(false);
   });
 
   it("reports Settings' model and effort over the environment's", async () => {

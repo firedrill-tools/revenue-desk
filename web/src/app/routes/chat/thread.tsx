@@ -21,6 +21,7 @@ import {
   type ToolTiming,
 } from "@/components/app/tool-call";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { runErrorNextStep } from "@/lib/chat";
 import type { ChatUIMessage, NoticeData, RunDetailView, ToolCallView } from "@/lib/contracts";
 import { formatCost, formatDuration } from "@/lib/format";
 import { RUN_STATUS_LABELS } from "@/lib/labels";
@@ -134,7 +135,12 @@ function AssistantFooter({
   return (
     <div className="space-y-1">
       {status === "failed" && run?.error ? (
-        <p className="text-body-sm text-danger">{run.error.message}</p>
+        <div className="space-y-0.5 text-body-sm">
+          <p className="text-danger">{run.error.message}</p>
+          {runErrorNextStep(run.error) ? (
+            <p className="text-muted-foreground">{runErrorNextStep(run.error)}</p>
+          ) : null}
+        </div>
       ) : null}
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1">
         <MessageActions className="-ml-1.5 gap-0.5">
@@ -242,6 +248,7 @@ function AssistantMessage({
                     <ApprovalCard
                       attached
                       approval={approval}
+                      outcome={row}
                       submission={context.submissions[approval.id]}
                       onDecide={
                         decidable

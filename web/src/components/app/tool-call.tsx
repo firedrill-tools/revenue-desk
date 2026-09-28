@@ -13,7 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { formatDuration, formatElapsed, joinList, pluralize } from "@/lib/format";
 import { isSettledStatus, KIND_LABELS, TOOL_ROW_STATUS_LABELS, type Tone } from "@/lib/labels";
 import { presentValue } from "@/lib/present";
-import { sourceLabels, type ToolRowModel } from "@/lib/tool-model";
+import { failureLine, sourceLabels, type ToolRowModel } from "@/lib/tool-model";
 import { cn } from "@/lib/utils";
 
 /** When the chat first saw a call run, and when it settled (client clock). */
@@ -57,6 +57,8 @@ export function ToolCallRow({
   const compact = density === "compact";
   const output = useMemo(() => presentValue(row.output), [row.output]);
   const duration = durationLabel(row, timing, now);
+  const failure =
+    row.status === "failed" || row.status === "outcome_unknown" ? failureLine(row) : null;
 
   return (
     <Tool
@@ -92,6 +94,12 @@ export function ToolCallRow({
           )
         }
       />
+      {failure !== null ? (
+        // Why it failed, without opening the row.
+        <p className="-mt-0.5 truncate pr-3 pb-2 pl-9 text-meta text-danger" title={failure}>
+          {failure}
+        </p>
+      ) : null}
       <ToolContent>
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
           {row.integrationLabel ? <span>{row.integrationLabel}</span> : null}

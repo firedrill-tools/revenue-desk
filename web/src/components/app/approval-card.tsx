@@ -20,9 +20,11 @@ import { ACTION_CLASS_LABELS, isHighRiskClass } from "@/lib/labels";
 import {
   APPROVAL_STATE_LABELS,
   approvalFactRows,
+  approvalOutcome,
   factKind,
   isLongText,
   type ToolApprovalModel,
+  type ToolRowModel,
 } from "@/lib/tool-model";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "./status";
@@ -156,6 +158,11 @@ export type ApprovalCardProps = {
    * approval) keeps its own border.
    */
   attached?: boolean;
+  /**
+   * The call's outcome once it ran: an approved action that failed at the
+   * system reads "Approved, then failed" with the reason, never as a success.
+   */
+  outcome?: Pick<ToolRowModel, "status" | "errorText" | "integrationLabel"> | null;
   className?: string;
 };
 
@@ -164,6 +171,7 @@ export function ApprovalCard({
   submission,
   onDecide,
   attached = false,
+  outcome = null,
   className,
 }: ApprovalCardProps) {
   const { facts } = approval;
@@ -180,6 +188,7 @@ export function ApprovalCard({
   if (facts.integration) meta.push(INTEGRATIONS[facts.integration].label);
 
   const decide = (approved: boolean) => onDecide?.(approved, note.trim() === "" ? undefined : note);
+  const accepted = approvalOutcome(approval, outcome);
 
   return (
     <Confirmation
@@ -280,11 +289,22 @@ export function ApprovalCard({
       ) : null}
 
       <ConfirmationAccepted>
-        <StatusDot tone="success" className="mt-[5px]" />
+        <StatusDot tone={accepted.tone} className="mt-[5px]" />
         <p className="min-w-0 text-muted-foreground">
-          <span className="font-medium text-foreground">Approved</span>
+          <span
+            className={cn(
+              "font-medium text-foreground",
+              accepted.tone === "danger" && "text-danger",
+              accepted.tone === "warning" && "text-warning",
+            )}
+          >
+            {accepted.label}
+          </span>
           <span aria-hidden="true"> · </span>
           {facts.consequence}
+          {accepted.detail ? (
+            <span className="mt-0.5 block text-meta text-foreground">{accepted.detail}</span>
+          ) : null}
         </p>
       </ConfirmationAccepted>
       <ConfirmationRejected>

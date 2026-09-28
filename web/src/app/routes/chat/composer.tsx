@@ -76,6 +76,8 @@ export type ComposerProps = {
   usage?: ConversationUsage | null;
   placeholder?: string;
   autoFocus?: boolean;
+  /** Nothing can run (no model key): Send stays disabled. */
+  unavailable?: boolean;
 };
 
 export function Composer({
@@ -88,9 +90,10 @@ export function Composer({
   usage,
   placeholder = "Ask about a customer, an invoice or a charge",
   autoFocus = false,
+  unavailable = false,
 }: ComposerProps) {
   const [text, setText] = useState("");
-  const canSend = text.trim() !== "" && !running && !busy;
+  const canSend = text.trim() !== "" && !running && !busy && !unavailable;
   // The submit button doubles as Stop: it calls POST /api/runs/:id/stop, never useChat().stop().
   const submitStatus: ChatStatus = running ? "streaming" : status === "error" ? "ready" : status;
 
@@ -99,7 +102,7 @@ export function Composer({
       className="rounded-xl bg-background [&_[data-slot=input-group]]:rounded-xl [&_[data-slot=input-group]]:border-border-strong [&_[data-slot=input-group]]:bg-background [&_[data-slot=input-group]]:shadow-[0_1px_2px_rgb(17_20_24/0.04)] [&_[data-slot=input-group]]:has-[textarea:focus-visible]:border-foreground/30 [&_[data-slot=input-group]]:has-[textarea:focus-visible]:ring-0"
       onSubmit={({ text: submitted }) => {
         const prompt = submitted.trim();
-        if (prompt === "" || running || busy) return;
+        if (prompt === "" || running || busy || unavailable) return;
         onSend(prompt);
         setText("");
       }}

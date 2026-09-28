@@ -1,6 +1,8 @@
 import { useChat } from "@ai-sdk/react";
 import { CircleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Link } from "@/app/router";
+import { useSession } from "@/app/session";
 import { useShell } from "@/app/shell-context";
 import {
   Conversation,
@@ -11,11 +13,18 @@ import { ApprovalCard, type ApprovalSubmission } from "@/components/app/approval
 import { useNotify } from "@/components/app/notices";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { useConversations } from "@/hooks/use-api";
 import { PHONE_QUERY, useMediaQuery, WIDE_QUERY } from "@/hooks/use-media-query";
 import { useNow } from "@/hooks/use-now";
 import { invalidate } from "@/hooks/use-resource";
 import { api, errorMessage, parseTransportError } from "@/lib/api";
-import { chatErrorMessage, createChatTransport, decideApproval, stopRun } from "@/lib/chat";
+import {
+  chatErrorMessage,
+  createChatTransport,
+  decideApproval,
+  shouldShowTransportError,
+  stopRun,
+} from "@/lib/chat";
 import type {
   ApprovalView,
   ChatUIMessage,
@@ -24,6 +33,7 @@ import type {
   StatusData,
   ToolCallView,
 } from "@/lib/contracts";
+import { awaitingConversations, conversationTitle, waitingMarker } from "@/lib/conversations";
 import { focusPanelOnOpen } from "@/lib/focus";
 import {
   conversationUsage,
@@ -35,11 +45,12 @@ import {
   streamingRunId,
   toolParts,
 } from "@/lib/messages";
+import { chatHref } from "@/lib/routes";
 import type { JobSuggestion } from "@/lib/suggestions";
 import { approvalFactsFromView, mergeToolRow, toolRowFromPart } from "@/lib/tool-model";
 import { cn } from "@/lib/utils";
 import { Composer } from "./composer";
-import { ChatEmptyState } from "./empty-state";
+import { ChatEmptyState, ModelKeyMissing } from "./empty-state";
 import { type InspectorData, InspectorPanel } from "./inspector";
 import { CHAT_COLUMN, COMPOSER_DOCK } from "./layout";
 import { consumePendingPrompt, peekPendingPrompt } from "./pending-prompts";
@@ -272,6 +283,13 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
   }, [messages, streamingMessageId, logRows, usage, latestRunId, runs, timings, now]);
 
   const chatError = error ? parseTransportError(error) : null;
+  // Runs parked on an approval hold slots of the run limit; deciding them frees one.
+  const { data: conversations } = useConversations("");
+  const waitingElsewhere = awaitingConversations(conversations?.items ?? []).filter(
+    (conversation) => conversation.id !== conversationId,
+  );
+  const session = useSession();
+  const modelMissing = session?.modelConfigured === false;
   const lastIsUser = messages.at(-1)?.role === "user";
   const retry = () => {
     clearError();
@@ -317,6 +335,7 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <Conversation className="min-h-0 flex-1">
           <ConversationContent className={cn(CHAT_COLUMN, "gap-6 pt-6 pb-10")}>
+            {modelMissing && messages.length > 0 ? <ModelKeyMissing /> : null}
             {messages.length === 0 && !running ? (
               <ChatEmptyState onPick={(job) => void startJob(job)} />
             ) : (
@@ -340,15 +359,32 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
               />
             ))}
             {showActivity && activity ? <ActivityLine activity={activity} /> : null}
-            {error ? (
+            {shouldShowTransportError(messages, error) ? (
               <div
                 role="status"
                 className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-danger/25 bg-danger/5 py-2 pr-2 pl-3 text-body-sm"
               >
-                <p className="flex min-w-0 items-start gap-2 text-danger">
-                  <CircleAlertIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-                  {chatErrorMessage(chatError)}
-                </p>
+                <div className="min-w-0 space-y-1.5">
+                  <p className="flex min-w-0 items-start gap-2 text-danger">
+                    <CircleAlertIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                    {chatErrorMessage(chatError, waitingElsewhere.length)}
+                  </p>
+                  {chatError?.code === "too_many_runs" && waitingElsewhere.length > 0 ? (
+                    <ul className="space-y-0.5 pl-6">
+                      {waitingElsewhere.map((conversation) => (
+                        <li key={conversation.id}>
+                          <Link href={chatHref(conversation.id)}>
+                            {conversationTitle(conversation)}
+                          </Link>
+                          <span className="text-muted-foreground">
+                            {" "}
+                            · {waitingMarker(conversation)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
                 <Button variant="outline" size="sm" onClick={retry}>
                   {lastIsUser ? "Try again" : "Reconnect"}
                 </Button>
@@ -366,6 +402,7 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
               onSend={send}
               onStop={() => void stop()}
               usage={usage}
+              unavailable={modelMissing}
             />
           </div>
         </div>

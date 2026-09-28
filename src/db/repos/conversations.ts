@@ -1,6 +1,6 @@
 // Conversations (docs/ARCHITECTURE.md §8): the chat rail, search and totals.
 
-import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { ConversationStatus, ConversationSummary, Page } from "../../contracts/api.js";
 import type { RunSource } from "../../contracts/events.js";
 import { approvals, type ConversationRow, conversations, messages, runs } from "../schema.js";
@@ -153,13 +153,17 @@ export function conversationSummaries(
     if (!running.has(run.conversationId)) running.set(run.conversationId, run.id);
   }
   const pending = new Map<string, number>();
-  for (const group of db
-    .select({ conversationId: approvals.conversationId, pending: count() })
+  const consequences = new Map<string, string>();
+  for (const approval of db
+    .select({ conversationId: approvals.conversationId, consequence: approvals.consequence })
     .from(approvals)
     .where(and(inArray(approvals.conversationId, ids), eq(approvals.status, "pending")))
-    .groupBy(approvals.conversationId)
+    .orderBy(desc(approvals.requestedAt), desc(sql`rowid`))
     .all()) {
-    pending.set(group.conversationId, group.pending);
+    pending.set(approval.conversationId, (pending.get(approval.conversationId) ?? 0) + 1);
+    if (!consequences.has(approval.conversationId)) {
+      consequences.set(approval.conversationId, approval.consequence);
+    }
   }
   return rows.map((row) => ({
     id: row.id,
@@ -168,6 +172,7 @@ export function conversationSummaries(
     status: row.status,
     activeRunId: running.get(row.id) ?? null,
     pendingApprovals: pending.get(row.id) ?? 0,
+    pendingConsequence: consequences.get(row.id) ?? null,
     totalCostUsd: row.totalCostUsd,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

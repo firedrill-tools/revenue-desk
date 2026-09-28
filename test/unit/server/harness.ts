@@ -81,7 +81,11 @@ export function secret(value: string): SecretValue {
   };
 }
 
-export function testEnv(stateDir: string, runtime: Partial<AgentEnv["runtime"]> = {}): AgentEnv {
+export function testEnv(
+  stateDir: string,
+  runtime: Partial<AgentEnv["runtime"]> = {},
+  model: Partial<AgentEnv["model"]> = {},
+): AgentEnv {
   return {
     model: {
       apiKey: secret("sk-ant-test-0000000000"),
@@ -91,6 +95,7 @@ export function testEnv(stateDir: string, runtime: Partial<AgentEnv["runtime"]> 
       thinkingDisplay: null,
       maxTurns: 30,
       maxBudgetUsd: 2,
+      ...model,
     },
     runtime: {
       port: 0,
@@ -589,6 +594,7 @@ export type TestServerOptions = {
   readonly runTurn?: RunTurn;
   readonly integrations?: FakeIntegrationOptions;
   readonly runtime?: Partial<AgentEnv["runtime"]>;
+  readonly model?: Partial<AgentEnv["model"]>;
   readonly maxConcurrentRuns?: number;
   readonly stopGraceMs?: number;
   readonly stateDir?: string;
@@ -627,7 +633,7 @@ export function createTestServer(options: TestServerOptions = {}): TestServer {
   const logs: string[] = [];
   const services = createApiServices({
     db: database.db,
-    env: testEnv(stateDir, options.runtime),
+    env: testEnv(stateDir, options.runtime, options.model),
     runTurn,
     integrations: integrations.definitions,
     redact: testRedact,

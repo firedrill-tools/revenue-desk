@@ -149,7 +149,7 @@ function RunDetailBody({ run }: { run: RunDetailView }) {
                     key={group.key}
                     approval={
                       group.row.approval ? (
-                        <ApprovalCard attached approval={group.row.approval} />
+                        <ApprovalCard attached approval={group.row.approval} outcome={group.row} />
                       ) : null
                     }
                   >
@@ -164,27 +164,51 @@ function RunDetailBody({ run }: { run: RunDetailView }) {
       {run.approvals.length > 0 ? (
         <Section title="Approvals" aside={String(run.approvals.length)}>
           <ul className="divide-y rounded-lg border">
-            {run.approvals.map((approval) => (
-              <li key={approval.id} className="space-y-1 px-3 py-2.5">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-body-sm">{approval.consequence}</p>
-                  <StatusText
-                    status={APPROVAL_STATUS_LABELS[approval.status]}
-                    className="text-meta text-muted-foreground"
-                  />
-                </div>
-                <p className="text-meta text-muted-foreground">
-                  {ACTION_CLASS_LABELS[approval.actionClass]} · requested{" "}
-                  {formatDateTime(approval.requestedAt)}
-                  {approval.decidedBy
-                    ? ` · decided by ${DECIDER_LABELS[approval.decidedBy]}${approval.decidedAt ? ` ${formatDateTime(approval.decidedAt)}` : ""}`
-                    : ""}
-                </p>
-                {approval.reason ? (
-                  <p className="text-meta text-muted-foreground">“{approval.reason}”</p>
-                ) : null}
-              </li>
-            ))}
+            {run.approvals.map((approval) => {
+              const call = run.toolCalls.find(
+                (candidate) =>
+                  candidate.approvalId === approval.id ||
+                  candidate.toolCallId === approval.toolCallId,
+              );
+              const failed =
+                approval.status === "approved" &&
+                call !== undefined &&
+                (call.status === "failed" || call.error?.code === "outcome_unknown");
+              return (
+                <li key={approval.id} className="space-y-1 px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-body-sm">{approval.consequence}</p>
+                    <StatusText
+                      status={
+                        failed
+                          ? {
+                              label:
+                                call?.error?.code === "outcome_unknown"
+                                  ? "Approved · outcome unknown"
+                                  : "Approved · the call failed",
+                              tone: call?.error?.code === "outcome_unknown" ? "warning" : "danger",
+                            }
+                          : APPROVAL_STATUS_LABELS[approval.status]
+                      }
+                      className="text-meta text-muted-foreground"
+                    />
+                  </div>
+                  <p className="text-meta text-muted-foreground">
+                    {ACTION_CLASS_LABELS[approval.actionClass]} · requested{" "}
+                    {formatDateTime(approval.requestedAt)}
+                    {approval.decidedBy
+                      ? ` · decided by ${DECIDER_LABELS[approval.decidedBy]}${approval.decidedAt ? ` ${formatDateTime(approval.decidedAt)}` : ""}`
+                      : ""}
+                  </p>
+                  {approval.reason ? (
+                    <p className="text-meta text-muted-foreground">“{approval.reason}”</p>
+                  ) : null}
+                  {failed && call?.error ? (
+                    <p className="text-meta text-danger">{call.error.message}</p>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </Section>
       ) : null}

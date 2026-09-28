@@ -138,3 +138,17 @@ export function looksLikeRecordIds(value: string): boolean {
   const parts = value.split(/,\s*/);
   return parts.length > 0 && parts.every((part) => RECORD_ID.test(part.trim()));
 }
+
+/** "1 waiting, 2 approved": a run's approvals in words; null when it had none. */
+export function approvalsSummary(approvals: {
+  readonly pending: number;
+  readonly approved: number;
+  readonly denied: number;
+}): string | null {
+  const parts = [
+    approvals.pending > 0 ? `${approvals.pending} waiting` : null,
+    approvals.approved > 0 ? `${approvals.approved} approved` : null,
+    approvals.denied > 0 ? `${approvals.denied} denied` : null,
+  ].filter((part) => part !== null);
+  return parts.length === 0 ? null : parts.join(", ");
+}

@@ -15,8 +15,8 @@ import { useConversations } from "@/hooks/use-api";
 import { invalidate } from "@/hooks/use-resource";
 import { api, errorMessage } from "@/lib/api";
 import type { ConversationSummary } from "@/lib/contracts";
-import { conversationTitle, groupByRecency } from "@/lib/conversations";
-import { formatRelativeTime, pluralize } from "@/lib/format";
+import { conversationTitle, groupByRecency, waitingMarker } from "@/lib/conversations";
+import { formatRelativeTime } from "@/lib/format";
 import { chatHref, type Route } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { useNotify } from "./notices";
@@ -41,12 +41,11 @@ function ConversationMarker({ conversation }: { conversation: ConversationSummar
         </span>
       );
     case "awaiting_approval":
+      // What waits, so two "Refund a duplicate charge" rows can be told apart.
       return (
-        <span className="inline-flex items-center gap-1.5 text-warning">
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-warning">
           <StatusDot tone="warning" />
-          {conversation.pendingApprovals > 1
-            ? `${pluralize(conversation.pendingApprovals, "approval")} waiting`
-            : "Needs approval"}
+          <span className="truncate">{waitingMarker(conversation)}</span>
         </span>
       );
     case "error":

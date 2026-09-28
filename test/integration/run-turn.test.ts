@@ -7,7 +7,7 @@
  * stream. Fails, never skips, without the native CLI.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { createRunTurn } from "../../src/agent/run-turn.js";
+import { createRunTurn, MISSING_MODEL_KEY_MESSAGE } from "../../src/agent/run-turn.js";
 import type { ModelSettings } from "../../src/contracts/env.js";
 import type {
   AgentEvent,
@@ -773,7 +773,7 @@ describe("runTurn that ends before the SDK starts", () => {
     expect(events.map((event) => event.type)).toEqual(["run.started", "run.finished"]);
     expect(finished(events)).toMatchObject({
       status: "failed",
-      error: { code: "config_missing", message: "ANTHROPIC_API_KEY is not set." },
+      error: { code: "config_missing", message: MISSING_MODEL_KEY_MESSAGE },
     });
   });
 

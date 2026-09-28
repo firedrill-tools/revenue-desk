@@ -78,6 +78,10 @@ export type RunTurnDependencies = {
   readonly onStderr?: (line: string) => void;
 };
 
+/** Why a run cannot start without the model key, and what to do about it. */
+export const MISSING_MODEL_KEY_MESSAGE =
+  "Revenue Desk can't run yet: ANTHROPIC_API_KEY is not set. Add it to the file DOTENV_PATH names (README › Setup, step 3), then restart Revenue Desk.";
+
 const DEFAULT_STOP_GRACE_MS = 3_000;
 const DEFAULT_DRAIN_MS = 5_000;
 
@@ -235,7 +239,7 @@ async function execute(
       stopReason: null,
       terminalReason: null,
       reply: null,
-      error: { code: "config_missing", message: "ANTHROPIC_API_KEY is not set." },
+      error: { code: "config_missing", message: MISSING_MODEL_KEY_MESSAGE },
     });
     return;
   }

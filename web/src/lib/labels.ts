@@ -105,7 +105,9 @@ export type ToolRowStatus =
   | "blocked"
   | "rejected"
   | "timed_out"
-  | "stopped";
+  | "stopped"
+  /** A write that ended without the system's answer: it may have been applied. */
+  | "outcome_unknown";
 
 export const TOOL_ROW_STATUS_LABELS = {
   preparing: { label: "Preparing", tone: "neutral" },
@@ -118,6 +120,7 @@ export const TOOL_ROW_STATUS_LABELS = {
   rejected: { label: "Rejected", tone: "danger" },
   timed_out: { label: "Timed out", tone: "neutral" },
   stopped: { label: "Stopped", tone: "neutral" },
+  outcome_unknown: { label: "Outcome unknown", tone: "warning" },
 } as const satisfies Record<ToolRowStatus, StatusLabel>;
 
 /** The row status of an action-log entry (GET /api/runs/:id). */

@@ -24,6 +24,7 @@ export function registerSessionRoutes(app: Hono, services: ApiServices): void {
       effort: model.effort,
       businessDate: businessDate(env, settings, services.now()),
       approvalTimeoutMs: env.runtime.approvalTimeoutMs,
+      modelConfigured: env.model.apiKey !== null,
     };
     setSessionCookie(c, services.secrets);
     c.header("cache-control", "no-store");

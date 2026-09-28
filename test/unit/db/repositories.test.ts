@@ -346,6 +346,8 @@ describe("conversations", () => {
       status: "awaiting_approval",
       activeRunId: "r1",
       pendingApprovals: 1,
+      // What waits, so two waiting "Refund a duplicate charge" rows can be told apart.
+      pendingConsequence: "Refund $49.00 to Kestrel Analytics",
       totalCostUsd: 0.75,
       createdAt: T0,
       updatedAt: T1,
@@ -354,6 +356,37 @@ describe("conversations", () => {
     const page = conversationPage(database.db, {});
     expect(page.items).toHaveLength(1);
     expect(page.nextCursor).toBeNull();
+
+    // The newest pending approval names the conversation's marker; none once decided.
+    insertPendingApproval(database.db, {
+      id: "a2",
+      runId: "r1",
+      conversationId: "c1",
+      toolUseId: "toolu_2",
+      descriptor: { ...descriptor(), consequence: "Send the Gmail draft to dana@harborpine.test" },
+      requestedAt: T1,
+      expiresAt: descriptor().expiresAt,
+    });
+    expect(conversationSummary(database.db, row)).toMatchObject({
+      pendingApprovals: 2,
+      pendingConsequence: "Send the Gmail draft to dana@harborpine.test",
+    });
+    settleApproval(database.db, "a1", {
+      status: "approved",
+      decidedBy: "user",
+      reason: null,
+      decidedAt: T2,
+    });
+    settleApproval(database.db, "a2", {
+      status: "denied",
+      decidedBy: "user",
+      reason: null,
+      decidedAt: T2,
+    });
+    expect(conversationSummary(database.db, row)).toMatchObject({
+      pendingApprovals: 0,
+      pendingConsequence: null,
+    });
   });
 });
 
@@ -548,6 +581,30 @@ describe("runs", () => {
     toolCall(database, "r2", "toolu_a", "api");
     toolCall(database, "r2", "toolu_b", "mcp");
     toolCall(database, "r2", "toolu_c", "mcp");
+    // A call that failed at the system counts; one rejected before it ran does not.
+    toolCall(database, "r2", "toolu_declined", "api");
+    markToolCallFinished(
+      database.db,
+      { runId: "r2", toolUseId: "toolu_declined" },
+      {
+        output: "declined",
+        truncated: false,
+        isError: true,
+        errorCode: "card_declined",
+        errorMessage: "Your card was declined.",
+        httpStatus: 402,
+        upstreamTool: "POST /v1/refunds",
+        idempotencyKey: null,
+        durationMs: 10,
+        finishedAt: T1,
+      },
+    );
+    toolCall(database, "r2", "toolu_invalid", "api");
+    markToolCallDenied(
+      database.db,
+      { runId: "r2", toolUseId: "toolu_invalid" },
+      { decision: "rejected", reason: "amount: must be positive", finishedAt: T1 },
+    );
     insertPendingApproval(database.db, {
       id: "a1",
       runId: "r2",
@@ -579,17 +636,21 @@ describe("runs", () => {
       id: "r2",
       status: "running",
       usage: null,
-      toolCallsByKind: { composio: 0, mcp: 2, api: 1 },
+      toolCallsByKind: { composio: 0, mcp: 2, api: 3 },
+      failedToolCalls: 1,
       approvals: { pending: 1, approved: 0, denied: 0 },
       error: null,
     });
     const row = getRun(database.db, "r2");
     if (row === undefined) throw new Error("missing");
     const detail = runDetailView(database.db, row);
+    expect(detail.failedToolCalls).toBe(1);
     expect(detail.toolCalls.map((call) => call.toolCallId)).toEqual([
       "toolu_a",
       "toolu_b",
       "toolu_c",
+      "toolu_declined",
+      "toolu_invalid",
     ]);
     expect(detail.approvals.map((approval) => approval.id)).toEqual(["a1"]);
     expect(detail.policy).toEqual(DEFAULT_POLICY);

@@ -6,7 +6,9 @@ import { NoticeProvider } from "@/components/app/notices";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
+import { useConversations } from "@/hooks/use-api";
 import { DESKTOP_QUERY, useMediaQuery } from "@/hooks/use-media-query";
+import { documentTitle, waitingApprovalCount } from "@/lib/conversations";
 import { focusPanelOnOpen } from "@/lib/focus";
 import { ROUTE_TITLES, type Route } from "@/lib/routes";
 import { Link, useRoute } from "./router";
@@ -102,14 +104,24 @@ function ServerUnavailable({ retry }: { retry: () => void }) {
   );
 }
 
+/** Approvals waiting across every conversation (the rail's list, polled while any waits). */
+function useWaitingApprovals(): number {
+  const { data } = useConversations("");
+  return waitingApprovalCount(data?.items ?? []);
+}
+
 function Shell() {
   const route = useRoute();
   const session = useSessionState();
+  const waiting = useWaitingApprovals();
 
+  // A background tab says when an approval waits: "(1) Revenue Desk".
   useEffect(() => {
-    document.title =
-      route.name === "chat" ? "Revenue Desk" : `${ROUTE_TITLES[route.name]} · Revenue Desk`;
-  }, [route.name]);
+    document.title = documentTitle(
+      route.name === "chat" ? "Revenue Desk" : `${ROUTE_TITLES[route.name]} · Revenue Desk`,
+      waiting,
+    );
+  }, [route.name, waiting]);
 
   let content: ReactNode;
   if (session.status === "error") content = <ServerUnavailable retry={session.retry} />;
@@ -123,7 +135,7 @@ function Shell() {
 
   return (
     <div className="relative flex h-dvh flex-col overflow-clip bg-background text-foreground">
-      <AppBar route={route} />
+      <AppBar route={route} waitingApprovals={waiting} />
       <div className="flex min-h-0 flex-1">
         <aside
           aria-label="Conversations"

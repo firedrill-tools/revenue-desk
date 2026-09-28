@@ -265,6 +265,7 @@ function startRun(conversation: Conversation, prompt: string, options: StartOpti
     finishedAt: null,
     usage: null,
     toolCallsByKind: { composio: 0, mcp: 0, api: 0 },
+    failedToolCalls: 0,
     approvals: [],
     error: null,
     stopReason: null,
@@ -417,6 +418,7 @@ function addConversation(
     status: "idle",
     activeRunId: null,
     pendingApprovals: 0,
+    pendingConsequence: null,
     totalCostUsd: 0,
     createdAt: at,
     updatedAt: at,
@@ -528,6 +530,7 @@ app.get("/api/session", (c) => {
     effort: "medium",
     businessDate: "2026-09-28",
     approvalTimeoutMs: 900_000,
+    modelConfigured: true,
   };
   return c.json(session);
 });

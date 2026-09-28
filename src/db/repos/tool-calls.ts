@@ -277,6 +277,35 @@ export function toolCallCountsByKind(
   return counts;
 }
 
+/**
+ * Failed calls per run id (RunSummaryView.failedToolCalls): calls that failed
+ * at the system, and writes whose outcome is unknown; calls rejected before
+ * they ran are not counted.
+ */
+export function failedToolCallCounts(
+  db: DbExecutor,
+  runIds: readonly string[],
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const runId of runIds) counts.set(runId, 0);
+  if (runIds.length === 0) return counts;
+  for (const group of db
+    .select({ runId: toolCalls.runId, calls: count() })
+    .from(toolCalls)
+    .where(
+      and(
+        inArray(toolCalls.runId, [...runIds]),
+        sql`${toolCalls.decision} <> 'rejected'`,
+        sql`(${toolCalls.status} = 'failed' OR (${toolCalls.status} = 'interrupted' AND ${toolCalls.isError} = 1))`,
+      ),
+    )
+    .groupBy(toolCalls.runId)
+    .all()) {
+    counts.set(group.runId, group.calls);
+  }
+  return counts;
+}
+
 function emptyKindCounts(): { [K in ConnectionKind]: number } {
   const counts = {} as { [K in ConnectionKind]: number };
   for (const kind of CONNECTION_KINDS) counts[kind] = 0;

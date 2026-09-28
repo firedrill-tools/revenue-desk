@@ -1170,6 +1170,17 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
   button reads "Add a note for the agent". Email and Slack bodies keep their
   line breaks, up to about 4,000 characters, folded behind "Show all".
 
+- **Contract changes for the UI (lead, 2026-09-29).**
+  `RunSummaryView.failedToolCalls` (calls that failed at the system or whose
+  outcome is unknown; rejected calls excluded), `SessionInfo.modelConfigured`
+  (false without `ANTHROPIC_API_KEY`: the app says so and offers no job), and
+  `ConversationSummary.pendingConsequence` (the newest pending approval's
+  consequence, for the rail and the waiting list). An approved call that then
+  failed reads "Approved, then failed" with the reason; a failed run's own
+  `error` chunk no longer shows the "stream interrupted" banner; the run limit
+  message names the approvals holding the slots. Open for Kiran: whether runs
+  parked on an approval should count toward `MAX_CONCURRENT_RUNS`.
+
 **Integration follow-ups (open).**
 
 - The approval card for `GMAIL_SEND_DRAFT` cannot name the recipients (the

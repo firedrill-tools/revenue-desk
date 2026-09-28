@@ -240,7 +240,12 @@ and the class's mode decides what happens:
   run.
 - **Approval cards** show the exact consequence ("Refund $49.00 to Kestrel
   Analytics") and its facts. A pending approval is denied after
-  `AGENT_APPROVAL_TIMEOUT_MS` (15 minutes by default). Stop cancels the run
+  `AGENT_APPROVAL_TIMEOUT_MS` (15 minutes by default). Approvals are made in
+  the app on the machine that runs Revenue Desk (it answers on loopback
+  only); the phone layout is for narrow windows, not for remote devices.
+  While one waits, the tab title shows the count ("(1) Revenue Desk"), the
+  new-chat screen lists it under "Waiting for your decision", and the
+  conversation list names what waits. Stop cancels the run
   and its pending approvals. After a denial the agent reports it and does not
   retry. Arguments are validated against the tool's schema before any
   approval is asked, so an invalid call is never put in front of a person.

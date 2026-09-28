@@ -60,6 +60,7 @@ function summary(activeRunId: string | null): ConversationSummary {
     status: activeRunId ? "running" : "idle",
     activeRunId,
     pendingApprovals: 0,
+    pendingConsequence: null,
     totalCostUsd: 0,
     createdAt: "2026-09-28T10:00:00Z",
     updatedAt: "2026-09-28T10:00:00Z",

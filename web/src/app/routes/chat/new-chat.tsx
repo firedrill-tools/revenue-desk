@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { navigate } from "@/app/router";
+import { useSession } from "@/app/session";
 import { useNotify } from "@/components/app/notices";
 import { DESKTOP_QUERY, useMediaQuery } from "@/hooks/use-media-query";
 import { invalidate } from "@/hooks/use-resource";
@@ -18,6 +19,7 @@ import { setPendingPrompt } from "./pending-prompts";
  */
 export function NewChat() {
   const notify = useNotify();
+  const session = useSession();
   const [creating, setCreating] = useState(false);
   // Focus the composer on desktop only; on phones it would open the keyboard.
   const desktop = useMediaQuery(DESKTOP_QUERY);
@@ -46,7 +48,11 @@ export function NewChat() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         <div className={cn(CHAT_COLUMN, "flex min-h-full flex-col justify-center py-8")}>
-          <ChatEmptyState onPick={(job) => void start(job.prompt, job.title)} disabled={creating} />
+          <ChatEmptyState
+            onPick={(job) => void start(job.prompt, job.title)}
+            disabled={creating}
+            showWaiting
+          />
         </div>
       </div>
       <div className={COMPOSER_DOCK}>
@@ -58,6 +64,7 @@ export function NewChat() {
             busy={creating}
             onSend={(prompt) => void start(prompt)}
             autoFocus={desktop}
+            unavailable={session?.modelConfigured === false}
           />
         </div>
       </div>

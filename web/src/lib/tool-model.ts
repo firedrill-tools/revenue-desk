@@ -25,6 +25,7 @@ import {
 import {
   isSettledStatus,
   type StatusLabel,
+  type Tone,
   type ToolRowStatus,
   toolRowStatusFromLog,
 } from "./labels.js";
@@ -191,6 +192,46 @@ export const APPROVAL_STATE_LABELS = {
   timed_out: { label: "Timed out", tone: "neutral" },
 } as const satisfies Record<ApprovalState, StatusLabel>;
 
+/** The first line of a call's error, named after its system: "Stripe: Your card was declined." */
+export function failureLine(
+  row: Pick<ToolRowModel, "errorText" | "integrationLabel">,
+): string | null {
+  const first = row.errorText
+    ?.split("\n")
+    .map((line) => line.trim())
+    .find((line) => line !== "");
+  if (first === undefined) return null;
+  const text = first.length > 200 ? `${first.slice(0, 199).trimEnd()}…` : first;
+  return row.integrationLabel === null || text.startsWith(row.integrationLabel)
+    ? text
+    : `${row.integrationLabel}: ${text}`;
+}
+
+/**
+ * How a decided approval reads once its call has an outcome. An approved
+ * action that then failed at the system must not read as a success: the
+ * card says "Approved, then failed" in the danger tone, with the reason.
+ */
+export function approvalOutcome(
+  approval: Pick<ToolApprovalModel, "state">,
+  row: Pick<ToolRowModel, "status" | "errorText" | "integrationLabel"> | null,
+): { readonly label: string; readonly tone: Tone; readonly detail: string | null } {
+  if (approval.state !== "approved") {
+    return { ...APPROVAL_STATE_LABELS[approval.state], detail: null };
+  }
+  switch (row?.status) {
+    case "failed":
+    case "rejected":
+      return { label: "Approved, then failed", tone: "danger", detail: failureLine(row) };
+    case "outcome_unknown":
+      return { label: "Approved, outcome unknown", tone: "warning", detail: failureLine(row) };
+    case "stopped":
+      return { label: "Approved, then stopped", tone: "neutral", detail: null };
+    default:
+      return { label: "Approved", tone: "success", detail: null };
+  }
+}
+
 export type ToolApprovalModel = {
   readonly id: string;
   /** requested: a person can still decide. */
@@ -342,7 +383,10 @@ export function toolRowFromView(
   const approvalView = approvals.find(
     (approval) => approval.id === view.approvalId || approval.toolCallId === view.toolCallId,
   );
-  const status = toolRowStatusFromLog(view.status, view.decision);
+  const status =
+    view.error?.code === "outcome_unknown"
+      ? "outcome_unknown"
+      : toolRowStatusFromLog(view.status, view.decision);
   const approval = approvalView ? withOutcome(approvalFromView(approvalView), status) : null;
   return {
     toolCallId: view.toolCallId,
@@ -379,7 +423,10 @@ function withOutcome(approval: ToolApprovalModel, status: ToolRowStatus): ToolAp
  */
 export function mergeToolRow(row: ToolRowModel, log: ToolCallView | undefined): ToolRowModel {
   if (!log || !isSettledStatus(row.status)) return row;
-  const logStatus = toolRowStatusFromLog(log.status, log.decision);
+  const logStatus =
+    log.error?.code === "outcome_unknown"
+      ? "outcome_unknown"
+      : toolRowStatusFromLog(log.status, log.decision);
   const status = isSettledStatus(logStatus) ? logStatus : row.status;
   return {
     ...row,

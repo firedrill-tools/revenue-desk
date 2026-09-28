@@ -57,3 +57,38 @@ export function conversationTitle(conversation: Pick<ConversationSummary, "title
   const title = conversation.title.trim();
   return title === "" ? "New conversation" : title;
 }
+
+/** Conversations with an approval waiting for a person, newest first. */
+export function awaitingConversations(
+  items: readonly ConversationSummary[],
+): ConversationSummary[] {
+  return items
+    .filter((item) => item.status === "awaiting_approval" || item.pendingApprovals > 0)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** Approvals waiting across every conversation: the app bar badge and the tab title. */
+export function waitingApprovalCount(items: readonly ConversationSummary[]): number {
+  return awaitingConversations(items).reduce(
+    (sum, item) => sum + Math.max(1, item.pendingApprovals),
+    0,
+  );
+}
+
+/** "(2) Revenue Desk" while approvals wait, so a background tab says so. */
+export function documentTitle(base: string, waiting: number): string {
+  return waiting > 0 ? `(${waiting}) ${base}` : base;
+}
+
+/** The rail's marker text for a waiting conversation: what it waits for. */
+export function waitingMarker(
+  conversation: Pick<ConversationSummary, "pendingApprovals" | "pendingConsequence">,
+): string {
+  const count =
+    conversation.pendingApprovals > 1
+      ? `${conversation.pendingApprovals} approvals waiting`
+      : "Needs approval";
+  return conversation.pendingConsequence === null
+    ? count
+    : `${count} · ${conversation.pendingConsequence}`;
+}

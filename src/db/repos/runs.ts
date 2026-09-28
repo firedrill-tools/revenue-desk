@@ -26,7 +26,7 @@ import {
   MAX_PAGE_LIMIT,
   toPage,
 } from "./pagination.js";
-import { listToolCalls, toolCallCountsByKind } from "./tool-calls.js";
+import { failedToolCallCounts, listToolCalls, toolCallCountsByKind } from "./tool-calls.js";
 import type { DbExecutor, IsoTime } from "./types.js";
 
 export type NewRun = {
@@ -273,6 +273,7 @@ function toRunError(row: RunRow): RunError | null {
 export function runSummaryViews(db: DbExecutor, rows: readonly RunRow[]): RunSummaryView[] {
   const ids = rows.map((row) => row.id);
   const kinds = toolCallCountsByKind(db, ids);
+  const failures = failedToolCallCounts(db, ids);
   const decisions = approvalCountsByRun(db, ids);
   return rows.map((row) => ({
     id: row.id,
@@ -286,6 +287,7 @@ export function runSummaryViews(db: DbExecutor, rows: readonly RunRow[]): RunSum
     finishedAt: row.finishedAt,
     usage: toRunUsage(row),
     toolCallsByKind: kinds.get(row.id) ?? { composio: 0, mcp: 0, api: 0 },
+    failedToolCalls: failures.get(row.id) ?? 0,
     approvals: decisions.get(row.id) ?? { pending: 0, approved: 0, denied: 0 },
     error: toRunError(row),
   }));

@@ -16,6 +16,8 @@ import {
   chatRequestBody,
   createChatTransport,
   decideApproval,
+  runErrorNextStep,
+  shouldShowTransportError,
   stopRun,
 } from "../../../web/src/lib/chat.js";
 
@@ -186,5 +188,80 @@ describe("chatErrorMessage", () => {
     expect(chatErrorMessage(error("csrf_failed"))).toMatch(/Reload the page/);
     expect(chatErrorMessage(error("internal"))).toBe("Server said so.");
     expect(chatErrorMessage(null)).toMatch(/interrupted/);
+  });
+});
+
+describe("the stream-interrupted banner", () => {
+  const user = { role: "user" as const, metadata: undefined };
+  const failedRun = {
+    role: "assistant" as const,
+    metadata: { runId: "r1", model: "m", effort: "medium" as const, status: "failed" as const },
+  };
+
+  it("is not shown for a run that failed: its stream ended normally", () => {
+    // useChat reports the failed run's `error` chunk as the chat error.
+    expect(
+      shouldShowTransportError([user, failedRun], new Error("ANTHROPIC_API_KEY is not set.")),
+    ).toBe(false);
+    expect(shouldShowTransportError([user, failedRun], new Error("Overloaded (529)"))).toBe(false);
+  });
+
+  it("is shown for a refused request or a stream cut before the run finished", () => {
+    const refused = new Error(
+      JSON.stringify({ error: { code: "too_many_runs", message: "Busy." } }),
+    );
+    expect(shouldShowTransportError([user, failedRun], refused)).toBe(true);
+    expect(shouldShowTransportError([user], new Error("network error"))).toBe(true);
+    const streaming = {
+      ...failedRun,
+      metadata: { ...failedRun.metadata, status: "running" as const },
+    };
+    expect(shouldShowTransportError([user, streaming], new Error("network error"))).toBe(true);
+    expect(shouldShowTransportError([user, failedRun], undefined)).toBe(false);
+  });
+});
+
+describe("the next step after a failed run", () => {
+  it("names what to change for each limit and configuration problem", () => {
+    expect(runErrorNextStep({ code: "budget_exceeded", message: "Over budget." })).toMatch(
+      /AGENT_MAX_BUDGET_USD/,
+    );
+    expect(runErrorNextStep({ code: "max_turns", message: "Too many turns." })).toMatch(
+      /AGENT_MAX_TURNS/,
+    );
+    expect(runErrorNextStep({ code: "model_error", message: "Unknown model." })).toMatch(
+      /Settings › Model or AGENT_MODEL/,
+    );
+    expect(
+      runErrorNextStep({ code: "config_missing", message: "ANTHROPIC_API_KEY is not set." }),
+    ).toMatch(/DOTENV_PATH/);
+    // The core's own message already says what to do.
+    expect(
+      runErrorNextStep({
+        code: "config_missing",
+        message: "ANTHROPIC_API_KEY is not set. Add it to the file DOTENV_PATH names.",
+      }),
+    ).toBeNull();
+    expect(runErrorNextStep({ code: "internal", message: "Bug." })).toBeNull();
+    expect(runErrorNextStep(null)).toBeNull();
+  });
+});
+
+describe("too many runs", () => {
+  const busy = new ApiError("Four runs are already in progress.", {
+    status: 429,
+    code: "too_many_runs",
+  });
+
+  it("names the approvals holding the slots, and what to do", () => {
+    expect(chatErrorMessage(busy, 4)).toBe(
+      "Four runs are open and 4 of them are waiting for your approval. Decide or stop one, then try again.",
+    );
+    expect(chatErrorMessage(busy, 1)).toBe(
+      "Four runs are open and 1 of them is waiting for your approval. Decide or stop one, then try again.",
+    );
+    expect(chatErrorMessage(busy, 0)).toBe(
+      "Four runs are already in progress. Stop one, or try again when one finishes.",
+    );
   });
 });

@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { cn, splitVariants } from "../../../web/src/lib/cn.js";
 import {
+  approvalsSummary,
   formatCost,
   formatCountdown,
   formatDuration,
@@ -132,5 +133,13 @@ describe("safeRedirectUrl", () => {
     expect(safeRedirectUrl("javascript:alert(1)")).toBeNull();
     expect(safeRedirectUrl("https://user:pass@example.com/")).toBeNull();
     expect(safeRedirectUrl("not a url")).toBeNull();
+  });
+});
+
+describe("approvalsSummary", () => {
+  it("says a run's approvals in words, waiting first", () => {
+    expect(approvalsSummary({ pending: 1, approved: 2, denied: 0 })).toBe("1 waiting, 2 approved");
+    expect(approvalsSummary({ pending: 0, approved: 0, denied: 3 })).toBe("3 denied");
+    expect(approvalsSummary({ pending: 0, approved: 0, denied: 0 })).toBeNull();
   });
 });

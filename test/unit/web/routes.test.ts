@@ -2,7 +2,14 @@
 
 import { describe, expect, it } from "vitest";
 import type { ConversationSummary } from "../../../src/contracts/api.js";
-import { conversationTitle, groupByRecency } from "../../../web/src/lib/conversations.js";
+import {
+  awaitingConversations,
+  conversationTitle,
+  documentTitle,
+  groupByRecency,
+  waitingApprovalCount,
+  waitingMarker,
+} from "../../../web/src/lib/conversations.js";
 import { hrefFor, NAV_ITEMS, parseRoute, type Route } from "../../../web/src/lib/routes.js";
 
 describe("parseRoute", () => {
@@ -61,6 +68,7 @@ function conversation(id: string, updatedAt: Date, title = id): ConversationSumm
     status: "idle",
     activeRunId: null,
     pendingApprovals: 0,
+    pendingConsequence: null,
     totalCostUsd: 0,
     createdAt: updatedAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
@@ -92,5 +100,56 @@ describe("groupByRecency", () => {
   it("titles untitled conversations", () => {
     expect(conversationTitle({ title: "  " })).toBe("New conversation");
     expect(conversationTitle({ title: "Refund" })).toBe("Refund");
+  });
+});
+
+describe("approvals waiting outside their conversation", () => {
+  const item = (
+    id: string,
+    status: ConversationSummary["status"],
+    pendingApprovals: number,
+    pendingConsequence: string | null,
+    updatedAt = "2026-09-29T10:00:00.000Z",
+  ): ConversationSummary => ({
+    id,
+    title: "Refund a duplicate charge",
+    source: "ui",
+    status,
+    activeRunId: status === "idle" ? null : `run_${id}`,
+    pendingApprovals,
+    pendingConsequence,
+    totalCostUsd: 0,
+    createdAt: updatedAt,
+    updatedAt,
+    archivedAt: null,
+  });
+
+  it("counts them for the tab title and the app bar", () => {
+    const items = [
+      item("a", "awaiting_approval", 1, "Refund $490.00 to Harbor & Pine Outfitters"),
+      item(
+        "b",
+        "awaiting_approval",
+        2,
+        "Refund $49.00 to Kestrel Analytics",
+        "2026-09-29T11:00:00.000Z",
+      ),
+      item("c", "running", 0, null),
+      item("d", "idle", 0, null),
+    ];
+    expect(waitingApprovalCount(items)).toBe(3);
+    expect(awaitingConversations(items).map((entry) => entry.id)).toEqual(["b", "a"]);
+    expect(documentTitle("Revenue Desk", 3)).toBe("(3) Revenue Desk");
+    expect(documentTitle("Runs · Revenue Desk", 0)).toBe("Runs · Revenue Desk");
+  });
+
+  it("says in the rail what each one waits for", () => {
+    expect(
+      waitingMarker(item("a", "awaiting_approval", 1, "Refund $490.00 to Harbor & Pine")),
+    ).toBe("Needs approval · Refund $490.00 to Harbor & Pine");
+    expect(waitingMarker(item("b", "awaiting_approval", 2, "Send the reply"))).toBe(
+      "2 approvals waiting · Send the reply",
+    );
+    expect(waitingMarker(item("c", "awaiting_approval", 1, null))).toBe("Needs approval");
   });
 });

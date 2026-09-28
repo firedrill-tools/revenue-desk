@@ -25,6 +25,7 @@ function session(token: string): SessionInfo {
     effort: "medium",
     businessDate: "2026-09-28",
     approvalTimeoutMs: 900_000,
+    modelConfigured: true,
   };
 }
 
