@@ -12,7 +12,13 @@ import {
   minorToDecimal,
 } from "../../../src/integrations/shared/money.js";
 import { unixSeconds } from "../../../src/integrations/shared/schema.js";
-import { listOf, maskIdentifier, preview, scrub } from "../../../src/integrations/shared/text.js";
+import {
+  listOf,
+  maskIdentifier,
+  preview,
+  scrub,
+  sentence,
+} from "../../../src/integrations/shared/text.js";
 import { checkBaseUrl, isLoopbackHost, joinUrl } from "../../../src/integrations/shared/url.js";
 
 describe("base URLs", () => {
@@ -112,6 +118,10 @@ describe("text", () => {
     expect(listOf(["a"])).toBe("a");
     expect(listOf(["a", "b", "c"])).toBe("a, b and c");
     expect(listOf(["a", "b", "c", "d", "e"])).toBe("a, b and 3 others");
+    expect(sentence("Connected to Kestrel Analytics, Inc.")).toBe(
+      "Connected to Kestrel Analytics, Inc.",
+    );
+    expect(sentence("Connected to Acme")).toBe("Connected to Acme.");
     expect(maskIdentifier("ca_1234567890c6M")).toBe("ca_…c6M");
     expect(maskIdentifier("20211234")).toBe("…234");
     expect(maskIdentifier("ab")).toBe("…");

@@ -9,7 +9,7 @@ import type { ApiIntegration, ApiIntegrationDeps } from "../shared/definition.js
 import { probeFailure } from "../shared/errors.js";
 import type { HttpDeps } from "../shared/http.js";
 import { str } from "../shared/json.js";
-import { maskIdentifier } from "../shared/text.js";
+import { maskIdentifier, sentence } from "../shared/text.js";
 import { classifySlack } from "./classify.js";
 import { SlackClient } from "./client.js";
 import { SLACK_PROFILE } from "./profile.js";
@@ -45,7 +45,7 @@ export async function probeSlack(
       .join(" ");
     return {
       state: "connected",
-      detail: who === "" ? "Slack accepted the bot token." : `${who}.`,
+      detail: who === "" ? "Slack accepted the bot token." : sentence(who),
       accountHint: teamId === undefined ? null : maskIdentifier(teamId),
     };
   } catch (error) {

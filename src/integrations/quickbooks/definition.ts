@@ -9,7 +9,7 @@ import type { ApiIntegration, ApiIntegrationDeps } from "../shared/definition.js
 import { probeFailure } from "../shared/errors.js";
 import type { HttpDeps } from "../shared/http.js";
 import { obj, str } from "../shared/json.js";
-import { maskIdentifier } from "../shared/text.js";
+import { maskIdentifier, sentence } from "../shared/text.js";
 import { classifyQuickBooks } from "./classify.js";
 import { QuickBooksClient } from "./client.js";
 import { QUICKBOOKS_PROFILE } from "./profile.js";
@@ -44,7 +44,8 @@ export async function probeQuickBooks(
     const name = str(obj(body, "CompanyInfo"), "CompanyName");
     return {
       state: "connected",
-      detail: name === undefined ? "QuickBooks company is readable." : `Connected to ${name}.`,
+      detail:
+        name === undefined ? "QuickBooks company is readable." : sentence(`Connected to ${name}`),
       accountHint: maskIdentifier(connection.api.realmId),
     };
   } catch (error) {

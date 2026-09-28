@@ -5,13 +5,14 @@
 import { z } from "zod";
 import { identifier, isoTimestamp, metadataField, pageSize } from "../shared/schema.js";
 
+/** Stripe ids by prefix; the rest is alphanumeric (underscores allowed, as in test fixtures). */
 export const STRIPE_ID = {
-  customer: /^cus_[A-Za-z0-9]+$/,
-  charge: /^(?:ch|py)_[A-Za-z0-9]+$/,
-  paymentIntent: /^pi_[A-Za-z0-9]+$/,
-  invoice: /^in_[A-Za-z0-9]+$/,
-  subscription: /^sub_[A-Za-z0-9]+$/,
-  any: /^[a-z]{2,5}_[A-Za-z0-9]+$/,
+  customer: /^cus_\w+$/,
+  charge: /^(?:ch|py)_\w+$/,
+  paymentIntent: /^pi_\w+$/,
+  invoice: /^in_\w+$/,
+  subscription: /^sub_\w+$/,
+  any: /^[a-z]{2,5}_\w+$/,
 } as const;
 
 const customerId = (description: string) => identifier(STRIPE_ID.customer, description);

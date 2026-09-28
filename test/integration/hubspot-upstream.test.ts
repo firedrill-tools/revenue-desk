@@ -15,11 +15,16 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { HubSpotConnection } from "../../src/contracts/integration.js";
 import { connectUpstream, type UpstreamConfig } from "../../src/gateway/mcp-proxy.js";
+import { classifyHubSpot } from "../../src/integrations/hubspot/classify.js";
 import { type ConnectUpstream, probeHubSpot } from "../../src/integrations/hubspot/probe.js";
 import { HUBSPOT_TOOL_NAMES } from "../../src/integrations/hubspot/profile.js";
 import { resolveHubSpot } from "../../src/integrations/hubspot/resolve.js";
 import { hubspotUpstreamConfig } from "../../src/integrations/hubspot/upstream.js";
-import { secret, testEnv } from "../unit/integrations/helpers.js";
+import { createClock } from "../support/fakes/core/clock.js";
+import { FAKE_CREDENTIALS } from "../support/fakes/credentials.js";
+import { loadBusinessFixtures } from "../support/fakes/fixtures.js";
+import { HubSpotFake } from "../support/fakes/hubspot/index.js";
+import { SETTINGS, secret, testEnv } from "../unit/integrations/helpers.js";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const DENY_NETWORK = pathToFileURL(join(repoRoot, "test/support/deny-network.mjs")).href;
@@ -136,5 +141,103 @@ describe("HubSpot stdio upstream", () => {
     );
     expect(result.state).toBe("needs_auth");
     expect(JSON.stringify(result)).not.toContain(REVOKED_TOKEN);
+  });
+});
+
+describe("HubSpot against the HubSpot fake", () => {
+  let hubspot: HubSpotFake;
+
+  beforeAll(async () => {
+    const fixtures = loadBusinessFixtures();
+    hubspot = await HubSpotFake.start({
+      fixture: fixtures.hubspot,
+      clock: createClock(fixtures.company.asOf),
+      accessToken: FAKE_CREDENTIALS.hubspotAccessToken,
+      mcpToken: FAKE_CREDENTIALS.hubspotMcpToken,
+      prefix: "/hubspot",
+      mcp: true,
+    });
+  });
+
+  afterAll(async () => {
+    await hubspot?.close();
+  });
+
+  const httpConnection = (token: string | null) => {
+    const resolution = resolveHubSpot(
+      testEnv({
+        hubspot: { mcpUrl: hubspot.mcpUrl, mcpToken: token === null ? null : secret(token) },
+      }),
+    );
+    if (resolution.status !== "configured") throw new Error(`unexpected ${resolution.status}`);
+    return resolution.connection;
+  };
+
+  it("probes the Streamable HTTP MCP endpoint with its bearer token", async () => {
+    const connection = httpConnection(FAKE_CREDENTIALS.hubspotMcpToken);
+    expect(connection.mcp.transport).toBe("http");
+    await expect(
+      probeHubSpot(connection, AbortSignal.timeout(30_000), { connect: guardedConnect }),
+    ).resolves.toMatchObject({ state: "connected" });
+    expect(hubspot.mcpCalls.map((call) => call.tool)).toContain("hubspot-get-user-details");
+  });
+
+  it("reports a rejected MCP bearer token as needs_auth and a down server as error", async () => {
+    const wrong = await probeHubSpot(httpConnection("wrong-token"), AbortSignal.timeout(30_000), {
+      connect: guardedConnect,
+    });
+    expect(wrong.state).toBe("needs_auth");
+    expect(JSON.stringify(wrong)).not.toContain("wrong-token");
+    hubspot.setMcpAvailable(false);
+    try {
+      await expect(
+        probeHubSpot(
+          httpConnection(FAKE_CREDENTIALS.hubspotMcpToken),
+          AbortSignal.timeout(30_000),
+          {
+            connect: guardedConnect,
+          },
+        ),
+      ).resolves.toMatchObject({ state: "error" });
+    } finally {
+      hubspot.setMcpAvailable(true);
+    }
+  });
+
+  it("runs the stdio server against the fake's CRM API and creates a note in one call", async () => {
+    const env = hubspot.stdioEnv();
+    const connection = connectionFor(env.HUBSPOT_ACCESS_TOKEN, env.HUBSPOT_API_BASE_URL);
+    await expect(
+      probeHubSpot(connection, AbortSignal.timeout(30_000), { connect: guardedConnect }),
+    ).resolves.toMatchObject({ state: "connected" });
+
+    const input = {
+      objectType: "notes",
+      inputs: [
+        {
+          properties: {
+            hs_note_body: "Refunded duplicate charge ch_KAhp_0922b ($490.00).",
+            hs_timestamp: "2026-09-28T13:00:00Z",
+          },
+          associations: [],
+        },
+      ],
+    };
+    expect(classifyHubSpot("hubspot-batch-create-objects", input, SETTINGS)).toMatchObject({
+      actionClass: "internal_write",
+      operation: "hubspot.notes.create",
+    });
+    const upstream = await guardedConnect(hubspotUpstreamConfig(connection), { timeoutMs: 30_000 });
+    try {
+      const before = hubspot.writes().length;
+      const result = await upstream.client.callTool({
+        name: "hubspot-batch-create-objects",
+        arguments: input,
+      });
+      expect(result.isError).not.toBe(true);
+      expect(hubspot.writes()).toHaveLength(before + 1);
+    } finally {
+      await upstream.close();
+    }
   });
 });

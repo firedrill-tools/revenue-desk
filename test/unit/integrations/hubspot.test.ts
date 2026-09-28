@@ -447,6 +447,35 @@ describe("probeHubSpot with a fake upstream", () => {
     });
   });
 
+  it("recognises refused credentials from the error chain or the transport's message", async () => {
+    const failing =
+      (error: Error): ConnectUpstream =>
+      async () => {
+        throw error;
+      };
+    const signal = new AbortController().signal;
+    const withStatus = Object.assign(new Error("Streamable HTTP error: Error POSTing"), {
+      code: 403,
+    });
+    const wrapped = new Error("could not connect", { cause: withStatus });
+    const rpc = new Error(
+      'could not connect to the http MCP server: Streamable HTTP error: Error POSTing to endpoint: {"error":{"code":-32001,"message":"Unauthorized"}}',
+    );
+    for (const error of [withStatus, wrapped, rpc]) {
+      await expect(probeHubSpot(stdio, signal, { connect: failing(error) })).resolves.toMatchObject(
+        {
+          state: "needs_auth",
+        },
+      );
+    }
+    const unavailable = new Error(
+      'Error POSTing to endpoint: {"error":{"message":"Service unavailable"}}',
+    );
+    await expect(
+      probeHubSpot(stdio, signal, { connect: failing(unavailable) }),
+    ).resolves.toMatchObject({ state: "error" });
+  });
+
   it("closes an upstream that connects after the probe was aborted", async () => {
     const controller = new AbortController();
     let closed = false;

@@ -6,6 +6,11 @@ export function preview(text: string, max = 160): string {
   return line.length <= max ? line : `${line.slice(0, max - 1).trimEnd()}…`;
 }
 
+/** Ends a sentence with one period, even when the text already ends with one ("Inc."). */
+export function sentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
 /** "1 note", "3 notes"; irregular plurals pass `pluralForm`. */
 export function countOf(count: number, singular: string, pluralForm = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : pluralForm}`;

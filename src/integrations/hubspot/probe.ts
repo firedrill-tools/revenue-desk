@@ -47,6 +47,29 @@ function upstreamStatus(text: string): number | null {
   return status === undefined ? null : Number(status);
 }
 
+/** HTTP statuses carried on the error or its causes (StreamableHTTPError.code is the status). */
+function statusCodes(error: unknown): number[] {
+  const codes: number[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && typeof current === "object" && current !== null; depth += 1) {
+    if ("code" in current && typeof current.code === "number") codes.push(current.code);
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return codes;
+}
+
+/**
+ * Whether a failure to connect means the credentials were refused: a 401 or
+ * 403 on the error chain, or a transport message that says so (the gateway's
+ * connector reports the server's reply as text).
+ */
+function rejectedCredentials(error: unknown, message: string): boolean {
+  if (statusCodes(error).some((code) => code === 401 || code === 403)) return true;
+  const status = upstreamStatus(message);
+  if (status === 401 || status === 403) return true;
+  return /\bunauthori[sz]ed\b|\bforbidden\b|\binvalid[_ ]token\b/i.test(message);
+}
+
 function hubIdOf(text: string): string | null {
   return /"hubId"\s*:\s*"?(\d+)/.exec(text)?.[1] ?? null;
 }
@@ -110,11 +133,10 @@ export async function probeHubSpot(
       return { state: "error", detail: clean(error.message), accountHint: null };
     }
     const message = error instanceof Error ? error.message : String(error);
-    const status = upstreamStatus(message);
-    if (status === 401 || status === 403) {
+    if (rejectedCredentials(error, message)) {
       return {
         state: "needs_auth",
-        detail: `The HubSpot MCP server rejected the configured token (HTTP ${status}).`,
+        detail: "The HubSpot MCP server rejected the configured token.",
         accountHint: null,
       };
     }
