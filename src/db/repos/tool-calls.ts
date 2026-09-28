@@ -93,11 +93,12 @@ export function markToolCallDenied(
 ): void {
   const row = getToolCall(db, key);
   if (row === undefined) return;
-  const rejected = input.decision === "rejected";
+  // A call to a tool the run did not offer can only have been rejected, whatever ended it.
+  const rejected = input.decision === "rejected" || row.integration === null;
   db.update(toolCalls)
     .set({
       status: rejected ? "failed" : "denied",
-      decision: input.decision,
+      decision: rejected ? "rejected" : input.decision,
       outputJson: input.reason,
       isError: rejected,
       errorMessage: rejected ? input.reason : null,

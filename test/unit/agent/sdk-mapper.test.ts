@@ -383,6 +383,40 @@ describe("SdkMessageMapper", () => {
     ]);
   });
 
+  it("rejects a call to a tool the run never offered, even while stopping", () => {
+    const { events, mapper } = setup({ stopping: () => true });
+    mapper.handle(messageStart("msg_1"));
+    for (const message of toolStep("msg_1", "toolu_x0", "mcp__slack__post_message", {})) {
+      mapper.handle(message);
+    }
+    for (const message of toolStep("msg_1", "toolu_cut", "mcp__slack__add_reaction", {}, 1)) {
+      mapper.handle(message);
+    }
+    mapper.handle(messageStop());
+    mapper.handle(
+      toolResult(
+        "toolu_x0",
+        "<tool_use_error>Error: No such tool available</tool_use_error>",
+        true,
+      ),
+    );
+    mapper.finish();
+    expect(ofType(events, "tool.denied")).toEqual([
+      {
+        type: "tool.denied",
+        toolCallId: "toolu_x0",
+        decision: "rejected",
+        reason: "<tool_use_error>Error: No such tool available</tool_use_error>",
+      },
+      {
+        type: "tool.denied",
+        toolCallId: "toolu_cut",
+        decision: "rejected",
+        reason: "Not run: mcp__slack__add_reaction is not a tool of this run.",
+      },
+    ]);
+  });
+
   it("does not settle a call the gateway is still executing", () => {
     const { events, ledger, mapper } = setup();
     mapper.handle(messageStart("msg_1"));

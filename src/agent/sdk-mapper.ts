@@ -392,8 +392,25 @@ export class SdkMessageMapper {
     }
   }
 
+  /** A tool the run never offered (the model made up its name): it can only be rejected. */
+  #isUnknownTool(toolCallId: string): boolean {
+    const name = this.#ledger.toolNameOf(toolCallId);
+    return name !== null && this.#tools.describe(name).tool === null;
+  }
+
   #settleFromResult(toolCallId: string, rawText: string, isError: boolean): void {
     const text = this.#redact(rawText);
+    // Checked before the stop: a call to a tool that does not exist is rejected, stop or not.
+    if (isError && this.#isUnknownTool(toolCallId)) {
+      if (!this.#ledger.settle(toolCallId, "rejected")) return;
+      this.#ledger.emitFor(toolCallId, {
+        type: "tool.denied",
+        toolCallId,
+        decision: "rejected",
+        reason: text,
+      });
+      return;
+    }
     if (isError && this.#isStopping()) {
       // Every call the gateway ran was settled by the gateway, so this one never ran.
       if (!this.#ledger.settle(toolCallId, "stopped")) return;
@@ -457,6 +474,16 @@ export class SdkMessageMapper {
       }
       if (call.executing) {
         this.#endedWhileRunning(call.toolCallId);
+        continue;
+      }
+      if (this.#isUnknownTool(call.toolCallId)) {
+        if (!this.#ledger.settle(call.toolCallId, "rejected")) continue;
+        this.#ledger.emitFor(call.toolCallId, {
+          type: "tool.denied",
+          toolCallId: call.toolCallId,
+          decision: "rejected",
+          reason: `Not run: ${this.#ledger.toolNameOf(call.toolCallId)} is not a tool of this run.`,
+        });
         continue;
       }
       if (!this.#ledger.settle(call.toolCallId, "stopped")) continue;

@@ -150,6 +150,50 @@ describe("RunPersistence", () => {
     ]);
   });
 
+  it("records a stopped call to an unknown tool as rejected, never breaking the log's rules", async () => {
+    const { db, persistence, apply } = setup();
+    apply(started);
+    apply({
+      type: "tool.input.start",
+      toolCallId: "toolu_x0",
+      toolName: "mcp__slack__post_message",
+      title: "mcp__slack__post_message",
+      tool: null,
+    });
+    apply({
+      type: "tool.input.available",
+      toolCallId: "toolu_x0",
+      toolName: "mcp__slack__post_message",
+      title: "mcp__slack__post_message",
+      input: {},
+      tool: null,
+    });
+    // An older core, or any path, that ends such a call as stopped.
+    expect(() =>
+      apply({
+        type: "tool.denied",
+        toolCallId: "toolu_x0",
+        decision: "stopped",
+        reason: "Not run: the run was stopped before this call ran.",
+      }),
+    ).not.toThrow();
+    expect(listToolCalls(db, "r1")[0]).toMatchObject({
+      integration: null,
+      decision: "rejected",
+      status: "failed",
+    });
+    apply({
+      type: "run.finished",
+      status: "cancelled",
+      finishedAt: T0,
+      stopReason: "user",
+      terminalReason: null,
+      reply: null,
+      error: null,
+    });
+    await persistence.end("cancelled");
+  });
+
   it("keeps a known tool's integration when its input cannot be classified", async () => {
     const { db, persistence, apply } = setup();
     apply(started);
