@@ -21,6 +21,15 @@ decisions log and the implementation status of each part, is
 | Closed-won handoff | For a HubSpot deal in closed-won, finds or creates the QuickBooks customer, creates and sends the invoice, and posts to the sales-ops Slack channel. | Creating and sending the invoice each ask. |
 | Weekly digest | Reads new HubSpot deals, Stripe payments and refunds, and QuickBooks AR aging, and posts a digest to Slack. | Automatic when the channel is allowlisted. |
 
+The agent is instructed to call a refund, invoice, payment or cancellation
+tool only when you asked for that action. When it finds one is needed (a
+duplicate charge, a payment never recorded), it recommends it with the
+amount and the record, asks in its reply and finishes the rest of the task.
+It drafts, notes and posts about an action only after the action succeeded,
+and promises a customer nothing that has not been approved and done. These
+are instructions to the model; the approval policy below is what enforces
+them.
+
 ## How it connects
 
 Each integration uses one of three connection types. Every tool reaches the
@@ -34,13 +43,29 @@ process receives none of them.
 |---|---|---|---|
 | Gmail | Composio | fetch emails, read a thread, list threads and labels; create a draft, add a label; send a draft, reply to a thread | Composio holds the Google OAuth grant, so Revenue Desk never stores Google tokens. Sessions use Composio's `direct_tools` preset with an explicit tool allowlist. |
 | Google Calendar | Composio | list events, find free slots, find an event; create and update events | The same Composio session and OAuth handling as Gmail. |
-| HubSpot | MCP | account details; list, search and batch-read objects; associations and properties; batch-create and batch-update objects (notes and tasks are created with their associations in one call) | HubSpot publishes an official MCP server, `@hubspot/mcp-server` 0.4.0, which Revenue Desk runs over stdio. Any Streamable HTTP MCP server can replace it. 10 of its 21 tools are offered. |
-| Stripe | API | find and get customers; list charges, payment intents, invoices, subscriptions and refunds; get an invoice; get the balance; create a refund; cancel a subscription | Direct REST: test-mode keys, idempotency keys on writes and documented error envelopes. |
+| HubSpot | MCP | account details; list, search and batch-read objects; associations and properties; batch-create and batch-update objects (notes and tasks are created with their associations in one call); list owners, to name who a record is assigned to | HubSpot publishes an official MCP server, `@hubspot/mcp-server` 0.4.0, which Revenue Desk runs over stdio. Any Streamable HTTP MCP server can replace it. 10 of its 21 tools are offered. The owners lookup is Revenue Desk's own read-only tool against HubSpot's REST API with the same token, because the MCP server has none; it is offered with the stdio server only, so HubSpot has 11 tools over stdio and 10 with `HUBSPOT_MCP_URL`. |
+| Stripe | API | find customers by exact email or by name (Stripe's customer search), get a customer; list charges, payment intents, invoices, subscriptions and refunds; get an invoice; get the balance; create a refund; cancel a subscription | Direct REST: test-mode keys, idempotency keys on writes and documented error envelopes. |
 | QuickBooks Online | API | company info; find, get and create customers; list and get invoices; list payments; create, send and void invoices; record a payment | Direct REST against the sandbox company, with `requestid` idempotency on writes. |
 | Slack | API | list channels, read a channel or thread, find a user; post a message, add a reaction | A bot token is simple to obtain; Slack's official MCP server needs user OAuth and the reference Slack MCP server is deprecated. |
 
 An integration without configuration is shown as not configured and its tools
 are not offered; there is no fallback to sample data or to another model.
+
+Some rules are checked before a call reaches the system, because the tool's
+schema cannot state them; the call is rejected and the model is told what to
+fix:
+
+- **HubSpot:** creating a note, task, call, meeting or email needs
+  `hs_timestamp` (for a task, its due time).
+- **Slack:** posts are Slack mrkdwn. A Markdown table, a `#` heading,
+  `**double asterisks**`, a plain `@name` (which notifies nobody) or a
+  `<@…>` mention that is not a Slack user id is refused; mention people as
+  `<@U…>` with the id from finding the user.
+- **Any tool:** an empty value is refused with "pass a value a system or
+  the user gave you, or leave the field out".
+
+Times the Stripe, QuickBooks and Slack tools return are written in the
+workspace time zone (Settings) with their UTC offset.
 
 ## Requirements
 
@@ -88,11 +113,13 @@ are not offered; there is no fallback to sample data or to another model.
      `rk_test_` key. Live keys are refused (see
      [Approvals and safety](#approvals-and-safety)).
    - **HubSpot.** Either `HUBSPOT_ACCESS_TOKEN`, a private-app token with CRM
-     read and write access for contacts, companies, deals, notes and tasks
-     (the bundled MCP server runs over stdio with it), or `HUBSPOT_MCP_URL`
-     for any Streamable HTTP MCP server, with `HUBSPOT_MCP_TOKEN` when it
-     needs a bearer token. HubSpot ends creation of legacy private apps on
-     2026-10-26.
+     read and write access for contacts, companies, deals, notes and tasks,
+     plus `crm.objects.owners.read` for the owners lookup (the bundled MCP
+     server runs over stdio with it, and the owners lookup calls
+     `HUBSPOT_API_BASE_URL`, default `https://api.hubspot.com`, with the same
+     token), or `HUBSPOT_MCP_URL` for any Streamable HTTP MCP server, with
+     `HUBSPOT_MCP_TOKEN` when it needs a bearer token (no owners lookup
+     then). HubSpot ends creation of legacy private apps on 2026-10-26.
    - **QuickBooks Online.** `QBO_ACCESS_TOKEN` and `QBO_REALM_ID` (the company
      id) for a sandbox company from the Intuit developer portal. The default
      base URL is the sandbox API. Access tokens expire after an hour and
@@ -109,8 +136,15 @@ are not offered; there is no fallback to sample data or to another model.
 4. In the app, open **Settings** and fill in the company profile, the
    internal email domains (recipients and attendees outside them are
    external), any shared Google calendars the company owns (every other
-   calendar except your primary one counts as external), the Slack channels
-   the agent may post to without asking, and the time zone.
+   calendar except your primary one counts as external), the Slack notices
+   channel and the channels the agent may post to without asking, and the
+   time zone. The time zone sets the business date ("today", with its
+   weekday) and the zone of the times the Stripe, QuickBooks and Slack tools
+   return.
+
+Without `ANTHROPIC_API_KEY` the app says so and offers no job to start. The
+server checks every configured connection read-only in the background when
+it starts; until its check finishes, a connection shows as not checked yet.
 
 ## Running
 
@@ -210,7 +244,7 @@ continues after the output is written.
 Examples:
 
 ```sh
-node dist/cli/main.js ask "Why was Kestrel Analytics charged twice?"
+node dist/cli/main.js ask "Why was Harbor & Pine Outfitters charged twice?"
 node dist/cli/main.js ask --json "List invoices more than 60 days overdue" | jq .toolCalls
 echo "Post this week's revenue digest to Slack" | node dist/cli/main.js ask -
 node dist/cli/main.js ask --conversation <id> "Draft the reminder emails"
@@ -231,8 +265,8 @@ and the class's mode decides what happens:
 | Action class | Examples | Default |
 |---|---|---|
 | `read` | Any lookup, search or list | automatic |
-| `internal_write` | Gmail drafts and labels, HubSpot notes and tasks, Slack posts to allowlisted channels, calendar events on your own or a listed company calendar whose attendees are all internal, creating a QuickBooks customer | automatic |
-| `outbound` | Sending or replying to email, calendar events with an external attendee or on a calendar that is not listed as the company's, an update of an event whose current guests the run has not read (an update replaces the guest list), Slack posts to any other channel | asks |
+| `internal_write` | Gmail drafts and labels, HubSpot notes, tasks and other CRM records, Slack posts to allowlisted channels that do not mention `@channel`, `@here` or `@everyone`, calendar events on your own or a listed company calendar whose attendees are all internal, creating a QuickBooks customer | automatic |
+| `outbound` | Sending or replying to email, calendar events with an external attendee or on a calendar that is not listed as the company's, an update of an event whose current guests the run has not read (an update replaces the guest list), Slack posts to any other channel or that notify everyone | asks |
 | `financial` | Stripe refunds and subscription cancellations; QuickBooks invoice create, send and void, and recording a payment | asks |
 | `destructive` | (no tool is destructive today) | denied |
 
@@ -240,16 +274,40 @@ and the class's mode decides what happens:
   `AGENT_POLICY` (JSON, for example `{"financial":"deny"}`) overrides it and
   locks those classes in the app. The CLI's `--policy` overrides both for one
   run.
-- **Approval cards** show the exact consequence ("Refund $49.00 to Kestrel
-  Analytics") and its facts. A pending approval is denied after
+- **Approval cards** show the exact consequence and its facts, naming
+  records by what the systems returned earlier in the same run rather than
+  by internal ids. Examples from the sandbox:
+  - "Refund $490.00 to Harbor & Pine Outfitters on Stripe charge ch_…", with
+    the charge's amount, date and description, what was already refunded
+    (this run's refunds included), and a "Check" line first when the refund
+    is more than what is left;
+  - "Send the Gmail draft to dana@harborpine.test", with To, Cc, Bcc,
+    subject, thread and body of the draft the run created (a draft the run
+    did not create says its recipients could not be confirmed);
+  - "Record a $1,980.00 payment from Meridian Labs against invoice 1051",
+    flagged when it exceeds the invoice's open balance or the invoice
+    belongs to another customer;
+  - "Email invoice <number> (<total>, <customer>) to <billing email>" for
+    sending a QuickBooks invoice, or a note that the billing email could not
+    be confirmed when the run never read it;
+  - a calendar event with its weekday and time in the event's zone, who is
+    outside the company, who is removed, and whom Google emails;
+  - a Slack post with its channel and the message text, line breaks kept.
+
+  A write sent without an answer shows "May already be applied" on later
+  cards. A call blocked by policy reads "Blocked by policy" with the reason
+  and a link to the policy; an approved call that then failed reads
+  "Approved, then failed" with the reason.
+- **Waiting and deciding.** A pending approval is denied after
   `AGENT_APPROVAL_TIMEOUT_MS` (15 minutes by default). Approvals are made in
   the app on the machine that runs Revenue Desk (it answers on loopback
   only); the phone layout is for narrow windows, not for remote devices.
   While one waits, the tab title shows the count ("(1) Revenue Desk"), the
   new-chat screen lists it under "Waiting for your decision", and the
-  conversation list names what waits. Stop cancels the run
-  and its pending approvals. After a denial the agent reports it and does not
-  retry. Arguments are validated against the tool's schema before any
+  conversation list names what waits; a call queued behind it reads "Waits
+  for your decision above". Stop cancels the run and its pending approvals.
+  After a denial the agent reports it and does not retry. Arguments are
+  validated against the tool's schema and the rules above before any
   approval is asked, so an invalid call is never put in front of a person.
 - **Writes happen once.** Stripe writes carry an `Idempotency-Key` and
   QuickBooks writes a `requestid`, both derived from the run and the model's
@@ -284,7 +342,23 @@ and the class's mode decides what happens:
   replies never render images, so text the model repeats cannot make the
   browser fetch a URL. Under `pnpm dev`, Vite sends no CORS headers and serves
   only the web app, the shared contracts and dependencies, never `./data`.
-  One run at a time per conversation, at most four at once.
+- **One run at a time per conversation**, whether it was started in the app
+  or by the CLI (the database refuses a second running run), and at most four
+  runs at once in the server; a run waiting on an approval holds its slot.
+  While the server shuts down it starts no new run.
+- **Runs whose process died.** Every run records the process that owns it.
+  If the server crashes or a CLI is killed (SIGKILL) mid-run, the run is
+  failed as `server_restart`, its pending approvals expire and its
+  conversation is freed: at the next server start, when the CLI opens the
+  database, before a busy conversation is refused, and when the app lists
+  conversations or runs. Runs of processes that are still alive are never
+  touched.
+- **Connections follow the runs.** A call whose provider refuses the
+  credential itself (QuickBooks, Stripe or HubSpot 401; Slack
+  `invalid_auth`, `token_expired` and the like) marks the connection expired
+  or needing sign-in, so the next run leaves it out; one call's 403, a
+  missing scope or a card decline does not. Connections re-checks rows older
+  than 30 minutes when you open it.
 - **Composio** sign-in starts only from a click on Connect. Composio sessions
   offer outbound Gmail and Calendar tools only when the policy does not deny
   outbound actions.
@@ -310,11 +384,12 @@ Tables:
 | `connections` | The last known status of each integration: state, endpoint host, masked account hint, missing variable names, last check. |
 | `conversations` | Title, source (`ui` or `cli`), status, SDK session id, cost and token totals. |
 | `messages` | The rendered chat messages of each conversation. |
-| `runs` | One row per turn: source, mode, status, model, effort, usage and cost, stop and terminal reasons, error, and snapshots of the policy and the connections it used. |
-| `tool_calls` | The action log: one row per tool call with its connection type, operation, class, decision, redacted input, compacted output, error, HTTP status and idempotency key. |
+| `runs` | One row per turn: source, mode, status, model, effort, usage and cost (its own requests only, even in a resumed session), stop and terminal reasons, error, snapshots of the policy and the connections it used, the owning process (pid and start time) and the SDK session. |
+| `tool_calls` | The action log: one row per tool call with its connection type, operation, class, decision, redacted input, compacted output, error, the provider's HTTP status (successes included) and, for a Stripe or QuickBooks write, the idempotency key it sent. |
 | `approvals` | One row per approval request with its facts, status, who decided, reason and expiry. |
 
-Migrations are applied when the server or the CLI opens the database.
+Migrations (`src/db/migrations`, `0000` to `0005`) are applied when the
+server or the CLI opens the database.
 `pnpm db:seed` writes the default settings and policies (it is idempotent).
 There is no sample data: conversations, runs and tool calls exist only after
 real use. Money is stored in integer minor units with its currency. No secret
@@ -333,14 +408,17 @@ generated migration in `src/db/migrations`.
 
 ## Testing
 
-| Command | What it covers |
-|---|---|
-| `pnpm test` | Vitest unit and integration tests, no network: contracts and schema, configuration, clients, classifiers, policy, redaction, the event-to-stream mapping, database repositories, the CLI, and the real Claude Agent SDK against a scripted Messages API on loopback with contract-faithful local fakes of every integration. The full-stack suite (`test/integration/e2e`) plays the jobs, decisions and failures over the HTTP API of the real server and checks the database rows against what happened in each fake. |
-| `pnpm test:e2e-cli` | The built CLI (`dist/cli/main.js`) as a separate process against the fakes and the scripted model: human and `--json` output, exit codes, SIGTERM, parallel runs with separate state directories. Run `pnpm build` first. |
-| `pnpm test:e2e` | Playwright UI tests of the built app in the sandbox (started by the suite on port 4320, which must be free) in the installed Google Chrome, on desktop and phone viewports, with an accessibility check. Run `pnpm build` first. |
-| `pnpm typecheck`, `pnpm lint` | TypeScript and Biome. |
-| `pnpm verify` | Typecheck, lint, `pnpm test`, the build, then the CLI and UI end-to-end suites. |
-| `LIVE_E2E=1 pnpm test:live` | Opt-in, against real services, and not part of `pnpm verify`: see [Live tests](#live-tests). |
+| Command | What it covers | Tests (2026-09-29) |
+|---|---|---|
+| `pnpm test` | Vitest unit and integration tests, no network: contracts and schema, configuration, clients, classifiers and the cards they build, input rules, policy, redaction, the event-to-stream mapping, security guards, database repositories and run recovery, the web client's libraries, the CLI, and the real Claude Agent SDK against a scripted Messages API on loopback with contract-faithful local fakes of every integration. The full-stack suite (`test/integration/e2e`) plays the jobs, decisions, stops and failures over the HTTP API of the real server and checks the database rows against what happened in each fake. | 1,205 |
+| `pnpm test:e2e-cli` | The built CLI (`dist/cli/main.js`) as a separate process against the fakes and the scripted model: human and `--json` output, the run shown in the app, exit codes, SIGTERM, a CLI killed with SIGKILL not blocking its conversation, four runs at once with separate state directories, the shebang. Run `pnpm build` first. | 8 |
+| `pnpm test:e2e` | Playwright UI tests of the built app in the sandbox (started by the suite on port 4320, which must be free) in the installed Google Chrome, on desktop and phone viewports: the jobs with approvals, reload, Stop and keyboard-only approval; conversation names; the inspector; every connection state, Check and Connect; a policy block; no request to another host; waiting approvals outside their conversation; a failed approved refund; no model key; dark mode, reduced motion, 44px touch targets, the rail, Runs and table alignment. Each checks accessibility (axe) and, on the phone, that the page never scrolls sideways. Run `pnpm build` first. | 49, plus 1 skipped (touch targets run on the phone only) |
+| `pnpm typecheck`, `pnpm lint` | TypeScript and Biome. | |
+| `pnpm verify` | Typecheck, lint, `pnpm test`, the build, then the CLI and UI end-to-end suites. | |
+| `LIVE_E2E=1 pnpm test:live` | Opt-in, against real services, read-only, and not part of `pnpm verify`: see [Live tests](#live-tests). | 1 live, 11 offline |
+
+`pnpm build` warns that the chat screen's JavaScript chunk is larger than
+500 kB; the build succeeds.
 
 ### Live tests
 
@@ -366,12 +444,17 @@ the tracked tree and are never printed.
   API with the production build (`pnpm build` first), then three headless CLI
   runs, one of them without QuickBooks configuration. Each approval is decided
   by the job's rules (the correct refund, invoice or call is approved; a wrong
-  charge, an unrequested payment or refund, or an email the user asked only to
-  draft is denied), and every card is checked against the call's input. The
+  charge, an unrequested payment or refund, an email that promises a refund
+  nobody approved, or an email the user asked only to draft is denied), and
+  every card is checked against the call's input. The
   key comes from `--key-file` (default `.env`). Transcripts, the database and
   a summary go to `<dir>`, which must be outside the repository; spend is kept
   in `<dir>/spend.json`, and a run that could take it past `--budget-usd`
-  (default 8) is not started. `--jobs j1,j3` and `--no-cli` narrow the run.
+  (default 8) is not started. Each run may cost up to its cap: $2 per server
+  turn and $1 per CLI run by default, or `--run-cap-usd` (at most 2), which
+  the script enforces through `AGENT_MAX_BUDGET_USD` and `--max-budget-usd`
+  so more runs fit a small budget. `--jobs j1,j3` and `--no-cli` narrow the
+  run. The script checks that nothing it wrote contains a key.
 
 Real-SDK tests run the Claude CLI with `ANTHROPIC_BASE_URL` pointing at the
 scripted API and proxies that refuse any non-loopback connection. They fail,
@@ -440,6 +523,10 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | An action was "blocked by policy" in the CLI | Its class is `ask` and the CLI cannot ask. Run it in the app, or allow the class for one run with `--policy`. |
 | The CLI exits 2 for `--conversation` | The id is not in this state directory, or the conversation has an active run in the app; wait for it or stop it. |
 | An approval disappeared as "expired" | The server restarted while it was pending, or `AGENT_APPROVAL_TIMEOUT_MS` passed. Ask again. |
+| A run failed with `server_restart` | The process running it exited mid-run (a crash, a restart, a CLI killed with SIGKILL). Revenue Desk failed it so the conversation is free again; its pending approvals expired. Ask again. |
+| "Revenue Desk is shutting down and starts no new run" (503) | The server received SIGINT or SIGTERM. Start it again. |
+| A call was rejected before it ran ("is missing hs_timestamp", "has a Markdown table", "is empty", "mentions … which is not a Slack user id") | Revenue Desk checked a rule the system enforces or a formatting rule, and nothing reached the system. The agent is told what to fix, so it can repeat the call corrected. |
+| HubSpot owners show as ids | The owners lookup needs the stdio server (`HUBSPOT_ACCESS_TOKEN`) and the token's `crm.objects.owners.read` scope; with `HUBSPOT_MCP_URL` it is not offered. |
 | Dates or aging are off by a day | The business date is today in the Settings time zone. Set the time zone, or `AGENT_BUSINESS_DATE` for a fixed date. |
 | "address already in use" on 4320 or 4321 | Another process holds the port. Stop it, or set `PORT` (the Vite proxy expects 4320). |
 | Tests fail with "No native Claude Agent SDK binary" | Optional dependencies were skipped. Run `pnpm install` again without `--no-optional`. |
