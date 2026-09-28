@@ -6,7 +6,7 @@
  */
 import type { Fakes } from "../support/fakes/index.js";
 import { Checks, expectedIdempotencyKey, firstLine, SOLSTICE } from "./facts.js";
-import { type Scenario, type Step, type StepContext, text } from "./script.js";
+import { type Scenario, type Step, type StepContext, text, toolUseId } from "./script.js";
 import { hubspot, quickbooks, slack } from "./tools.js";
 
 export const J4_PROMPT =
@@ -165,7 +165,7 @@ export const J4_CLOSED_WON: Scenario = {
         .filter((write) => !write.replayed)
         .map((write) => write.requestId),
       ["j4_customer", "j4_invoice", "j4_send"].map((id) =>
-        expectedIdempotencyKey(run.runId, `toolu_${id}`),
+        expectedIdempotencyKey(run.runId, toolUseId(id, run.turn)),
       ),
       "each QuickBooks write carries sha256(runId:toolUseId) as requestid",
     );

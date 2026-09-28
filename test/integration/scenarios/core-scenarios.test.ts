@@ -7,8 +7,8 @@
  * fakes in the expected state. Fails, never skips, without the native CLI.
  */
 import { describe, expect, it } from "vitest";
-import { ALL_SCENARIOS } from "../../scenarios/index.js";
-import { runScenarioInCore } from "../../scenarios/run-in-core.js";
+import { ALL_SCENARIOS, CONVERSATIONS } from "../../scenarios/index.js";
+import { runConversationInCore, runScenarioInCore } from "../../scenarios/run-in-core.js";
 
 describe("scripted scenarios through the agent core", () => {
   for (const scenario of ALL_SCENARIOS) {
@@ -16,6 +16,20 @@ describe("scripted scenarios through the agent core", () => {
       const run = await runScenarioInCore(scenario);
       try {
         expect(run.problems, run.stderr.slice(-20).join("\n")).toEqual([]);
+      } finally {
+        await run.close();
+      }
+    });
+  }
+
+  for (const conversation of CONVERSATIONS) {
+    it(`${conversation.id}: ${conversation.title}`, { timeout: 180_000 }, async () => {
+      const run = await runConversationInCore(conversation.turns);
+      try {
+        expect(run.problems, run.stderr.slice(-20).join("\n")).toEqual([]);
+        expect(run.turns.map((turn) => turn.finished?.status)).toEqual(
+          conversation.turns.map((turn) => turn.expected.status),
+        );
       } finally {
         await run.close();
       }

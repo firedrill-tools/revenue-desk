@@ -17,6 +17,7 @@ import {
   J2_INVALID_ARGUMENTS,
   J2_REFUND_DENIED,
   J2_REFUND_DUPLICATE,
+  J2_STOPPED_AT_APPROVAL,
   J2_STRIPE_DECLINE,
 } from "./j2-refund-duplicate.js";
 import { J3_CALL_DENIED, J3_COLLECTIONS } from "./j3-collections.js";
@@ -33,8 +34,12 @@ export const JOB_SCENARIOS: readonly Scenario[] = [
   J5_WEEKLY_DIGEST,
 ];
 
-/** Variants where a person decides differently. */
-export const DECISION_SCENARIOS: readonly Scenario[] = [J2_REFUND_DENIED, J3_CALL_DENIED];
+/** Variants where a person decides differently, or stops the run at an approval. */
+export const DECISION_SCENARIOS: readonly Scenario[] = [
+  J2_REFUND_DENIED,
+  J3_CALL_DENIED,
+  J2_STOPPED_AT_APPROVAL,
+];
 
 /** Provider and model failures, and the argument guard. */
 export const FAILURE_SCENARIOS: readonly Scenario[] = [
@@ -52,6 +57,21 @@ export const ALL_SCENARIOS: readonly Scenario[] = [
   ...JOB_SCENARIOS,
   ...DECISION_SCENARIOS,
   ...FAILURE_SCENARIOS,
+];
+
+/** Several scenarios as turns of one conversation (the SDK session is resumed). */
+export interface ScriptedConversation {
+  readonly id: string;
+  readonly title: string;
+  readonly turns: readonly Scenario[];
+}
+
+export const CONVERSATIONS: readonly ScriptedConversation[] = [
+  {
+    id: "j1-then-j2",
+    title: "A billing question, then the refund, in one conversation",
+    turns: [J1_BILLING_INQUIRY, J2_REFUND_DUPLICATE],
+  },
 ];
 
 export function scenarioById(id: string): Scenario {
@@ -112,6 +132,7 @@ export {
   J2_INVALID_ARGUMENTS,
   J2_REFUND_DENIED,
   J2_REFUND_DUPLICATE,
+  J2_STOPPED_AT_APPROVAL,
   J2_STRIPE_DECLINE,
   J3_CALL_DENIED,
   J3_COLLECTIONS,

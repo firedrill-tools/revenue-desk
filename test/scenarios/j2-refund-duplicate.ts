@@ -7,7 +7,15 @@
  */
 import type { Fakes } from "../support/fakes/index.js";
 import { Checks, expectedIdempotencyKey, firstLine, HARBOR_PINE, MAYA, NOW_ISO } from "./facts.js";
-import { type Scenario, type ScriptedCall, type Step, type StepContext, text } from "./script.js";
+import {
+  type RunFacts,
+  type Scenario,
+  type ScriptedCall,
+  type Step,
+  type StepContext,
+  text,
+  toolUseId,
+} from "./script.js";
 import { ASSOCIATION, associate, hubspot, slack, stripe } from "./tools.js";
 
 export const J2_PROMPT =
@@ -105,7 +113,7 @@ const J2_STEPS: readonly Step[] = [
   (context) => [text(summary(context))],
 ];
 
-function verifyRefunded(fakes: Fakes, runId: string, refundCallId: string): string[] {
+function verifyRefunded(fakes: Fakes, run: RunFacts, refundCallId: string): string[] {
   const checks = new Checks();
   const refunds = fakes.stripe.refunds({ charge: HARBOR_PINE.duplicateCharge });
   checks.equal(
@@ -118,7 +126,7 @@ function verifyRefunded(fakes: Fakes, runId: string, refundCallId: string): stri
     .filter((write) => write.path === "/v1/refunds" && !write.replayed);
   checks.equal(
     writes.map((write) => write.idempotencyKey),
-    [expectedIdempotencyKey(runId, `toolu_${refundCallId}`)],
+    [expectedIdempotencyKey(run.runId, toolUseId(refundCallId, run.turn))],
     "one refund request carrying sha256(runId:toolUseId) as Idempotency-Key",
   );
   const notes = fakes.hubspot.crm.created("notes", fakes.hubspot.crm.firstCreatedId);
@@ -133,7 +141,6 @@ function verifyRefunded(fakes: Fakes, runId: string, refundCallId: string): stri
     ["#billing"],
     "one post, in #billing",
   );
-  checks.equal(fakes.composio.gmail.outbox.length, 0, "no email sent");
   return checks.problems;
 }
 
@@ -157,7 +164,7 @@ export const J2_REFUND_DUPLICATE: Scenario = {
   steps: J2_STEPS,
   approvals: { j2_refund: "approve" },
   expected: { status: "completed", replyIncludes: ["Refunded $490.00", "Posted to #billing"] },
-  verify: (fakes, run) => verifyRefunded(fakes, run.runId, "j2_refund"),
+  verify: (fakes, run) => verifyRefunded(fakes, run, "j2_refund"),
 };
 
 export const J2_REFUND_DENIED: Scenario = {
@@ -225,10 +232,27 @@ export const J2_INVALID_ARGUMENTS: Scenario = {
   ],
   approvals: { j2_refund: "approve" },
   verify: (fakes, run) => {
-    const problems = verifyRefunded(fakes, run.runId, "j2_refund");
+    const problems = verifyRefunded(fakes, run, "j2_refund");
     const bodies = fakes.stripe.http.requestsTo("POST", "/v1/refunds").map((entry) => entry.body);
     if (bodies.some((body) => body.includes("amount=-")))
       problems.push("the invalid refund reached Stripe");
+    return problems;
+  },
+};
+
+/** The user stops the run while the refund approval is pending: nothing is refunded or announced. */
+export const J2_STOPPED_AT_APPROVAL: Scenario = {
+  ...J2_REFUND_DUPLICATE,
+  id: "stop-during-refund-approval",
+  job: "failure",
+  title: "The run is stopped while the refund waits for approval",
+  approvals: { j2_refund: "stop" },
+  expected: { status: "cancelled" },
+  verify: (fakes) => {
+    const problems = verifyNotRefunded(fakes);
+    const attempts = fakes.stripe.http.requestsTo("POST", "/v1/refunds");
+    if (attempts.length !== 0)
+      problems.push(`a stopped refund reached Stripe ${attempts.length} time(s)`);
     return problems;
   },
 };

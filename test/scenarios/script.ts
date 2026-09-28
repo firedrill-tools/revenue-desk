@@ -117,6 +117,16 @@ export type Step = (context: StepContext) => StepReply;
 
 export type Job = "J1" | "J2" | "J3" | "J4" | "J5" | "failure";
 
+/** What a test or demo does with an approval: decide it, or stop the run while it is pending. */
+export type ApprovalDecision = "approve" | "deny" | "stop";
+
+/** Facts about the run a scenario's checks need. */
+export interface RunFacts {
+  readonly runId: string;
+  /** The scenario's turn in its conversation (1 for a new conversation). */
+  readonly turn: number;
+}
+
 /** How a scenario's run should end (the checks a runner makes on events or a RunSummary). */
 export interface ExpectedOutcome {
   readonly status: "completed" | "failed" | "cancelled" | "timed_out";
@@ -138,14 +148,14 @@ export interface Scenario {
    * The decision a test or demo gives each approval, by logical call id.
    * An approval for any other call is a scenario error.
    */
-  readonly approvals: Readonly<Record<string, "approve" | "deny">>;
+  readonly approvals: Readonly<Record<string, ApprovalDecision>>;
   /** The HubSpot transport this scenario needs (default: the harness's). */
   readonly hubspot?: "stdio" | "http";
   /** Prepares the fakes (faults, connection states) before the run. */
   arrange?(fakes: Fakes): void;
   readonly expected: ExpectedOutcome;
   /** Checks the fakes after the run; returns problems (empty when all is well). */
-  verify?(fakes: Fakes, run: { readonly runId: string }): string[];
+  verify?(fakes: Fakes, run: RunFacts): string[];
 }
 
 /** The tool_use id of a logical call in a given turn (turn 1 needs no suffix). */
