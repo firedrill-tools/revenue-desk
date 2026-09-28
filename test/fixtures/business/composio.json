@@ -1,0 +1,12 @@
+{
+  "$comment": "The Composio project of Kestrel Analytics (fictional): the user whose connected accounts the fake serves, and the state of each toolkit connection. Tests switch a connection to EXPIRED or remove it to exercise needs_auth and expired.",
+  "userId": "kestrel-maya",
+  "connections": {
+    "gmail": { "id": "ca_KAgmail0001", "status": "ACTIVE", "authConfigId": "ac_KAgmail0001" },
+    "googlecalendar": {
+      "id": "ca_KAgcal00001",
+      "status": "ACTIVE",
+      "authConfigId": "ac_KAgcal00001"
+    }
+  }
+}

@@ -1,0 +1,325 @@
+{
+  "$comment": "QuickBooks Online sandbox company of Kestrel Analytics (fictional) as of 2026-09-28, in API v3 JSON shape (minor version 75). The fake adds SyncToken, MetaData, sub-total lines, TotalAmt and Balance (from lines and linked payments). queryPageCap truncates every query page to at most that many rows, as QuickBooks does for large responses, so clients must page until an empty QueryResponse.",
+  "realmId": "9341455130166501",
+  "timezone": "America/New_York",
+  "queryPageCap": 2,
+  "nextDocNumber": 1058,
+  "companyInfo": {
+    "CompanyName": "Kestrel Analytics, Inc.",
+    "LegalName": "Kestrel Analytics, Inc.",
+    "CompanyAddr": {
+      "Line1": "200 Harbor Street, Suite 400",
+      "City": "Boston",
+      "CountrySubDivisionCode": "MA",
+      "PostalCode": "02110",
+      "Country": "US"
+    },
+    "CustomerCommunicationAddr": {
+      "Line1": "200 Harbor Street, Suite 400",
+      "City": "Boston",
+      "CountrySubDivisionCode": "MA",
+      "PostalCode": "02110",
+      "Country": "US"
+    },
+    "Email": { "Address": "billing@kestrel.test" },
+    "WebAddr": { "URI": "https://kestrel.test" },
+    "PrimaryPhone": { "FreeFormNumber": "(617) 555-0142" },
+    "CompanyStartDate": "2021-02-01",
+    "FiscalYearStartMonth": "January",
+    "Country": "US",
+    "SupportedLanguages": "en"
+  },
+  "terms": [
+    { "Id": "1", "Name": "Due on receipt", "DueDays": 0 },
+    { "Id": "2", "Name": "Net 15", "DueDays": 15 },
+    { "Id": "3", "Name": "Net 30", "DueDays": 30 }
+  ],
+  "items": [
+    {
+      "Id": "1",
+      "Name": "Starter plan (monthly)",
+      "Description": "Kestrel Starter plan, one month",
+      "UnitPrice": 149
+    },
+    {
+      "Id": "2",
+      "Name": "Growth plan (monthly)",
+      "Description": "Kestrel Growth plan, one month",
+      "UnitPrice": 490
+    },
+    {
+      "Id": "3",
+      "Name": "Enterprise plan (annual)",
+      "Description": "Kestrel Enterprise plan, twelve months, billed upfront",
+      "UnitPrice": 18000
+    },
+    {
+      "Id": "4",
+      "Name": "Onboarding and training",
+      "Description": "Implementation, onboarding and admin training",
+      "UnitPrice": 1500
+    },
+    {
+      "Id": "5",
+      "Name": "Analytics seats (annual add-on)",
+      "Description": "Additional analyst seat, twelve months",
+      "UnitPrice": 240
+    }
+  ],
+  "customers": [
+    {
+      "Id": "58",
+      "DisplayName": "Harbor & Pine Outfitters",
+      "CompanyName": "Harbor & Pine Outfitters",
+      "GivenName": "Dana",
+      "FamilyName": "Whitfield",
+      "PrimaryEmailAddr": { "Address": "dana@harborpine.test" },
+      "BillAddr": {
+        "Line1": "88 Wharf Road",
+        "City": "Portland",
+        "CountrySubDivisionCode": "ME",
+        "PostalCode": "04101",
+        "Country": "US"
+      },
+      "SalesTermRef": { "value": "1" },
+      "CreateTime": "2026-03-22T10:00:00-04:00"
+    },
+    {
+      "Id": "61",
+      "DisplayName": "Copperleaf Studios",
+      "CompanyName": "Copperleaf Studios",
+      "GivenName": "Theo",
+      "FamilyName": "Marsh",
+      "PrimaryEmailAddr": { "Address": "theo@copperleaf.test" },
+      "BillAddr": {
+        "Line1": "14 Foundry Lane",
+        "City": "Providence",
+        "CountrySubDivisionCode": "RI",
+        "PostalCode": "02903",
+        "Country": "US"
+      },
+      "SalesTermRef": { "value": "3" },
+      "CreateTime": "2026-06-08T11:00:00-04:00"
+    },
+    {
+      "Id": "63",
+      "DisplayName": "Meridian Labs",
+      "CompanyName": "Meridian Labs",
+      "GivenName": "Irene",
+      "FamilyName": "Castillo",
+      "PrimaryEmailAddr": { "Address": "irene@meridianlabs.test" },
+      "BillAddr": {
+        "Line1": "3 Kendall Square",
+        "City": "Cambridge",
+        "CountrySubDivisionCode": "MA",
+        "PostalCode": "02142",
+        "Country": "US"
+      },
+      "SalesTermRef": { "value": "3" },
+      "CreateTime": "2026-05-19T11:00:00-04:00"
+    },
+    {
+      "Id": "64",
+      "DisplayName": "Tidewater Logistics",
+      "CompanyName": "Tidewater Logistics",
+      "GivenName": "Omar",
+      "FamilyName": "Haddad",
+      "PrimaryEmailAddr": { "Address": "omar@tidewater.test" },
+      "BillAddr": {
+        "Line1": "501 Terminal Street",
+        "City": "Charleston",
+        "CountrySubDivisionCode": "SC",
+        "PostalCode": "29401",
+        "Country": "US"
+      },
+      "SalesTermRef": { "value": "3" },
+      "CreateTime": "2026-04-02T11:00:00-04:00"
+    },
+    {
+      "Id": "66",
+      "DisplayName": "Bluefin Dental Group",
+      "CompanyName": "Bluefin Dental Group",
+      "GivenName": "Lena",
+      "FamilyName": "Park",
+      "PrimaryEmailAddr": { "Address": "lena@bluefin.test" },
+      "BillAddr": {
+        "Line1": "9 Harborview Drive",
+        "City": "Newport",
+        "CountrySubDivisionCode": "RI",
+        "PostalCode": "02840",
+        "Country": "US"
+      },
+      "SalesTermRef": { "value": "3" },
+      "CreateTime": "2026-03-01T10:00:00-05:00"
+    },
+    {
+      "Id": "67",
+      "DisplayName": "Orchard Row Bakery",
+      "CompanyName": "Orchard Row Bakery",
+      "GivenName": "Ben",
+      "FamilyName": "Alvarez",
+      "PrimaryEmailAddr": { "Address": "hello@orchardrow.test" },
+      "BillAddr": {
+        "Line1": "27 Orchard Row",
+        "City": "Burlington",
+        "CountrySubDivisionCode": "VT",
+        "PostalCode": "05401",
+        "Country": "US"
+      },
+      "SalesTermRef": { "value": "3" },
+      "CreateTime": "2026-01-12T10:00:00-05:00"
+    }
+  ],
+  "invoices": [
+    {
+      "Id": "143",
+      "DocNumber": "1043",
+      "TxnDate": "2026-06-20",
+      "DueDate": "2026-07-20",
+      "CustomerRef": { "value": "61", "name": "Copperleaf Studios" },
+      "BillEmail": { "Address": "theo@copperleaf.test" },
+      "SalesTermRef": { "value": "3", "name": "Net 30" },
+      "EmailStatus": "EmailSent",
+      "CreateTime": "2026-06-20T10:12:00-04:00",
+      "Line": [
+        {
+          "Description": "Analytics seats (annual add-on), 15 seats",
+          "Amount": 3600,
+          "ItemRef": { "value": "5", "name": "Analytics seats (annual add-on)" },
+          "Qty": 15,
+          "UnitPrice": 240
+        }
+      ]
+    },
+    {
+      "Id": "148",
+      "DocNumber": "1048",
+      "TxnDate": "2026-07-26",
+      "DueDate": "2026-08-25",
+      "CustomerRef": { "value": "64", "name": "Tidewater Logistics" },
+      "BillEmail": { "Address": "omar@tidewater.test" },
+      "SalesTermRef": { "value": "3", "name": "Net 30" },
+      "EmailStatus": "EmailSent",
+      "CreateTime": "2026-07-26T09:30:00-04:00",
+      "Line": [
+        {
+          "Description": "Analytics seats (annual add-on), 10 seats",
+          "Amount": 2400,
+          "ItemRef": { "value": "5", "name": "Analytics seats (annual add-on)" },
+          "Qty": 10,
+          "UnitPrice": 240
+        }
+      ]
+    },
+    {
+      "Id": "149",
+      "DocNumber": "1049",
+      "TxnDate": "2026-09-22",
+      "DueDate": "2026-09-22",
+      "CustomerRef": { "value": "58", "name": "Harbor & Pine Outfitters" },
+      "BillEmail": { "Address": "dana@harborpine.test" },
+      "SalesTermRef": { "value": "1", "name": "Due on receipt" },
+      "EmailStatus": "NotSet",
+      "CreateTime": "2026-09-22T09:05:00-04:00",
+      "PrivateNote": "Synced from Stripe invoice KA-7F31-0007",
+      "Line": [
+        {
+          "Description": "Growth plan (monthly), Sep 22 – Oct 22, 2026",
+          "Amount": 490,
+          "ItemRef": { "value": "2", "name": "Growth plan (monthly)" },
+          "Qty": 1,
+          "UnitPrice": 490
+        }
+      ]
+    },
+    {
+      "Id": "151",
+      "DocNumber": "1051",
+      "TxnDate": "2026-08-06",
+      "DueDate": "2026-09-05",
+      "CustomerRef": { "value": "63", "name": "Meridian Labs" },
+      "BillEmail": { "Address": "irene@meridianlabs.test" },
+      "SalesTermRef": { "value": "3", "name": "Net 30" },
+      "EmailStatus": "EmailSent",
+      "CreateTime": "2026-08-06T14:00:00-04:00",
+      "Line": [
+        {
+          "Description": "Onboarding and training",
+          "Amount": 1500,
+          "ItemRef": { "value": "4", "name": "Onboarding and training" },
+          "Qty": 1,
+          "UnitPrice": 1500
+        },
+        {
+          "Description": "Analytics seats (annual add-on), 2 seats",
+          "Amount": 480,
+          "ItemRef": { "value": "5", "name": "Analytics seats (annual add-on)" },
+          "Qty": 2,
+          "UnitPrice": 240
+        }
+      ]
+    },
+    {
+      "Id": "155",
+      "DocNumber": "1055",
+      "TxnDate": "2026-08-21",
+      "DueDate": "2026-09-20",
+      "CustomerRef": { "value": "66", "name": "Bluefin Dental Group" },
+      "BillEmail": { "Address": "lena@bluefin.test" },
+      "SalesTermRef": { "value": "3", "name": "Net 30" },
+      "EmailStatus": "EmailSent",
+      "CreateTime": "2026-08-21T10:00:00-04:00",
+      "Line": [
+        {
+          "Description": "Onboarding and training",
+          "Amount": 1500,
+          "ItemRef": { "value": "4", "name": "Onboarding and training" },
+          "Qty": 1,
+          "UnitPrice": 1500
+        }
+      ]
+    },
+    {
+      "Id": "157",
+      "DocNumber": "1057",
+      "TxnDate": "2026-09-10",
+      "DueDate": "2026-10-10",
+      "CustomerRef": { "value": "67", "name": "Orchard Row Bakery" },
+      "BillEmail": { "Address": "hello@orchardrow.test" },
+      "SalesTermRef": { "value": "3", "name": "Net 30" },
+      "EmailStatus": "EmailSent",
+      "CreateTime": "2026-09-10T11:20:00-04:00",
+      "Line": [
+        {
+          "Description": "Starter plan (monthly), September and October",
+          "Amount": 298,
+          "ItemRef": { "value": "1", "name": "Starter plan (monthly)" },
+          "Qty": 2,
+          "UnitPrice": 149
+        }
+      ]
+    }
+  ],
+  "payments": [
+    {
+      "Id": "214",
+      "TxnDate": "2026-09-22",
+      "CustomerRef": { "value": "58", "name": "Harbor & Pine Outfitters" },
+      "TotalAmt": 490,
+      "PaymentRefNum": "ch_KAhp_0922a",
+      "PrivateNote": "Stripe charge ch_KAhp_0922a",
+      "CreateTime": "2026-09-22T09:06:00-04:00",
+      "Line": [{ "Amount": 490, "LinkedTxn": [{ "TxnId": "149", "TxnType": "Invoice" }] }]
+    },
+    {
+      "Id": "219",
+      "TxnDate": "2026-09-15",
+      "CustomerRef": { "value": "66", "name": "Bluefin Dental Group" },
+      "TotalAmt": 750,
+      "PaymentRefNum": "ch_KAbluefin_0915",
+      "PrivateNote": "Stripe charge ch_KAbluefin_0915 (partial)",
+      "CreateTime": "2026-09-15T14:00:00-04:00",
+      "Line": [{ "Amount": 750, "LinkedTxn": [{ "TxnId": "155", "TxnType": "Invoice" }] }]
+    }
+  ]
+}

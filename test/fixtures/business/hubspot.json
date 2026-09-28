@@ -1,0 +1,898 @@
+{
+  "$comment": "HubSpot CRM of Kestrel Analytics (fictional) as of 2026-09-28, in CRM v3/v4 API shape. Property values are strings, as HubSpot returns them. Each association lists one direction with its HUBSPOT_DEFINED type id; the fake adds the paired reverse type. Property definitions are the subset the fake validates writes against.",
+  "portal": {
+    "hubId": 48213377,
+    "uiDomain": "app.hubspot.test",
+    "accountType": "STANDARD",
+    "timeZone": "US/Eastern",
+    "companyCurrency": "USD",
+    "utcOffset": "-04:00",
+    "utcOffsetMilliseconds": -14400000,
+    "dataHostingLocation": "na1"
+  },
+  "token": {
+    "userId": 9103,
+    "appId": 3310042,
+    "scopes": [
+      "crm.objects.contacts.read",
+      "crm.objects.contacts.write",
+      "crm.objects.companies.read",
+      "crm.objects.companies.write",
+      "crm.objects.deals.read",
+      "crm.objects.deals.write",
+      "crm.objects.owners.read",
+      "crm.schemas.contacts.read",
+      "crm.schemas.companies.read",
+      "crm.schemas.deals.read"
+    ]
+  },
+  "owners": [
+    {
+      "id": "71001",
+      "userId": 9101,
+      "email": "jordan@kestrel.test",
+      "firstName": "Jordan",
+      "lastName": "Reyes"
+    },
+    {
+      "id": "71002",
+      "userId": 9102,
+      "email": "priya@kestrel.test",
+      "firstName": "Priya",
+      "lastName": "Natarajan"
+    },
+    {
+      "id": "71003",
+      "userId": 9103,
+      "email": "maya@kestrel.test",
+      "firstName": "Maya",
+      "lastName": "Lindqvist"
+    }
+  ],
+  "properties": {
+    "contacts": [
+      {
+        "name": "email",
+        "label": "Email",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "contactinformation"
+      },
+      {
+        "name": "firstname",
+        "label": "First Name",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "contactinformation"
+      },
+      {
+        "name": "lastname",
+        "label": "Last Name",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "contactinformation"
+      },
+      {
+        "name": "phone",
+        "label": "Phone Number",
+        "type": "string",
+        "fieldType": "phonenumber",
+        "groupName": "contactinformation"
+      },
+      {
+        "name": "company",
+        "label": "Company Name",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "contactinformation"
+      },
+      {
+        "name": "jobtitle",
+        "label": "Job Title",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "contactinformation"
+      },
+      {
+        "name": "lifecyclestage",
+        "label": "Lifecycle Stage",
+        "type": "enumeration",
+        "fieldType": "radio",
+        "groupName": "contactinformation",
+        "options": [
+          "subscriber",
+          "lead",
+          "marketingqualifiedlead",
+          "salesqualifiedlead",
+          "opportunity",
+          "customer",
+          "evangelist",
+          "other"
+        ]
+      },
+      {
+        "name": "hubspot_owner_id",
+        "label": "Contact owner",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "sales_properties",
+        "options": "owners"
+      },
+      {
+        "name": "createdate",
+        "label": "Create Date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "contactinformation",
+        "readOnly": true
+      },
+      {
+        "name": "lastmodifieddate",
+        "label": "Last Modified Date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "contactinformation",
+        "readOnly": true
+      },
+      {
+        "name": "hs_object_id",
+        "label": "Record ID",
+        "type": "number",
+        "fieldType": "number",
+        "groupName": "contactinformation",
+        "readOnly": true
+      }
+    ],
+    "companies": [
+      {
+        "name": "name",
+        "label": "Company name",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "companyinformation"
+      },
+      {
+        "name": "domain",
+        "label": "Company Domain Name",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "companyinformation"
+      },
+      {
+        "name": "phone",
+        "label": "Phone Number",
+        "type": "string",
+        "fieldType": "phonenumber",
+        "groupName": "companyinformation"
+      },
+      {
+        "name": "industry",
+        "label": "Industry",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "companyinformation"
+      },
+      {
+        "name": "city",
+        "label": "City",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "companyinformation"
+      },
+      {
+        "name": "state",
+        "label": "State/Region",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "companyinformation"
+      },
+      {
+        "name": "lifecyclestage",
+        "label": "Lifecycle Stage",
+        "type": "enumeration",
+        "fieldType": "radio",
+        "groupName": "companyinformation",
+        "options": ["lead", "opportunity", "customer", "other"]
+      },
+      {
+        "name": "hubspot_owner_id",
+        "label": "Company owner",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "companyinformation",
+        "options": "owners"
+      },
+      {
+        "name": "createdate",
+        "label": "Create Date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "companyinformation",
+        "readOnly": true
+      },
+      {
+        "name": "hs_lastmodifieddate",
+        "label": "Last Modified Date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "companyinformation",
+        "readOnly": true
+      },
+      {
+        "name": "hs_object_id",
+        "label": "Record ID",
+        "type": "number",
+        "fieldType": "number",
+        "groupName": "companyinformation",
+        "readOnly": true
+      }
+    ],
+    "deals": [
+      {
+        "name": "dealname",
+        "label": "Deal Name",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "dealinformation"
+      },
+      {
+        "name": "amount",
+        "label": "Amount",
+        "type": "number",
+        "fieldType": "number",
+        "groupName": "dealinformation"
+      },
+      {
+        "name": "dealstage",
+        "label": "Deal Stage",
+        "type": "enumeration",
+        "fieldType": "radio",
+        "groupName": "dealinformation",
+        "options": [
+          "appointmentscheduled",
+          "qualifiedtobuy",
+          "presentationscheduled",
+          "decisionmakerboughtin",
+          "contractsent",
+          "closedwon",
+          "closedlost"
+        ]
+      },
+      {
+        "name": "pipeline",
+        "label": "Pipeline",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "dealinformation",
+        "options": ["default"]
+      },
+      {
+        "name": "closedate",
+        "label": "Close Date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "dealinformation"
+      },
+      {
+        "name": "description",
+        "label": "Deal Description",
+        "type": "string",
+        "fieldType": "textarea",
+        "groupName": "dealinformation"
+      },
+      {
+        "name": "dealtype",
+        "label": "Deal Type",
+        "type": "enumeration",
+        "fieldType": "radio",
+        "groupName": "dealinformation",
+        "options": ["newbusiness", "existingbusiness"]
+      },
+      {
+        "name": "hubspot_owner_id",
+        "label": "Deal owner",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "dealinformation",
+        "options": "owners"
+      },
+      {
+        "name": "createdate",
+        "label": "Create Date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "dealinformation",
+        "readOnly": true
+      },
+      {
+        "name": "hs_lastmodifieddate",
+        "label": "Last Modified Date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "dealinformation",
+        "readOnly": true
+      },
+      {
+        "name": "hs_object_id",
+        "label": "Record ID",
+        "type": "number",
+        "fieldType": "number",
+        "groupName": "dealinformation",
+        "readOnly": true
+      }
+    ],
+    "notes": [
+      {
+        "name": "hs_note_body",
+        "label": "Note body",
+        "type": "string",
+        "fieldType": "html",
+        "groupName": "engagement"
+      },
+      {
+        "name": "hs_timestamp",
+        "label": "Activity date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "engagement",
+        "required": true
+      },
+      {
+        "name": "hubspot_owner_id",
+        "label": "Activity assigned to",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "engagement",
+        "options": "owners"
+      },
+      {
+        "name": "hs_createdate",
+        "label": "Create date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "engagement",
+        "readOnly": true
+      },
+      {
+        "name": "hs_lastmodifieddate",
+        "label": "Last modified date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "engagement",
+        "readOnly": true
+      },
+      {
+        "name": "hs_object_id",
+        "label": "Record ID",
+        "type": "number",
+        "fieldType": "number",
+        "groupName": "engagement",
+        "readOnly": true
+      }
+    ],
+    "tasks": [
+      {
+        "name": "hs_task_subject",
+        "label": "Task title",
+        "type": "string",
+        "fieldType": "text",
+        "groupName": "task"
+      },
+      {
+        "name": "hs_task_body",
+        "label": "Notes",
+        "type": "string",
+        "fieldType": "html",
+        "groupName": "task"
+      },
+      {
+        "name": "hs_task_status",
+        "label": "Task status",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "task",
+        "options": ["NOT_STARTED", "IN_PROGRESS", "WAITING", "COMPLETED", "DEFERRED"]
+      },
+      {
+        "name": "hs_task_priority",
+        "label": "Priority",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "task",
+        "options": ["NONE", "LOW", "MEDIUM", "HIGH"]
+      },
+      {
+        "name": "hs_task_type",
+        "label": "Task type",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "task",
+        "options": ["TODO", "CALL", "EMAIL"]
+      },
+      {
+        "name": "hs_timestamp",
+        "label": "Due date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "task",
+        "required": true
+      },
+      {
+        "name": "hubspot_owner_id",
+        "label": "Assigned to",
+        "type": "enumeration",
+        "fieldType": "select",
+        "groupName": "task",
+        "options": "owners"
+      },
+      {
+        "name": "hs_createdate",
+        "label": "Create date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "task",
+        "readOnly": true
+      },
+      {
+        "name": "hs_lastmodifieddate",
+        "label": "Last modified date",
+        "type": "datetime",
+        "fieldType": "date",
+        "groupName": "task",
+        "readOnly": true
+      },
+      {
+        "name": "hs_object_id",
+        "label": "Record ID",
+        "type": "number",
+        "fieldType": "number",
+        "groupName": "task",
+        "readOnly": true
+      }
+    ]
+  },
+  "objects": {
+    "companies": [
+      {
+        "id": "30011001",
+        "createdAt": "2026-02-10T15:00:00.000Z",
+        "properties": {
+          "name": "Harbor & Pine Outfitters",
+          "domain": "harborpine.test",
+          "industry": "Retail",
+          "city": "Portland",
+          "state": "ME",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "30011002",
+        "createdAt": "2026-05-02T14:00:00.000Z",
+        "properties": {
+          "name": "Copperleaf Studios",
+          "domain": "copperleaf.test",
+          "industry": "Design",
+          "city": "Providence",
+          "state": "RI",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "30011003",
+        "createdAt": "2026-04-18T14:00:00.000Z",
+        "properties": {
+          "name": "Meridian Labs",
+          "domain": "meridianlabs.test",
+          "industry": "Biotechnology",
+          "city": "Cambridge",
+          "state": "MA",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "30011004",
+        "createdAt": "2026-03-09T14:00:00.000Z",
+        "properties": {
+          "name": "Tidewater Logistics",
+          "domain": "tidewater.test",
+          "industry": "Logistics",
+          "city": "Charleston",
+          "state": "SC",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "30011005",
+        "createdAt": "2026-02-02T15:00:00.000Z",
+        "properties": {
+          "name": "Bluefin Dental Group",
+          "domain": "bluefin.test",
+          "industry": "Healthcare",
+          "city": "Newport",
+          "state": "RI",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "30011006",
+        "createdAt": "2025-12-01T15:00:00.000Z",
+        "properties": {
+          "name": "Orchard Row Bakery",
+          "domain": "orchardrow.test",
+          "industry": "Food & Beverage",
+          "city": "Burlington",
+          "state": "VT",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "30011007",
+        "createdAt": "2026-08-12T16:20:00.000Z",
+        "properties": {
+          "name": "Solstice Energy Cooperative",
+          "domain": "solstice.test",
+          "industry": "Energy",
+          "city": "Albany",
+          "state": "NY",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "30011008",
+        "createdAt": "2026-09-23T15:05:00.000Z",
+        "properties": {
+          "name": "Pinecrest Schools",
+          "domain": "pinecrest.test",
+          "industry": "Education",
+          "city": "Hartford",
+          "state": "CT",
+          "lifecyclestage": "opportunity",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "30011009",
+        "createdAt": "2026-09-24T19:40:00.000Z",
+        "properties": {
+          "name": "Orbital Foods",
+          "domain": "orbitalfoods.test",
+          "industry": "Food & Beverage",
+          "city": "Worcester",
+          "state": "MA",
+          "lifecyclestage": "lead",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "30011010",
+        "createdAt": "2025-11-05T16:00:00.000Z",
+        "properties": {
+          "name": "Lumen Yoga Studios",
+          "domain": "lumenyoga.test",
+          "industry": "Fitness",
+          "city": "Brooklyn",
+          "state": "NY",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "30011011",
+        "createdAt": "2026-01-31T14:00:00.000Z",
+        "properties": {
+          "name": "Northgate Clinics",
+          "domain": "northgateclinics.test",
+          "industry": "Healthcare",
+          "city": "Manchester",
+          "state": "NH",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      }
+    ],
+    "contacts": [
+      {
+        "id": "51011001",
+        "createdAt": "2026-02-10T15:02:00.000Z",
+        "properties": {
+          "firstname": "Dana",
+          "lastname": "Whitfield",
+          "email": "dana@harborpine.test",
+          "jobtitle": "Finance Manager",
+          "company": "Harbor & Pine Outfitters",
+          "phone": "(207) 555-0118",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "51011002",
+        "createdAt": "2026-05-02T14:02:00.000Z",
+        "properties": {
+          "firstname": "Theo",
+          "lastname": "Marsh",
+          "email": "theo@copperleaf.test",
+          "jobtitle": "Office Manager",
+          "company": "Copperleaf Studios",
+          "phone": "(401) 555-0164",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "51011003",
+        "createdAt": "2026-04-18T14:02:00.000Z",
+        "properties": {
+          "firstname": "Irene",
+          "lastname": "Castillo",
+          "email": "irene@meridianlabs.test",
+          "jobtitle": "Controller",
+          "company": "Meridian Labs",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "51011004",
+        "createdAt": "2026-03-09T14:02:00.000Z",
+        "properties": {
+          "firstname": "Omar",
+          "lastname": "Haddad",
+          "email": "omar@tidewater.test",
+          "jobtitle": "Accounts Payable Specialist",
+          "company": "Tidewater Logistics",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "51011005",
+        "createdAt": "2026-02-02T15:02:00.000Z",
+        "properties": {
+          "firstname": "Lena",
+          "lastname": "Park",
+          "email": "lena@bluefin.test",
+          "jobtitle": "Practice Administrator",
+          "company": "Bluefin Dental Group",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "51011006",
+        "createdAt": "2025-12-01T15:02:00.000Z",
+        "properties": {
+          "firstname": "Ben",
+          "lastname": "Alvarez",
+          "email": "hello@orchardrow.test",
+          "jobtitle": "Owner",
+          "company": "Orchard Row Bakery",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "51011007",
+        "createdAt": "2026-08-12T16:22:00.000Z",
+        "properties": {
+          "firstname": "Marco",
+          "lastname": "Bellini",
+          "email": "marco@solstice.test",
+          "jobtitle": "Head of Operations",
+          "company": "Solstice Energy Cooperative",
+          "phone": "(518) 555-0190",
+          "lifecyclestage": "customer",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "51011008",
+        "createdAt": "2026-09-23T15:06:00.000Z",
+        "properties": {
+          "firstname": "Hannah",
+          "lastname": "Cole",
+          "email": "hannah@pinecrest.test",
+          "jobtitle": "Director of IT",
+          "company": "Pinecrest Schools",
+          "lifecyclestage": "opportunity",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "51011009",
+        "createdAt": "2026-09-24T19:41:00.000Z",
+        "properties": {
+          "firstname": "Ravi",
+          "lastname": "Menon",
+          "email": "ravi@orbitalfoods.test",
+          "jobtitle": "Operations Manager",
+          "company": "Orbital Foods",
+          "lifecyclestage": "lead",
+          "hubspot_owner_id": "71001"
+        }
+      }
+    ],
+    "deals": [
+      {
+        "id": "90011001",
+        "createdAt": "2026-02-10T15:05:00.000Z",
+        "properties": {
+          "dealname": "Harbor & Pine – Growth plan",
+          "amount": "5880",
+          "dealstage": "closedwon",
+          "pipeline": "default",
+          "closedate": "2026-03-20T17:00:00.000Z",
+          "dealtype": "newbusiness",
+          "description": "Growth plan, monthly by card through Stripe.",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "90011002",
+        "createdAt": "2026-04-18T14:05:00.000Z",
+        "properties": {
+          "dealname": "Meridian Labs – Onboarding and seats",
+          "amount": "1980",
+          "dealstage": "closedwon",
+          "pipeline": "default",
+          "closedate": "2026-08-05T18:00:00.000Z",
+          "dealtype": "existingbusiness",
+          "description": "Onboarding plus 2 analyst seats; invoiced in QuickBooks (1051).",
+          "hubspot_owner_id": "71002"
+        }
+      },
+      {
+        "id": "90011003",
+        "createdAt": "2026-05-02T14:05:00.000Z",
+        "properties": {
+          "dealname": "Copperleaf – Seats add-on",
+          "amount": "3600",
+          "dealstage": "closedwon",
+          "pipeline": "default",
+          "closedate": "2026-06-18T18:00:00.000Z",
+          "dealtype": "existingbusiness",
+          "description": "15 annual analyst seats; invoiced in QuickBooks (1043).",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "90011004",
+        "createdAt": "2026-08-12T16:25:00.000Z",
+        "properties": {
+          "dealname": "Solstice Energy – Enterprise annual",
+          "amount": "18000",
+          "dealstage": "closedwon",
+          "pipeline": "default",
+          "closedate": "2026-09-25T18:30:00.000Z",
+          "dealtype": "newbusiness",
+          "description": "Enterprise plan, 12 months billed upfront, Net 30. Billing contact: Marco Bellini (marco@solstice.test).",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "90011005",
+        "createdAt": "2026-09-23T15:10:00.000Z",
+        "properties": {
+          "dealname": "Pinecrest Schools – Growth plan",
+          "amount": "5880",
+          "dealstage": "appointmentscheduled",
+          "pipeline": "default",
+          "closedate": "2026-10-31T17:00:00.000Z",
+          "dealtype": "newbusiness",
+          "hubspot_owner_id": "71001"
+        }
+      },
+      {
+        "id": "90011006",
+        "createdAt": "2026-09-24T19:45:00.000Z",
+        "properties": {
+          "dealname": "Orbital Foods – Starter plan",
+          "amount": "1788",
+          "dealstage": "qualifiedtobuy",
+          "pipeline": "default",
+          "closedate": "2026-11-15T17:00:00.000Z",
+          "dealtype": "newbusiness",
+          "hubspot_owner_id": "71001"
+        }
+      }
+    ],
+    "notes": [
+      {
+        "id": "62011001",
+        "createdAt": "2026-08-21T14:05:00.000Z",
+        "properties": {
+          "hs_note_body": "Emailed Theo a reminder that invoice 1043 ($3,600.00) is past due. No reply yet.",
+          "hs_timestamp": "2026-08-21T14:05:00.000Z",
+          "hubspot_owner_id": "71003"
+        }
+      }
+    ],
+    "tasks": []
+  },
+  "associations": [
+    {
+      "from": "contacts",
+      "fromId": "51011001",
+      "to": "companies",
+      "toId": "30011001",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011002",
+      "to": "companies",
+      "toId": "30011002",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011003",
+      "to": "companies",
+      "toId": "30011003",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011004",
+      "to": "companies",
+      "toId": "30011004",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011005",
+      "to": "companies",
+      "toId": "30011005",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011006",
+      "to": "companies",
+      "toId": "30011006",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011007",
+      "to": "companies",
+      "toId": "30011007",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011008",
+      "to": "companies",
+      "toId": "30011008",
+      "typeId": 279
+    },
+    {
+      "from": "contacts",
+      "fromId": "51011009",
+      "to": "companies",
+      "toId": "30011009",
+      "typeId": 279
+    },
+    { "from": "deals", "fromId": "90011001", "to": "companies", "toId": "30011001", "typeId": 341 },
+    { "from": "deals", "fromId": "90011001", "to": "contacts", "toId": "51011001", "typeId": 3 },
+    { "from": "deals", "fromId": "90011002", "to": "companies", "toId": "30011003", "typeId": 341 },
+    { "from": "deals", "fromId": "90011002", "to": "contacts", "toId": "51011003", "typeId": 3 },
+    { "from": "deals", "fromId": "90011003", "to": "companies", "toId": "30011002", "typeId": 341 },
+    { "from": "deals", "fromId": "90011003", "to": "contacts", "toId": "51011002", "typeId": 3 },
+    { "from": "deals", "fromId": "90011004", "to": "companies", "toId": "30011007", "typeId": 341 },
+    { "from": "deals", "fromId": "90011004", "to": "contacts", "toId": "51011007", "typeId": 3 },
+    { "from": "deals", "fromId": "90011005", "to": "companies", "toId": "30011008", "typeId": 341 },
+    { "from": "deals", "fromId": "90011005", "to": "contacts", "toId": "51011008", "typeId": 3 },
+    { "from": "deals", "fromId": "90011006", "to": "companies", "toId": "30011009", "typeId": 341 },
+    { "from": "deals", "fromId": "90011006", "to": "contacts", "toId": "51011009", "typeId": 3 },
+    { "from": "notes", "fromId": "62011001", "to": "contacts", "toId": "51011002", "typeId": 202 },
+    { "from": "notes", "fromId": "62011001", "to": "companies", "toId": "30011002", "typeId": 190 }
+  ]
+}
