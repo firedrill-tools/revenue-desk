@@ -1,14 +1,15 @@
 import { ArrowRightIcon } from "lucide-react";
 import { Suggestion } from "@/components/ai-elements/suggestion";
 import { INTEGRATIONS } from "@/lib/contracts";
-import { JOB_SUGGESTIONS } from "@/lib/suggestions";
+import { JOB_SUGGESTIONS, type JobSuggestion } from "@/lib/suggestions";
 
 /** One line of copy and the five jobs as suggestion rows. No hero. */
 export function ChatEmptyState({
   onPick,
   disabled = false,
 }: {
-  onPick: (prompt: string) => void;
+  /** The job's prompt is sent; its title names the conversation. */
+  onPick: (job: JobSuggestion) => void;
   disabled?: boolean;
 }) {
   return (
@@ -22,7 +23,7 @@ export function ChatEmptyState({
           <li key={job.id}>
             <Suggestion
               suggestion={job.prompt}
-              onClick={onPick}
+              onClick={() => onPick(job)}
               disabled={disabled}
               variant="ghost"
               className="group/suggestion h-auto w-full items-start justify-between gap-4 whitespace-normal rounded-none px-4 py-3 text-left hover:bg-surface-subtle"

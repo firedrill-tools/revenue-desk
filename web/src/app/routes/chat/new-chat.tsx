@@ -4,7 +4,6 @@ import { useNotify } from "@/components/app/notices";
 import { DESKTOP_QUERY, useMediaQuery } from "@/hooks/use-media-query";
 import { invalidate } from "@/hooks/use-resource";
 import { api, errorMessage } from "@/lib/api";
-import { titleFromPrompt } from "@/lib/messages";
 import { chatHref } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { Composer } from "./composer";
@@ -23,12 +22,16 @@ export function NewChat() {
   // Focus the composer on desktop only; on phones it would open the keyboard.
   const desktop = useMediaQuery(DESKTOP_QUERY);
 
-  const start = async (prompt: string) => {
+  /**
+   * A suggestion names the conversation with its title. A typed prompt sends
+   * no title: the server names the conversation from its first sentence.
+   */
+  const start = async (prompt: string, title?: string) => {
     if (creating) return;
     setCreating(true);
     try {
       const { conversation } = await api.request("POST /api/conversations", {
-        body: { title: titleFromPrompt(prompt) },
+        body: title === undefined ? {} : { title },
       });
       setPendingPrompt(conversation.id, prompt);
       invalidate("conversations");
@@ -43,7 +46,7 @@ export function NewChat() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1 overflow-y-auto">
         <div className={cn(CHAT_COLUMN, "flex min-h-full flex-col justify-center py-8")}>
-          <ChatEmptyState onPick={(prompt) => void start(prompt)} disabled={creating} />
+          <ChatEmptyState onPick={(job) => void start(job.prompt, job.title)} disabled={creating} />
         </div>
       </div>
       <div className={COMPOSER_DOCK}>

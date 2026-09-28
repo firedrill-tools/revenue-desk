@@ -35,6 +35,7 @@ import {
   streamingRunId,
   toolParts,
 } from "@/lib/messages";
+import type { JobSuggestion } from "@/lib/suggestions";
 import { approvalFactsFromView, mergeToolRow, toolRowFromPart } from "@/lib/tool-model";
 import { cn } from "@/lib/utils";
 import { Composer } from "./composer";
@@ -284,6 +285,25 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
     markRunStarting();
   };
 
+  /**
+   * A suggestion picked in a conversation that has no title yet names it
+   * after the job, as the new-chat screen does (the server keeps a title the
+   * client gave). If the rename fails, the first message names it instead.
+   */
+  const startJob = async (job: JobSuggestion) => {
+    if (detail.conversation.title.trim() === "") {
+      try {
+        await api.request("PATCH /api/conversations/:conversationId", {
+          params: { conversationId },
+          body: { title: job.title },
+        });
+      } catch {
+        // Naming is a convenience; the job still starts.
+      }
+    }
+    send(job.prompt);
+  };
+
   const inspector = (
     <InspectorPanel
       data={inspectorData}
@@ -298,7 +318,7 @@ export function ChatSession({ detail }: { detail: ConversationDetail }) {
         <Conversation className="min-h-0 flex-1">
           <ConversationContent className={cn(CHAT_COLUMN, "gap-6 pt-6 pb-10")}>
             {messages.length === 0 && !running ? (
-              <ChatEmptyState onPick={send} />
+              <ChatEmptyState onPick={(job) => void startJob(job)} />
             ) : (
               <ThreadMessages
                 messages={messages}
