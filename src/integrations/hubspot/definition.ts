@@ -5,8 +5,11 @@ import {
   INTEGRATIONS,
   type IntegrationDefinition,
 } from "../../contracts/integration.js";
+import type { JsonObject } from "../../contracts/json.js";
 import type { UpstreamConfig } from "../../gateway/mcp-proxy.js";
+import type { SchemaIssue } from "../../gateway/validate.js";
 import { classifyHubSpot } from "./classify.js";
+import { checkHubSpotInput } from "./input-rules.js";
 import { type HubSpotProbeDeps, probeHubSpot } from "./probe.js";
 import { HUBSPOT_PROFILE, HUBSPOT_TOOL_NAMES } from "./profile.js";
 import { resolveHubSpot } from "./resolve.js";
@@ -18,6 +21,8 @@ export interface HubSpotIntegration extends IntegrationDefinition<"hubspot"> {
   readonly allowlist: readonly string[];
   /** Where the gateway connects. Throws HubSpotLaunchError for an unusable stdio launch. */
   upstream(connection: HubSpotConnection): UpstreamConfig;
+  /** HubSpot's rules that the forwarded schema does not state (input-rules.ts). */
+  checkInput(tool: string, input: JsonObject): readonly SchemaIssue[];
 }
 
 export function createHubSpotIntegration(deps: HubSpotProbeDeps = {}): HubSpotIntegration {
@@ -31,5 +36,6 @@ export function createHubSpotIntegration(deps: HubSpotProbeDeps = {}): HubSpotIn
     classify: classifyHubSpot,
     probe: (connection, signal) => probeHubSpot(connection, signal, deps),
     upstream: (connection) => hubspotUpstreamConfig(connection, deps.launch),
+    checkInput: checkHubSpotInput,
   };
 }

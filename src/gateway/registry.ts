@@ -66,18 +66,31 @@ export function classifiedMetadata(
 
 /**
  * Registers one offered tool: compiles its schema (throws SchemaCompileError
- * when it cannot be checked, so it must not be offered) and binds its
+ * when it cannot be checked, so it must not be offered), adds the
+ * integration's own input rules when it has them, and binds its
  * integration's classifier to the workspace settings and, when the
  * integration has one, to the run's memory of its earlier calls.
  */
 export function registerTool(
   descriptor: ToolDescriptor,
   inputSchema: unknown,
-  definition: Pick<ToolSource, "classify">,
+  definition: Pick<ToolSource, "classify" | "checkInput">,
   settings: ClassifierSettings,
   memory?: RunMemory,
 ): RegisteredTool {
-  const validate = compileArgumentValidator(inputSchema);
+  const schemaIssues = compileArgumentValidator(inputSchema);
+  const check = definition.checkInput?.bind(definition);
+  // The offered schema first; the integration's own rules only for an input that satisfies it.
+  const validate: ArgumentValidator = (input) => {
+    const issues = schemaIssues(input);
+    if (issues.length > 0 || check === undefined) return issues;
+    if (input === null || typeof input !== "object" || Array.isArray(input)) return issues;
+    try {
+      return check(descriptor.name, input as JsonObject);
+    } catch {
+      return [];
+    }
+  };
   return {
     descriptor,
     validate,

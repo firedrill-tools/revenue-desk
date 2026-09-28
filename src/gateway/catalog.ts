@@ -25,6 +25,7 @@ import {
 import type { JsonObject, JsonValue } from "../contracts/json.js";
 import type { ApiToolDefinition } from "./api-server.js";
 import type { UpstreamConfig } from "./mcp-proxy.js";
+import type { SchemaIssue } from "./validate.js";
 
 /** Per-run facts API tools need besides the connection. */
 export type ApiToolFactoryOptions = {
@@ -76,8 +77,20 @@ export type RunMemorySource = {
   runMemory?(settings: ClassifierSettings): RunMemory;
 };
 
+/**
+ * An integration that knows rules its offered schema does not state (HubSpot
+ * 0.4.0 forwards a schema that omits fields HubSpot requires). The gateway
+ * checks them with the schema, before any policy: a call that breaks one is
+ * rejected without reaching the system, and the model is told what to fix.
+ */
+export type InputCheckSource = {
+  /** Issues of one schema-valid input; empty when it may run. */
+  checkInput?(tool: string, input: JsonObject): readonly SchemaIssue[];
+};
+
 export type CatalogEntry<I extends IntegrationId> = IntegrationDefinition<I> &
   RunMemorySource &
+  InputCheckSource &
   (I extends ApiIntegrationId
     ? ApiToolSource<I>
     : I extends ComposioIntegrationId
@@ -91,7 +104,8 @@ export type IntegrationCatalog = { readonly [I in IntegrationId]: CatalogEntry<I
 
 /** The parts of an IntegrationDefinition the gateway reads for its tools. */
 export type ToolSource = Pick<IntegrationDefinition, "id" | "profile" | "classify"> &
-  RunMemorySource;
+  RunMemorySource &
+  InputCheckSource;
 
 /** Every tool of an integration's profile, as registered descriptors. */
 export function profileDescriptors(definition: ToolSource): ToolDescriptor[] {

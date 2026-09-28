@@ -7,8 +7,11 @@ import { describe, expect, it } from "vitest";
 import type { HubSpotConnection } from "../../../src/contracts/integration.js";
 import type { JsonObject } from "../../../src/contracts/json.js";
 import type { Upstream, UpstreamConfig } from "../../../src/gateway/mcp-proxy.js";
+import { registerTool } from "../../../src/gateway/registry.js";
+import { invalidArgumentsMessage } from "../../../src/gateway/validate.js";
 import { classifyHubSpot } from "../../../src/integrations/hubspot/classify.js";
 import { createHubSpotIntegration } from "../../../src/integrations/hubspot/definition.js";
+import { checkHubSpotInput } from "../../../src/integrations/hubspot/input-rules.js";
 import { type ConnectUpstream, probeHubSpot } from "../../../src/integrations/hubspot/probe.js";
 import { HUBSPOT_PROFILE, HUBSPOT_TOOL_NAMES } from "../../../src/integrations/hubspot/profile.js";
 import { resolveHubSpot } from "../../../src/integrations/hubspot/resolve.js";
@@ -199,6 +202,87 @@ describe("classifyHubSpot", () => {
     for (const [tool, input] of denied) {
       expect(classifyHubSpot(tool, input, SETTINGS), `${tool} ${JSON.stringify(input)}`).toBeNull();
     }
+  });
+});
+
+describe("HubSpot rules the forwarded schema does not state", () => {
+  const note = (properties: JsonObject): JsonObject => ({
+    objectType: "notes",
+    inputs: [{ properties, associations: [] }],
+  });
+
+  it("requires hs_timestamp on engagement records before HubSpot sees them", () => {
+    expect(checkHubSpotInput("hubspot-batch-create-objects", note({ hs_note_body: "x" }))).toEqual([
+      {
+        path: "/inputs/0/properties",
+        message:
+          'is missing "hs_timestamp", which HubSpot requires for notes: when it happened, as an ISO 8601 date-time, e.g. 2026-09-28T14:00:00Z',
+      },
+    ]);
+    const tasks = checkHubSpotInput("hubspot-batch-create-objects", {
+      objectType: "tasks",
+      inputs: [
+        { properties: { hs_task_subject: "Call", hs_timestamp: "2026-10-01T18:00:00Z" } },
+        { properties: { hs_task_subject: "Follow up" } },
+      ],
+    });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ path: "/inputs/1/properties" });
+    expect(tasks[0]?.message).toContain("the task's due time");
+    for (const objectType of ["calls", "meetings", "emails"]) {
+      expect(
+        checkHubSpotInput("hubspot-batch-create-objects", { objectType, inputs: [{}] }),
+        objectType,
+      ).toHaveLength(1);
+    }
+  });
+
+  it("accepts a timestamp, other object types, updates and reads", () => {
+    for (const timestamp of ["2026-09-28T13:01:00.000Z", 1_790_600_000_000]) {
+      expect(
+        checkHubSpotInput("hubspot-batch-create-objects", note({ hs_timestamp: timestamp })),
+      ).toEqual([]);
+    }
+    expect(
+      checkHubSpotInput("hubspot-batch-create-objects", {
+        objectType: "companies",
+        inputs: [{ properties: { name: "Acme" } }],
+      }),
+    ).toEqual([]);
+    expect(checkHubSpotInput("hubspot-batch-update-objects", note({}))).toEqual([]);
+    expect(checkHubSpotInput("hubspot-search-objects", note({}))).toEqual([]);
+    expect(createHubSpotIntegration().checkInput).toBe(checkHubSpotInput);
+  });
+
+  it("rejects the call in the gateway's validation, with the schema checked first", () => {
+    const schema = fixture.tools.find(
+      (tool) => tool.name === "hubspot-batch-create-objects",
+    )?.inputSchema;
+    const spec = HUBSPOT_PROFILE.tools["hubspot-batch-create-objects"];
+    if (schema === undefined || spec === undefined) throw new Error("no create tool");
+    const tool = registerTool(
+      {
+        ...spec,
+        integration: "hubspot",
+        connectionKind: "mcp",
+        sdkName: "mcp__hubspot__hubspot-batch-create-objects",
+      },
+      schema,
+      createHubSpotIntegration(),
+      SETTINGS,
+    );
+    const missing = tool.validate(note({ hs_note_body: "Refunded the duplicate." }));
+    expect(missing.map((issue) => issue.path)).toEqual(["/inputs/0/properties"]);
+    expect(invalidArgumentsMessage(spec.title, missing)).toContain(
+      '`inputs.0.properties` is missing "hs_timestamp", which HubSpot requires for notes',
+    );
+    expect(
+      tool.validate(note({ hs_note_body: "x", hs_timestamp: "2026-09-28T13:01:00Z" })),
+    ).toEqual([]);
+    // An input the schema refuses gets the schema's issues only.
+    expect(tool.validate({ objectType: "notes" }).map((issue) => issue.message)).toEqual([
+      'is missing the required property "inputs"',
+    ]);
   });
 });
 

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   compileArgumentValidator,
+  EMPTY_VALUE_ISSUE,
   invalidArgumentsMessage,
   SchemaCompileError,
 } from "../../../src/gateway/validate.js";
@@ -125,6 +126,33 @@ describe("compileArgumentValidator", () => {
     expect(() =>
       compileArgumentValidator({ type: "object", properties: { a: { $ref: "#/nowhere" } } }),
     ).toThrow(SchemaCompileError);
+  });
+});
+
+describe("empty values", () => {
+  it("says an empty string is empty, once, instead of pattern and format noise", () => {
+    const validate = compileArgumentValidator({
+      type: "object",
+      properties: {
+        email: { type: "string", format: "email", pattern: "^[^@]+@[^@]+$" },
+        charge: { type: "string", pattern: "^ch_\\w+$" },
+        note: { type: "string", minLength: 3 },
+      },
+      additionalProperties: false,
+    });
+    const issues = validate({ email: "", charge: "" });
+    expect(issues).toEqual([
+      { path: "/email", message: EMPTY_VALUE_ISSUE },
+      { path: "/email", message: EMPTY_VALUE_ISSUE },
+      { path: "/charge", message: EMPTY_VALUE_ISSUE },
+    ]);
+    expect(invalidArgumentsMessage("Find customers in Stripe", issues)).toBe(
+      `Invalid arguments for "Find customers in Stripe": \`email\` ${EMPTY_VALUE_ISSUE}; \`charge\` ${EMPTY_VALUE_ISSUE}. Nothing was run. Fix the arguments to match the tool's schema and call it again.`,
+    );
+    // A value that is merely wrong keeps its own message.
+    expect(validate({ note: "ab" })).toEqual([
+      { path: "/note", message: "must NOT have fewer than 3 characters" },
+    ]);
   });
 });
 

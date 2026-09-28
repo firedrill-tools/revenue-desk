@@ -102,6 +102,33 @@ function describe(error: ErrorObject): SchemaIssue {
   }
 }
 
+/** The value at a JSON pointer ("/inputs/0/email") in the input, or undefined. */
+function valueAt(input: unknown, pointer: string): unknown {
+  let value = input;
+  for (const raw of pointer.split("/").slice(1)) {
+    const key = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (value === null || typeof value !== "object") return undefined;
+    value = (value as Record<string, unknown>)[key];
+  }
+  return value;
+}
+
+export const EMPTY_VALUE_ISSUE =
+  "is empty: pass a value a system or the user gave you, or leave the field out when it is optional";
+
+/** The issue of one ajv error; an empty string gets one plain message instead of pattern noise. */
+function issueOf(error: ErrorObject, input: unknown): SchemaIssue {
+  if (
+    error.keyword !== "required" &&
+    error.keyword !== "additionalProperties" &&
+    error.instancePath !== "" &&
+    valueAt(input, error.instancePath) === ""
+  ) {
+    return { path: error.instancePath, message: EMPTY_VALUE_ISSUE };
+  }
+  return describe(error);
+}
+
 /**
  * Compiles the validator of one offered JSON schema. Identical schemas share
  * one compiled validator. Throws SchemaCompileError when the schema is
@@ -126,7 +153,7 @@ export function compileArgumentValidator(schema: unknown): ArgumentValidator {
   const check = validate;
   return (input) => {
     if (check(input)) return [];
-    return (check.errors ?? []).map(describe);
+    return (check.errors ?? []).map((error) => issueOf(error, input));
   };
 }
 
