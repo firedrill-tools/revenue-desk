@@ -8,6 +8,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { createRunTurn, MISSING_MODEL_KEY_MESSAGE } from "../../src/agent/run-turn.js";
+import { RUN_ENDED_REASON } from "../../src/agent/sdk-mapper.js";
 import type { ModelSettings } from "../../src/contracts/env.js";
 import type {
   AgentEvent,
@@ -605,7 +606,7 @@ describe("runTurn on the real Claude Agent SDK", () => {
   });
 
   it(
-    "fails with budget_exceeded at the spending limit and still logs the call that ran",
+    "fails with budget_exceeded at the spending limit and logs exactly the calls that ran",
     TIMEOUT,
     async () => {
       const a = await agent({
@@ -620,18 +621,51 @@ describe("runTurn on the real Claude Agent SDK", () => {
           [text("unreachable")],
         ),
       });
-      const events = await a.run(a.input({ model: { maxBudgetUsd: 0.01 } }));
+      const turn = a.input({ model: { maxBudgetUsd: 0.01 } });
+      const events = await a.run(turn);
       expectContract(events, a.stderr);
       expect(finished(events)).toMatchObject({
         status: "failed",
         error: { code: "budget_exceeded" },
       });
       expect(ofType(events, "usage")[0]?.costUsd).toBeGreaterThan(0.01);
-      // The SDK ran the call before it stopped for the budget; the action log still has it.
-      expect(a.stripeCalls.map((call) => call.tool)).toEqual(["list_charges"]);
-      expect(ofType(events, "tool.output").map((event) => event.toolCallId)).toEqual([
-        "toolu_charges",
-      ]);
+      // Whether the SDK starts the call before it stops for the budget is its own
+      // timing (under load it sometimes stops first). Either way Stripe received at
+      // most that one call, and the stream reports it as run (executing, then its
+      // one outcome with how it ran: what the action log records) exactly when
+      // Stripe received it; a call Stripe never received is reported as not run.
+      const ran = a.stripeCalls.length > 0;
+      expect(a.stripeCalls).toEqual(
+        ran
+          ? [
+              {
+                tool: "list_charges",
+                args: { customer: "cus_1" },
+                key: idempotencyKeyFor(turn.runId, "toolu_charges"),
+              },
+            ]
+          : [],
+      );
+      expect([
+        ...new Set(ofType(events, "tool.progress").map((event) => event.toolCallId)),
+      ]).toEqual(ran ? ["toolu_charges"] : []);
+      const outputs = ofType(events, "tool.output");
+      expect(outputs.map((event) => event.toolCallId)).toEqual(ran ? ["toolu_charges"] : []);
+      expect(outputs.map((event) => event.execution?.upstreamTool)).toEqual(
+        ran ? ["GET /v1/charges"] : [],
+      );
+      expect(ofType(events, "tool.denied")).toEqual(
+        ran
+          ? []
+          : [
+              {
+                type: "tool.denied",
+                toolCallId: "toolu_charges",
+                decision: "stopped",
+                reason: RUN_ENDED_REASON,
+              },
+            ],
+      );
     },
   );
 
