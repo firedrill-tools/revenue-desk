@@ -3,37 +3,13 @@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ToolUIPart } from "ai";
+import type { DynamicToolUIPart, ToolUIPart } from "ai";
 import type { ComponentProps, ReactNode } from "react";
 import { createContext, useContext, useMemo } from "react";
 
-type ToolUIPartApproval =
-  | {
-      id: string;
-      approved?: never;
-      reason?: never;
-    }
-  | {
-      id: string;
-      approved: boolean;
-      reason?: string;
-    }
-  | {
-      id: string;
-      approved: true;
-      reason?: string;
-    }
-  | {
-      id: string;
-      approved: true;
-      reason?: string;
-    }
-  | {
-      id: string;
-      approved: false;
-      reason?: string;
-    }
-  | undefined;
+// revenue-desk patch (#484): derive the approval type from the SDK instead of a
+// hand copy, which drifted in ai v7 (descriptor, requestReason, isAutomatic).
+type ToolUIPartApproval = ToolUIPart["approval"] | DynamicToolUIPart["approval"];
 
 interface ConfirmationContextValue {
   approval: ToolUIPartApproval;
