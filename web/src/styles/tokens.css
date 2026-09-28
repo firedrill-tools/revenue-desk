@@ -1,0 +1,116 @@
+/*
+ * Revenue Desk design tokens.
+ *
+ * Identity: cool neutral surfaces, an ink primary, and exactly one accent
+ * (teal-cyan #0E7490) used only for focus, links, the selected conversation
+ * and the running indicator. No gradients, glass, glow or emoji. Provider
+ * names are text labels, never vendor logos. Light is the default theme;
+ * `.dark` on <html> selects the dark theme.
+ *
+ * The shadcn/ui variables (--background, --primary, ...) are mapped here so
+ * that owned shadcn and AI Elements components pick up this identity. Note
+ * that shadcn's `--accent` is its neutral hover surface, not the brand accent;
+ * the brand accent is `--rd-accent` (Tailwind: `brand`).
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Brand accent: the single teal-cyan. 5.36:1 on #FFFFFF. */
+  --rd-accent: #0e7490;
+  --rd-accent-foreground: #ffffff;
+  --rd-accent-subtle: #e7f1f4; /* selected conversation background */
+
+  /* Cool neutral surfaces and text. */
+  --rd-surface: #ffffff;
+  --rd-surface-subtle: #f6f7f8; /* rail, tonal blocks, muted fills */
+  --rd-surface-hover: #eef0f2;
+  --rd-border: #e4e6ea;
+  --rd-border-strong: #d0d4da; /* inputs and controls */
+  --rd-text: #111418; /* ink; also the primary button */
+  --rd-text-secondary: #5b616e; /* 6.21:1 on #FFFFFF */
+  --rd-ink-foreground: #ffffff;
+
+  /* Semantic status colours (text-safe on the surfaces above). */
+  --rd-success: #1f7a4d;
+  --rd-warning: #9a5b13;
+  --rd-danger: #b42318;
+  --rd-danger-foreground: #ffffff;
+
+  /* shadcn/ui mapping. */
+  --background: var(--rd-surface);
+  --foreground: var(--rd-text);
+  --card: var(--rd-surface);
+  --card-foreground: var(--rd-text);
+  --popover: var(--rd-surface);
+  --popover-foreground: var(--rd-text);
+  --primary: var(--rd-text);
+  --primary-foreground: var(--rd-ink-foreground);
+  --secondary: var(--rd-surface-subtle);
+  --secondary-foreground: var(--rd-text);
+  --muted: var(--rd-surface-subtle);
+  --muted-foreground: var(--rd-text-secondary);
+  --accent: var(--rd-surface-hover);
+  --accent-foreground: var(--rd-text);
+  --destructive: var(--rd-danger);
+  --border: var(--rd-border);
+  --input: var(--rd-border-strong);
+  --ring: var(--rd-accent);
+
+  --chart-1: var(--rd-accent);
+  --chart-2: #5b616e;
+  --chart-3: #8a909b;
+  --chart-4: #b5bac3;
+  --chart-5: #111418;
+
+  --sidebar: var(--rd-surface-subtle);
+  --sidebar-foreground: var(--rd-text);
+  --sidebar-primary: var(--rd-text);
+  --sidebar-primary-foreground: var(--rd-ink-foreground);
+  --sidebar-accent: var(--rd-accent-subtle);
+  --sidebar-accent-foreground: var(--rd-text);
+  --sidebar-border: var(--rd-border);
+  --sidebar-ring: var(--rd-accent);
+
+  /* Shape: 6px controls, 10px panels. Shadows only on popovers. */
+  --radius: 6px;
+  --rd-radius-control: 6px;
+  --rd-radius-panel: 10px;
+  --rd-shadow-popover: 0 4px 16px rgb(17 20 24 / 0.08), 0 1px 3px rgb(17 20 24 / 0.06);
+
+  /* Motion: 120-180ms; reduced motion is honoured in React via MotionConfig. */
+  --rd-duration-fast: 120ms;
+  --rd-duration-base: 160ms;
+  --rd-duration-slow: 180ms;
+  --rd-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Dark rendering of the same teal-cyan hue (7.60:1 on #0F1114). */
+  --rd-accent: #38b2cf;
+  --rd-accent-foreground: #0f1114;
+  --rd-accent-subtle: #12303a;
+
+  --rd-surface: #0f1114;
+  --rd-surface-subtle: #16191d;
+  --rd-surface-hover: #1d2126;
+  --rd-border: #262b31;
+  --rd-border-strong: #353b43;
+  --rd-text: #eceef1;
+  --rd-text-secondary: #9ba1ac; /* 7.28:1 on #0F1114 */
+  --rd-ink-foreground: #0f1114;
+
+  --rd-success: #4cc38a;
+  --rd-warning: #e0a458;
+  --rd-danger: #f2766b;
+  --rd-danger-foreground: #0f1114;
+
+  --chart-2: #9ba1ac;
+  --chart-3: #6f7682;
+  --chart-4: #4a5059;
+  --chart-5: #eceef1;
+
+  --rd-shadow-popover: 0 4px 16px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
+}

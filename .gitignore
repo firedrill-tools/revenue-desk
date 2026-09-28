@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Local state (SQLite databases, per-run state, CLAUDE_CONFIG_DIR, work dirs)
+data/
+
+# Environment files: real values never enter the repository.
+.env
+.env.*
+!.env.example
+
+# Test artifacts
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
