@@ -892,6 +892,7 @@ revenue-desk/
 | Full-stack E2E (jobs, decisions, failures, resume, HTTP layer) and CLI E2E | done (`e0f07ff`, `7427bc1`) |
 | Playwright UI E2E: empty chat with axe, approve, reload mid-approval then deny, Stop; desktop and phone | done (`8097654`); the Connections, policy-change, keyboard-only, dark-mode and reduced-motion flows of §11 are not written yet |
 | `pnpm verify` green | done |
+| 2026-09-29 review: security, correctness and UX findings (decisions log) | done (`be448f8`…`4252a82`); `test/e2e-ui/review.spec.ts` covers the browser-side ones. Open: the launch-token capability for multi-user hosts (follow-ups) |
 | Optional live read-only E2E (`pnpm test:live`) | not built: needs Kiran's go-ahead on the open questions below |
 
 Milestones M1 and M2 are met. M3 needs the live read-only E2E and a round of
