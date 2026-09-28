@@ -87,6 +87,10 @@ describe("buildSystemPrompt", () => {
     );
     expect(STABLE_RULES).toContain("recommend it with the amount and the record and ask");
     expect(STABLE_RULES).toContain("an approval card is not a substitute for being asked");
+    // J1 rerun: the agent held the customer's reply back until the refund was decided.
+    expect(STABLE_RULES).toContain(
+      "Waiting for that answer does not hold up the rest of what was asked: finish it",
+    );
   });
 
   it("never promises what was declined or not done", () => {
@@ -126,7 +130,10 @@ describe("buildSystemPrompt", () => {
   });
 
   it("checks payments before reporting receivables, and keeps tables and emoji out of Slack", () => {
-    expect(STABLE_RULES).toContain("check the payments system for payments against them");
+    // J5 read the payments system only for the reporting week and missed an older payment.
+    expect(STABLE_RULES).toContain(
+      "look in the payments system for payments against them made since each was issued, not only in the period you are reporting on",
+    );
     expect(STABLE_RULES).toContain("Slack messages are Slack mrkdwn, without tables or headings");
     expect(STABLE_RULES).toContain("Use no emoji.");
   });
