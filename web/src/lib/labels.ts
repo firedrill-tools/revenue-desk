@@ -97,6 +97,8 @@ export const CONVERSATION_STATUS_LABELS = {
  */
 export type ToolRowStatus =
   | "preparing"
+  /** Allowed, but held behind another call's approval: it has not started. */
+  | "queued"
   | "running"
   | "awaiting_approval"
   | "succeeded"
@@ -111,6 +113,7 @@ export type ToolRowStatus =
 
 export const TOOL_ROW_STATUS_LABELS = {
   preparing: { label: "Preparing", tone: "neutral" },
+  queued: { label: "Waits for your decision above", tone: "neutral" },
   running: { label: "Running", tone: "running" },
   awaiting_approval: { label: "Awaiting approval", tone: "warning" },
   succeeded: { label: "Done", tone: "success" },
@@ -160,5 +163,10 @@ export function toolRowStatusFromLog(
 
 /** A finished row: no spinner, no live elapsed time. */
 export function isSettledStatus(status: ToolRowStatus): boolean {
-  return status !== "preparing" && status !== "running" && status !== "awaiting_approval";
+  return (
+    status !== "preparing" &&
+    status !== "queued" &&
+    status !== "running" &&
+    status !== "awaiting_approval"
+  );
 }

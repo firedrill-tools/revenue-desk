@@ -28,6 +28,8 @@ import {
   type ToolRowModel,
   toolRowFromPart,
   toolRowFromView,
+  waitsForDecision,
+  withQueue,
 } from "../../../web/src/lib/tool-model.js";
 
 const READ: ToolMetadata = {
@@ -564,5 +566,50 @@ describe("an approved action that then failed", () => {
       error: { provider: "stripe", status: null, code: "outcome_unknown", message: "No answer." },
     });
     expect(toolRowFromView(view).status).toBe("outcome_unknown");
+  });
+});
+
+describe("a call held behind a pending approval", () => {
+  const running = {
+    toolCallId: "toolu_task",
+    title: "Create task in HubSpot",
+    toolName: "mcp__hubspot__hubspot-batch-create-objects",
+    integration: "hubspot" as const,
+    integrationLabel: "HubSpot",
+    kind: "mcp" as const,
+    operation: null,
+    actionClass: "internal_write" as const,
+    status: "running" as const,
+    input: {},
+    output: undefined,
+    errorText: null,
+    durationMs: null,
+    approval: null,
+  };
+
+  it("is queued, not running, until the gateway says it started", () => {
+    const queued = withQueue(running, { waitingForDecision: true, started: false });
+    expect(queued.status).toBe("queued");
+    expect(TOOL_ROW_STATUS_LABELS.queued).toEqual({
+      label: "Waits for your decision above",
+      tone: "neutral",
+    });
+    // No timer: a queued call is not settled, and it is not running.
+    expect(isSettledStatus("queued")).toBe(false);
+    expect(withQueue(running, { waitingForDecision: true, started: true }).status).toBe("running");
+    expect(withQueue(running, { waitingForDecision: false, started: false }).status).toBe(
+      "running",
+    );
+    expect(
+      withQueue({ ...running, status: "succeeded" }, { waitingForDecision: true, started: false })
+        .status,
+    ).toBe("succeeded");
+  });
+
+  it("knows when a message has a decision waiting", () => {
+    const part = (state: DynamicToolUIPart["state"]) =>
+      ({ type: "dynamic-tool", toolCallId: state, toolName: "t", state }) as DynamicToolUIPart;
+    expect(waitsForDecision([part("input-available"), part("approval-requested")])).toBe(true);
+    expect(waitsForDecision([part("input-available"), part("output-available")])).toBe(false);
   });
 });

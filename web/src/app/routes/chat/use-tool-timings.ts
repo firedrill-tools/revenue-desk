@@ -14,8 +14,10 @@ function isInFlight(part: DynamicToolUIPart): boolean {
 /**
  * Client-side timings for tool calls seen running in this tab: the live
  * elapsed time, and a duration once they settle (the action log's duration
- * replaces it when the run detail loads). The server's data-progress elapsed
- * time corrects the start after a reload or reconnect.
+ * replaces it when the run detail loads). The clock starts at the call's
+ * first data-progress, which the server sends when the call really starts
+ * (0 ms): a call queued behind a pending approval is not running yet. Later
+ * progress corrects the start after a reload or reconnect.
  */
 export function useToolTimings(messages: readonly ChatUIMessage[]): {
   timings: ReadonlyMap<string, ToolTiming>;
@@ -36,10 +38,7 @@ export function useToolTimings(messages: readonly ChatUIMessage[]): {
           changed = true;
         }
       } else if (isInFlight(part)) {
-        if (!timing) {
-          ref.current.set(part.toolCallId, { startedAt: now, finishedAt: null });
-          changed = true;
-        }
+        // Running only once the server says it started (reportProgress).
       } else if (timing && timing.finishedAt === null) {
         ref.current.set(part.toolCallId, { ...timing, finishedAt: now });
         changed = true;

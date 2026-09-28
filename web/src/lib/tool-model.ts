@@ -416,6 +416,25 @@ function withOutcome(approval: ToolApprovalModel, status: ToolRowStatus): ToolAp
 }
 
 /**
+ * A call the model sent next to one that waits for a person's decision is
+ * held until that decision: it has not started, so it is "queued", not
+ * "running" with a ticking timer. It is running once the gateway reports it
+ * started (its first data-progress).
+ */
+export function withQueue(
+  row: ToolRowModel,
+  context: { readonly waitingForDecision: boolean; readonly started: boolean },
+): ToolRowModel {
+  if (row.status !== "running" || context.started || !context.waitingForDecision) return row;
+  return { ...row, status: "queued" };
+}
+
+/** Whether a message has a call whose approval is still requested. */
+export function waitsForDecision(parts: readonly DynamicToolUIPart[]): boolean {
+  return parts.some((part) => part.state === "approval-requested");
+}
+
+/**
  * Enriches a settled live row with its action-log entry: the log has the
  * duration and the exact decision (timed out, stopped, rejected), which the
  * stream does not carry. While the call is in flight the stream is the

@@ -39,6 +39,8 @@ import {
   layoutAssistantParts,
   mergeToolRow,
   toolRowFromPart,
+  waitsForDecision,
+  withQueue,
 } from "@/lib/tool-model";
 
 export type DecideApproval = (approvalId: string, approved: boolean, reason?: string) => void;
@@ -217,8 +219,13 @@ function AssistantMessage({
   }, [settled, message.parts]);
   // Nothing to show yet: the status line below the thread says what is happening.
   if (blocks.length === 0 && !settled) return null;
+  const waiting =
+    !settled && waitsForDecision(message.parts.filter((part) => part.type === "dynamic-tool"));
   const rowOf = (part: DynamicToolUIPart) =>
-    mergeToolRow(toolRowFromPart(part, settled), context.logRows.get(part.toolCallId));
+    withQueue(mergeToolRow(toolRowFromPart(part, settled), context.logRows.get(part.toolCallId)), {
+      waitingForDecision: waiting,
+      started: context.timings.has(part.toolCallId),
+    });
 
   return (
     <Message from="assistant" className="max-w-full">
