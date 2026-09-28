@@ -1,28 +1,27 @@
-// The settings of one CLI run, after precedence (docs/ARCHITECTURE.md §3, §7).
-// Pure functions.
+// The settings of one CLI run, after precedence (docs/ARCHITECTURE.md §3, §7),
+// through the shared policy and model-settings rules. Pure functions.
 
+import { dateInTimeZone, resolveModelSettings } from "../config/run-settings.js";
 import type { AskCommand } from "../contracts/cli.js";
-import { type AgentEnv, ENV_DEFAULTS, type ModelSettings } from "../contracts/env.js";
+import type { AgentEnv, ModelSettings } from "../contracts/env.js";
 import type { ConnectionPlan, RunConnection } from "../contracts/events.js";
 import {
-  ACTION_CLASSES,
-  DEFAULT_POLICY,
   INTEGRATIONS,
   type PolicyModes,
   type PolicyOverrides,
   type WorkspaceSettings,
 } from "../contracts/integration.js";
+import { resolvePolicy } from "../policy/engine.js";
 
-/** Later layers win: default, saved (Settings), AGENT_POLICY, then --policy. */
-export function effectivePolicy(...layers: readonly PolicyOverrides[]): PolicyModes {
-  const modes = { ...DEFAULT_POLICY };
-  for (const actionClass of ACTION_CLASSES) {
-    for (const layer of layers) {
-      const mode = layer[actionClass];
-      if (mode !== undefined) modes[actionClass] = mode;
-    }
-  }
-  return modes;
+export { dateInTimeZone };
+
+/** Default, saved (Settings), AGENT_POLICY, then --policy: later layers win. */
+export function effectivePolicy(
+  saved: PolicyOverrides,
+  environment: PolicyOverrides,
+  run: PolicyOverrides,
+): PolicyModes {
+  return resolvePolicy({ saved, environment, run }).modes;
 }
 
 /**
@@ -35,26 +34,17 @@ export function modelSettings(
   settings: Pick<WorkspaceSettings, "defaultModel" | "defaultEffort">,
   env: AgentEnv,
 ): ModelSettings {
-  return {
-    model: command.model ?? settings.defaultModel ?? env.model.model,
-    effort: command.effort ?? settings.defaultEffort ?? env.model.effort,
-    thinkingDisplay: env.model.thinkingDisplay ?? ENV_DEFAULTS.THINKING_DISPLAY_CLI,
-    maxTurns: command.maxTurns ?? env.model.maxTurns,
-    maxBudgetUsd: command.maxBudgetUsd ?? env.model.maxBudgetUsd,
-  };
-}
-
-/** YYYY-MM-DD of `now` in an IANA time zone. Throws RangeError for an unknown zone. */
-export function dateInTimeZone(now: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((candidate) => candidate.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
+  return resolveModelSettings({
+    env,
+    settings,
+    surface: "cli",
+    overrides: {
+      model: command.model,
+      effort: command.effort,
+      maxTurns: command.maxTurns,
+      maxBudgetUsd: command.maxBudgetUsd,
+    },
+  });
 }
 
 const TITLE_LIMIT = 80;

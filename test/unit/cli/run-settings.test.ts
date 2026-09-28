@@ -32,8 +32,8 @@ function envWith(environment: Record<string, string>): AgentEnv {
 }
 
 describe("effectivePolicy", () => {
-  it("is the default policy without layers", () => {
-    expect(effectivePolicy()).toEqual(DEFAULT_POLICY);
+  it("is the default policy when no layer sets a class", () => {
+    expect(effectivePolicy({}, {}, {})).toEqual(DEFAULT_POLICY);
   });
 
   it("applies saved, AGENT_POLICY and --policy layers in order", () => {

@@ -14,7 +14,6 @@
 // period after Stop, the server finishes the run itself.
 
 import { randomUUID } from "node:crypto";
-import type { UIMessageStreamOutcome } from "ai";
 import { MAX_CONCURRENT_RUNS } from "../contracts/api.js";
 import type {
   AgentEvent,
@@ -23,13 +22,10 @@ import type {
   RunTurn,
   RunTurnInput,
 } from "../contracts/events.js";
-import { upsertAssistantMessage } from "../db/repos/messages.js";
 import type { DbExecutor } from "../db/repos/types.js";
-import { ServerMessageReducer } from "./message-reducer.js";
 import { describeError, type Redact } from "./redaction.js";
 import { RunChannel } from "./run-channel.js";
-import { RunRecorder } from "./run-recorder.js";
-import { type ChatUIChunk, UIStreamMapper } from "./ui-stream.js";
+import { RunPersistence } from "./run-persistence.js";
 
 export const DEFAULT_STOP_GRACE_MS = 10_000;
 /** After run.finished, how long the core has to end its event stream. */
@@ -190,57 +186,33 @@ export class RunRegistry {
 
   async #pump(run: ActiveRun, request: LaunchRequest): Promise<void> {
     const { db, redact, now, log } = this.#options;
-    const newId = this.#options.newId ?? randomUUID;
-    const recorder = new RunRecorder({
+    const persistence = new RunPersistence({
       db,
       runId: run.runId,
       conversationId: run.conversationId,
-      redact,
-      now,
-      newId,
-    });
-    const mapper = new UIStreamMapper({
-      messageId: run.assistantMessageId,
+      assistantMessageId: run.assistantMessageId,
       fallbackMetadata: { runId: run.runId, model: request.model, effort: request.effort },
       redact,
-      onAnomaly: (message) => log(`run ${run.runId}: dropped an out-of-order event (${message})`),
-    });
-    const persist = (message: Parameters<typeof upsertAssistantMessage>[1]["message"]) => {
-      upsertAssistantMessage(db, {
-        conversationId: run.conversationId,
-        runId: run.runId,
-        message,
-        now: now().toISOString(),
-      });
-    };
-    const reducer = new ServerMessageReducer({
-      onSnapshot: persist,
-      onEnd: persist,
-      onError: (error) =>
-        log(`run ${run.runId}: the message could not be recorded: ${describeError(error, redact)}`),
+      now,
+      log,
+      newId: this.#options.newId ?? randomUUID,
     });
 
     const handle = (event: AgentEvent): void => {
-      if (mapper.finished) {
+      if (persistence.finished) {
         log(`run ${run.runId}: ignored ${event.type} after run.finished`);
         return;
       }
       try {
-        recorder.apply(event);
+        persistence.record(event);
       } catch (error) {
         log(`run ${run.runId}: could not record ${event.type}: ${describeError(error, redact)}`);
       }
-      for (const chunk of mapper.map(event)) publish(chunk);
+      for (const chunk of persistence.map(event)) run.channel.publish(chunk);
       if (event.type === "run.finished") {
         run.markFinished(event.status);
         run.forceAfter(DRAIN_GRACE_MS);
       }
-    };
-    const publish = (chunk: ChatUIChunk): void => {
-      run.channel.publish(chunk);
-      reducer.write(chunk);
-      // The pending approval card is persisted with its request.
-      if (chunk.type === "tool-approval-request" && chunk.isAutomatic !== true) reducer.snapshot();
     };
 
     let failure: unknown;
@@ -262,7 +234,7 @@ export class RunRegistry {
       failure = error;
     }
 
-    if (!mapper.finished) {
+    if (!persistence.finished) {
       const signal = run.controller.signal;
       const stopReason = signal.aborted ? stopReasonOf(signal.reason) : null;
       if (failure !== undefined) {
@@ -286,22 +258,10 @@ export class RunRegistry {
 
     // Any approval still waiting settles through the run's signal (as stopped).
     if (!run.controller.signal.aborted) run.controller.abort("shutdown");
-    await reducer.end(outcomeOf(run.finishedStatus));
+    await persistence.end(run.finishedStatus);
   }
 }
 
 function stopReasonOf(reason: unknown): RunStopReason {
   return reason === "timeout" || reason === "shutdown" ? reason : "user";
-}
-
-function outcomeOf(status: FinishedRunStatus | null): UIMessageStreamOutcome {
-  switch (status) {
-    case "completed":
-      return { status: "completed" };
-    case "cancelled":
-    case "timed_out":
-      return { status: "aborted" };
-    default:
-      return { status: "failed" };
-  }
 }

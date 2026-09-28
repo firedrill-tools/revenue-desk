@@ -1,27 +1,26 @@
-// Entry point of `pnpm dev:server` and `pnpm start`.
+// Entry point of `pnpm dev:server` and `pnpm start` (docs/ARCHITECTURE.md §4).
 //
-// The full server is startServer() in runtime.ts. It needs the agent core's
-// runTurn (src/agent, W1), the integration definitions (src/integrations, W2),
-// the configuration snapshot, redactor and approval gate (src/config and
-// src/policy, W1). Until those are wired here, this entry point serves
-// /api/health and the built SPA only; every other /api route answers 404.
+//   environment (+ the DOTENV_PATH file) -> AgentEnv snapshot -> the agent
+//   core and the six integrations -> startServer() on 127.0.0.1:PORT.
+//
+// Configuration problems name the variable, never its value, and stop the
+// process before anything listens. SIGINT and SIGTERM stop every run (as
+// shutdown), close the listener and the database, then exit; a second signal
+// exits at once.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { serve } from "@hono/node-server";
-import { createApp } from "./app.js";
-import { SERVER_HOST } from "./runtime.js";
+import { createRunTurn } from "../agent/run-turn.js";
+import { loadAgentEnv, withDotenvFile } from "../config/env.js";
+import { createRedactor } from "../config/redact.js";
+import type { AgentEnv, ConfigProblem } from "../contracts/env.js";
+import { integrations } from "../integrations/registry.js";
+import { type RunningServer, startServer } from "./runtime.js";
 
-const DEFAULT_PORT = 4320;
-
-function readPort(value: string | undefined): number {
-  if (value === undefined || value === "") return DEFAULT_PORT;
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`PORT must be an integer between 1 and 65535 (got "${value}")`);
-  }
-  return port;
-}
+/** Exit code for refused configuration (the CLI's CLI_EXIT_CODES.config). */
+const EXIT_CONFIG = 3;
+/** How long shutdown may take before the process exits anyway. */
+const SHUTDOWN_DEADLINE_MS = 8_000;
 
 function readVersion(): string {
   // src/server/main.ts and dist/server/main.js are both two levels below package.json.
@@ -32,23 +31,78 @@ function readVersion(): string {
   return typeof version === "string" ? version : "0.0.0";
 }
 
-const port = readPort(process.env.PORT);
-const app = createApp({
-  version: readVersion(),
-  // dist/server/main.js serves dist/web; under tsx this resolves to src/web, which does not exist.
-  webRoot: fileURLToPath(new URL("../web", import.meta.url)),
-});
-
-const server = serve({ fetch: app.fetch, hostname: SERVER_HOST, port }, (info) => {
-  process.stderr.write(`Revenue Desk listening on http://${SERVER_HOST}:${info.port}\n`);
-  process.stderr.write("The agent API is not wired into this entry point yet (health only).\n");
-});
-
-function shutdown(signal: NodeJS.Signals): void {
-  process.stderr.write(`Received ${signal}; shutting down\n`);
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 3_000).unref();
+function log(line: string): void {
+  process.stderr.write(`${line}\n`);
 }
 
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);
+function loadConfiguration():
+  | { readonly ok: true; readonly env: AgentEnv }
+  | { readonly ok: false; readonly problems: readonly ConfigProblem[] } {
+  const cwd = process.cwd();
+  const merged = withDotenvFile(process.env, { cwd });
+  if (!merged.ok) return { ok: false, problems: [merged.problem] };
+  return loadAgentEnv(merged.environment, { cwd });
+}
+
+async function main(): Promise<void> {
+  const configuration = loadConfiguration();
+  if (!configuration.ok) {
+    log("Revenue Desk cannot start: the configuration was refused.");
+    for (const problem of configuration.problems) log(`  ${problem.variable}: ${problem.message}`);
+    process.exit(EXIT_CONFIG);
+  }
+  const { env } = configuration;
+  const redact = createRedactor(env);
+  const version = readVersion();
+  const catalog = integrations();
+
+  let server: RunningServer;
+  try {
+    server = await startServer({
+      env,
+      runTurn: createRunTurn({ catalog, version }),
+      integrations: Object.values(catalog),
+      redact,
+      version,
+      log,
+      // dist/server/main.js serves dist/web; under tsx this resolves to src/web,
+      // which does not exist, and Vite serves the SPA instead.
+      webRoot: fileURLToPath(new URL("../web", import.meta.url)),
+    });
+  } catch (error) {
+    log(`Revenue Desk failed to start: ${redact(messageOf(error))}`);
+    process.exit(1);
+  }
+
+  log(`Revenue Desk listening on ${server.url}`);
+  if (env.runtime.sandbox) log("Local sandbox — no real services");
+  if (env.model.apiKey === null) {
+    log("ANTHROPIC_API_KEY is not set: runs will fail until it is configured.");
+  }
+
+  let stopping = false;
+  const shutdown = (signal: NodeJS.Signals): void => {
+    if (stopping) {
+      log(`Received ${signal} again; exiting now`);
+      process.exit(1);
+    }
+    stopping = true;
+    log(`Received ${signal}; stopping runs and shutting down`);
+    setTimeout(() => process.exit(1), SHUTDOWN_DEADLINE_MS).unref();
+    server.close().then(
+      () => process.exit(0),
+      (error: unknown) => {
+        log(`Shutdown failed: ${redact(messageOf(error))}`);
+        process.exit(1);
+      },
+    );
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+await main();
