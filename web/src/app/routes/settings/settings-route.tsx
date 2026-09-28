@@ -70,7 +70,7 @@ function Section({
       </div>
       <div className="px-5 py-5">{children}</div>
       {footer ? (
-        <div className="flex items-center justify-between gap-3 border-t bg-surface-subtle px-5 py-2.5">
+        <div className="flex items-center justify-between gap-3 rounded-b-[inherit] border-t bg-surface-subtle px-5 py-2.5">
           <p className="text-body-sm text-muted-foreground">Unsaved changes</p>
           <div className="flex items-center gap-2">{footer}</div>
         </div>

@@ -81,7 +81,11 @@ function ConversationRow({
         body: { archived: true },
       });
       invalidate("conversations");
-      if (selected) navigate("/", { replace: true });
+      if (selected) {
+        navigate("/", { replace: true });
+        // On a phone the rail is a sheet over the chat that just closed.
+        onNavigate?.();
+      }
       notify({ message: "Conversation archived." });
     } catch (error) {
       notify({
