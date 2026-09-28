@@ -1,498 +1,445 @@
-// AI SDK v7 UI message stream with server-held approvals (spike S1).
+// AgentEvent -> AI SDK v7 UI message chunks (docs/ARCHITECTURE.md §6).
 //
-// The approval pattern the real /api/chat will use, proven end to end on a
-// fixed script:
-//   1. The tool call is streamed as a dynamic tool part (tool-input-start with
-//      dynamic:true, tool-input-delta, tool-input-available).
-//   2. tool-approval-request is written and the SAME response stays open while
-//      the server waits for POST /api/.../approvals/:id.
-//   3. The server writes tool-approval-response (the only source of truth for
-//      the decision), then tool-output-available or tool-output-denied.
-// The client never calls addToolApprovalResponse and never uses
-// sendAutomaticallyWhen, so a decision can never replay the turn.
+// One mapper per run turns the core's ordered events into the chunks of one
+// assistant message. The sequence is the one spike S1 proved against the
+// v7 reducer (useChat and readUIMessageStream):
 //
-// Everything under /api/spike/* is scaffolding for spike S1 and is removed when
-// the real /api/chat route lands; ApprovalWaiters and the chunk helpers are
-// meant to be reused by it.
+//   run.started            start{messageId, metadata}, a persisted data-notice per unavailable connection
+//   status                 transient data-status
+//   step.start/.finish     start-step / finish-step
+//   text.*, reasoning.*    text-* / reasoning-*
+//   tool.input.start       tool-input-start{dynamic, title, toolMetadata}
+//   tool.input.available   tool-input-available (exactly once per call)
+//   approval.requested     tool-approval-request{approvalDescriptor, reason: consequence}
+//   approval.resolved      tool-approval-response
+//   tool.denied            policy_denied: an automatic request/response pair, then tool-output-denied;
+//                          rejected: tool-output-error; otherwise tool-output-denied
+//   tool.progress          transient data-progress
+//   tool.output            tool-output-available, or tool-output-error when isError
+//   usage                  persisted data-usage and message-metadata{usage}
+//   run.finished           message-metadata{status}, then finish, abort or error
+//
+// Invariants the mapper enforces whatever the core emits, because the
+// reducer throws or renders nothing otherwise:
+// - a tool-approval-response always precedes the outcome of a call that asked;
+// - a denied call always carries a response (approved:false), so the approval
+//   card can say why;
+// - tool-input-available is sent once per call;
+// - chunks for a call the stream never started are dropped (reported);
+// - at run.finished, open text/reasoning parts are ended and every call
+//   without an outcome is closed (interrupted), so no part keeps spinning.
+//
+// Also used by the CLI (through readUIMessageStream) to persist its messages.
 
-import { randomUUID } from "node:crypto";
-import {
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  type UIMessage,
-  type UIMessageStreamOnEndCallback,
-  type UIMessageStreamWriterWithOutcome,
-} from "ai";
-import { type Context, Hono } from "hono";
-import { z } from "zod";
+import type { InferUIMessageChunk } from "ai";
+import type { ChatMessageMetadata, ChatUIMessage, NoticeData } from "../contracts/api.js";
+import type { AgentEvent, AgentEventOf, RunConnection, RunUsage } from "../contracts/events.js";
+import { INTEGRATIONS } from "../contracts/integration.js";
+import type { JsonValue } from "../contracts/json.js";
+import { type Redact, redactJson } from "./redaction.js";
 
-// ---------------------------------------------------------------------------
-// Stream contract shared with the web client (web/src/lib/chat.ts parses it).
-// ---------------------------------------------------------------------------
+export type ChatUIChunk = InferUIMessageChunk<ChatUIMessage>;
 
-/** How a tool call reaches its system; shown as a neutral chip in the UI. */
-export type ConnectionKind = "composio" | "mcp" | "api";
+export const INTERRUPTED_TOOL_TEXT = "Interrupted: the run ended before this call finished.";
+export const UNDECIDED_APPROVAL_TEXT = "The run ended before a decision was made.";
+export const FAILED_RUN_TEXT = "The run failed.";
 
-/** Approval policy classes (docs/ARCHITECTURE.md §7). */
-export type ActionClass = "read" | "internal_write" | "outbound" | "financial" | "destructive";
+/** The approval id of the automatic (policy) denial of a call. */
+export function automaticApprovalId(toolCallId: string): string {
+  return `policy_${toolCallId}`;
+}
 
-/** Sent as `toolMetadata` on tool-input-start and tool-input-available. */
-export type ToolMetadata = {
-  integration: string;
-  connectionKind: ConnectionKind;
-  operation: string;
-  actionClass: ActionClass;
+/** Transient chunks are delivered live but never become part of the message. */
+export function isTransientChunk(chunk: ChatUIChunk): boolean {
+  return (
+    (chunk.type === "data-status" || chunk.type === "data-progress") && chunk.transient === true
+  );
+}
+
+export type UIStreamMapperOptions = {
+  /** The assistant message id (the `start` chunk's messageId). */
+  readonly messageId: string;
+  /** Metadata for a `start` the mapper must send before run.started arrived. */
+  readonly fallbackMetadata: ChatMessageMetadata;
+  readonly redact: Redact;
+  /** Events that break the AgentEvent ordering rules; their chunks are dropped. */
+  readonly onAnomaly?: (message: string) => void;
 };
 
-/**
- * Sent as `approvalDescriptor` on tool-approval-request; the reducer stores it
- * as `approval.descriptor`. It holds the facts the approval card shows.
- */
-export type ApprovalDescriptor = {
-  actionClass: ActionClass;
-  integration: string;
-  /** The exact consequence, e.g. "Refund $49.00 to Kestrel Analytics". */
-  consequence: string;
-  facts: Array<{ label: string; value: string }>;
+type ToolCallState = {
+  inputAvailable: boolean;
+  approvalId: string | null;
+  /** The approval response that was sent, if any. */
+  approved: boolean | null;
+  /** An outcome chunk (output or denial) was sent. */
+  settled: boolean;
 };
 
-export type ChatMessageMetadata = { runId: string; model: string };
-export type ChatUIMessage = UIMessage<ChatMessageMetadata>;
-type ChatStreamWriter = UIMessageStreamWriterWithOutcome<ChatUIMessage>;
+export class UIStreamMapper {
+  readonly #options: UIStreamMapperOptions;
+  #metadata: ChatMessageMetadata;
+  #started = false;
+  #finished = false;
+  readonly #openText = new Set<string>();
+  readonly #openReasoning = new Set<string>();
+  readonly #tools = new Map<string, ToolCallState>();
 
-// ---------------------------------------------------------------------------
-// Approval waiters: a pending approval holds the stream open until a decision.
-// ---------------------------------------------------------------------------
-
-export type ApprovalDecision = {
-  approved: boolean;
-  reason?: string;
-  decidedBy: "user" | "timeout" | "stop";
-};
-
-export type DecideOutcome = "accepted" | "unknown" | "already_decided";
-
-/**
- * In-process registry of approvals that a running stream is waiting on.
- * A waiter settles exactly once: by decide() (the user), by its timeout, or by
- * its abort signal (Stop or client disconnect). Timeout and stop deny.
- */
-export class ApprovalWaiters {
-  readonly #pending = new Map<string, (decision: ApprovalDecision) => void>();
-  // Recently settled ids, so a late or repeated decision gets 409, not 404.
-  readonly #settled = new Map<string, ApprovalDecision>();
-  readonly #settledLimit: number;
-
-  constructor(options: { settledLimit?: number } = {}) {
-    this.#settledLimit = options.settledLimit ?? 500;
+  constructor(options: UIStreamMapperOptions) {
+    this.#options = options;
+    this.#metadata = { ...options.fallbackMetadata };
   }
 
-  get pendingCount(): number {
-    return this.#pending.size;
+  /** True once run.finished was mapped; later events are ignored. */
+  get finished(): boolean {
+    return this.#finished;
   }
 
-  wait(
-    approvalId: string,
-    options: { timeoutMs: number; signal?: AbortSignal | undefined },
-  ): Promise<ApprovalDecision> {
-    if (this.#pending.has(approvalId) || this.#settled.has(approvalId)) {
-      return Promise.reject(new Error(`Approval ${approvalId} is already registered`));
+  map(event: AgentEvent): ChatUIChunk[] {
+    if (this.#finished) {
+      this.#anomaly(`${event.type} after run.finished`);
+      return [];
     }
-    const { signal, timeoutMs } = options;
-
-    return new Promise<ApprovalDecision>((resolve) => {
-      const settle = (decision: ApprovalDecision): void => {
-        if (this.#pending.get(approvalId) !== settle) return;
-        this.#pending.delete(approvalId);
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        this.#remember(approvalId, decision);
-        resolve(decision);
-      };
-      const onAbort = (): void =>
-        settle({ approved: false, reason: "The run was stopped.", decidedBy: "stop" });
-      const timer = setTimeout(
-        () =>
-          settle({
-            approved: false,
-            reason: `No decision within ${describeDuration(timeoutMs)}.`,
-            decidedBy: "timeout",
-          }),
-        timeoutMs,
-      );
-
-      this.#pending.set(approvalId, settle);
-      if (signal?.aborted) onAbort();
-      else signal?.addEventListener("abort", onAbort, { once: true });
-    });
+    if (event.type === "run.started") return this.#runStarted(event);
+    const chunks: ChatUIChunk[] = this.#started ? [] : this.#start();
+    chunks.push(...this.#mapAfterStart(event));
+    return chunks;
   }
 
-  decide(approvalId: string, decision: { approved: boolean; reason?: string }): DecideOutcome {
-    const settle = this.#pending.get(approvalId);
-    if (settle) {
-      settle({
-        approved: decision.approved,
-        ...(decision.reason ? { reason: decision.reason } : {}),
-        decidedBy: "user",
+  #mapAfterStart(event: Exclude<AgentEvent, { readonly type: "run.started" }>): ChatUIChunk[] {
+    switch (event.type) {
+      case "session":
+        return [];
+      case "status":
+        return [{ type: "data-status", data: event.status, transient: true }];
+      case "step.start":
+        return [{ type: "start-step" }];
+      case "step.finish":
+        return [{ type: "finish-step" }];
+      case "text.start":
+        this.#openText.add(event.id);
+        return [{ type: "text-start", id: event.id }];
+      case "text.delta":
+        if (!this.#openText.has(event.id)) return this.#drop(`text.delta for unknown ${event.id}`);
+        return [{ type: "text-delta", id: event.id, delta: event.delta }];
+      case "text.end":
+        if (!this.#openText.delete(event.id)) return this.#drop(`text.end for unknown ${event.id}`);
+        return [{ type: "text-end", id: event.id }];
+      case "reasoning.start":
+        this.#openReasoning.add(event.id);
+        return [{ type: "reasoning-start", id: event.id }];
+      case "reasoning.delta":
+        if (!this.#openReasoning.has(event.id)) {
+          return this.#drop(`reasoning.delta for unknown ${event.id}`);
+        }
+        return [{ type: "reasoning-delta", id: event.id, delta: event.delta }];
+      case "reasoning.end":
+        if (!this.#openReasoning.delete(event.id)) {
+          return this.#drop(`reasoning.end for unknown ${event.id}`);
+        }
+        return [{ type: "reasoning-end", id: event.id }];
+      case "tool.input.start":
+        return this.#toolInputStart(event);
+      case "tool.input.delta": {
+        const tool = this.#tools.get(event.toolCallId);
+        if (tool === undefined || tool.inputAvailable) {
+          return this.#drop(`tool.input.delta out of order for ${event.toolCallId}`);
+        }
+        return [
+          {
+            type: "tool-input-delta",
+            toolCallId: event.toolCallId,
+            inputTextDelta: event.inputTextDelta,
+          },
+        ];
+      }
+      case "tool.input.available":
+        return this.#toolInputAvailable(event);
+      case "approval.requested":
+        return this.#approvalRequested(event);
+      case "approval.resolved":
+        return this.#approvalResolved(event);
+      case "tool.denied":
+        return this.#toolDenied(event);
+      case "tool.progress":
+        if (!this.#tools.has(event.toolCallId)) {
+          return this.#drop(`tool.progress for unknown ${event.toolCallId}`);
+        }
+        return [
+          {
+            type: "data-progress",
+            data: { toolCallId: event.toolCallId, elapsedMs: event.elapsedMs },
+            transient: true,
+          },
+        ];
+      case "tool.output":
+        return this.#toolOutput(event);
+      case "usage":
+        return this.#usage(event);
+      case "run.finished":
+        return this.#runFinished(event);
+    }
+  }
+
+  #start(): ChatUIChunk[] {
+    this.#started = true;
+    return [
+      { type: "start", messageId: this.#options.messageId, messageMetadata: { ...this.#metadata } },
+    ];
+  }
+
+  #runStarted(event: AgentEventOf<"run.started">): ChatUIChunk[] {
+    if (this.#started) return this.#drop("a second run.started");
+    this.#metadata = { runId: event.runId, model: event.model, effort: event.effort };
+    const chunks = this.#start();
+    for (const connection of event.connections) {
+      if (connection.availability !== "unavailable") continue;
+      chunks.push({
+        type: "data-notice",
+        id: `notice-${connection.integration}`,
+        data: noticeFor(connection),
       });
-      return "accepted";
     }
-    return this.#settled.has(approvalId) ? "already_decided" : "unknown";
+    return chunks;
   }
 
-  #remember(approvalId: string, decision: ApprovalDecision): void {
-    this.#settled.set(approvalId, decision);
-    if (this.#settled.size > this.#settledLimit) {
-      const oldest = this.#settled.keys().next().value;
-      if (oldest !== undefined) this.#settled.delete(oldest);
+  #toolInputStart(event: AgentEventOf<"tool.input.start">): ChatUIChunk[] {
+    if (this.#tools.has(event.toolCallId)) {
+      return this.#drop(`a second tool.input.start for ${event.toolCallId}`);
     }
+    this.#tools.set(event.toolCallId, {
+      inputAvailable: false,
+      approvalId: null,
+      approved: null,
+      settled: false,
+    });
+    return [
+      {
+        type: "tool-input-start",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        dynamic: true,
+        title: event.title,
+        ...(event.tool === null ? {} : { toolMetadata: event.tool }),
+      },
+    ];
   }
-}
 
-function describeDuration(ms: number): string {
-  if (ms >= 60_000 && ms % 60_000 === 0) {
-    const minutes = ms / 60_000;
-    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  #toolInputAvailable(event: AgentEventOf<"tool.input.available">): ChatUIChunk[] {
+    let tool = this.#tools.get(event.toolCallId);
+    if (tool?.inputAvailable) {
+      // A second tool-input-available after a new step would duplicate the part.
+      return this.#drop(`a second tool.input.available for ${event.toolCallId}`);
+    }
+    if (tool === undefined) {
+      tool = { inputAvailable: false, approvalId: null, approved: null, settled: false };
+      this.#tools.set(event.toolCallId, tool);
+    }
+    tool.inputAvailable = true;
+    return [
+      {
+        type: "tool-input-available",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        dynamic: true,
+        input: redactJson(event.input, this.#options.redact),
+        title: event.title,
+        ...(event.tool === null ? {} : { toolMetadata: event.tool }),
+      },
+    ];
   }
-  if (ms >= 1_000) return `${Math.round(ms / 1_000)} seconds`;
-  return `${ms} ms`;
-}
 
-// ---------------------------------------------------------------------------
-// Chunk helpers (reusable by the AgentEvent -> UIMessageChunk mapping).
-// ---------------------------------------------------------------------------
+  #approvalRequested(event: AgentEventOf<"approval.requested">): ChatUIChunk[] {
+    const tool = this.#tools.get(event.toolCallId);
+    if (tool === undefined || tool.settled || tool.approvalId !== null) {
+      return this.#drop(`approval.requested out of order for ${event.toolCallId}`);
+    }
+    tool.approvalId = event.approvalId;
+    return [
+      {
+        type: "tool-approval-request",
+        approvalId: event.approvalId,
+        toolCallId: event.toolCallId,
+        approvalDescriptor: redactJson(event.descriptor, this.#options.redact),
+        reason: event.descriptor.consequence,
+      },
+    ];
+  }
 
-/** Resolves after `ms`, or immediately once `signal` aborts. Never rejects. */
-function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  if (ms <= 0 || signal?.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve();
+  #approvalResolved(event: AgentEventOf<"approval.resolved">): ChatUIChunk[] {
+    const tool = this.#tools.get(event.toolCallId);
+    if (tool === undefined || tool.approvalId !== event.approvalId || tool.approved !== null) {
+      return this.#drop(`approval.resolved out of order for ${event.toolCallId}`);
+    }
+    return this.#respond(tool, event.approved, event.reason);
+  }
+
+  #respond(tool: ToolCallState, approved: boolean, reason: string | null): ChatUIChunk[] {
+    if (tool.approvalId === null) return [];
+    tool.approved = approved;
+    return [
+      {
+        type: "tool-approval-response",
+        approvalId: tool.approvalId,
+        approved,
+        ...(reason === null ? {} : { reason }),
+      },
+    ];
+  }
+
+  /** The approval request and response of a call the policy denied without asking. */
+  #automaticDenial(toolCallId: string, tool: ToolCallState, reason: string): ChatUIChunk[] {
+    tool.approvalId = automaticApprovalId(toolCallId);
+    return [
+      {
+        type: "tool-approval-request",
+        approvalId: tool.approvalId,
+        toolCallId,
+        isAutomatic: true,
+        reason,
+      },
+      ...this.#respond(tool, false, reason),
+    ];
+  }
+
+  #toolDenied(event: AgentEventOf<"tool.denied">): ChatUIChunk[] {
+    const tool = this.#tools.get(event.toolCallId);
+    if (tool === undefined || tool.settled) {
+      return this.#drop(`tool.denied out of order for ${event.toolCallId}`);
+    }
+    tool.settled = true;
+    if (event.decision === "rejected" && tool.approvalId === null) {
+      return [
+        {
+          type: "tool-output-error",
+          toolCallId: event.toolCallId,
+          errorText: this.#options.redact(event.reason),
+        },
+      ];
+    }
+    const chunks: ChatUIChunk[] = [];
+    if (tool.approvalId === null) {
+      chunks.push(...this.#automaticDenial(event.toolCallId, tool, event.reason));
+    } else if (tool.approved === null) {
+      chunks.push(...this.#respond(tool, false, event.reason));
+    }
+    chunks.push({ type: "tool-output-denied", toolCallId: event.toolCallId });
+    return chunks;
+  }
+
+  #toolOutput(event: AgentEventOf<"tool.output">): ChatUIChunk[] {
+    const tool = this.#tools.get(event.toolCallId);
+    if (tool === undefined || tool.settled) {
+      return this.#drop(`tool.output out of order for ${event.toolCallId}`);
+    }
+    tool.settled = true;
+    const chunks: ChatUIChunk[] = [];
+    if (tool.approvalId !== null && tool.approved === null) {
+      // It ran, so it was approved; the response must precede the output.
+      chunks.push(...this.#respond(tool, true, null));
+    }
+    if (event.isError) {
+      chunks.push({
+        type: "tool-output-error",
+        toolCallId: event.toolCallId,
+        errorText: this.#options.redact(event.error?.message ?? textOf(event.output)),
+      });
+    } else {
+      chunks.push({
+        type: "tool-output-available",
+        toolCallId: event.toolCallId,
+        output: redactJson(event.output, this.#options.redact),
+      });
+    }
+    return chunks;
+  }
+
+  #usage(event: AgentEventOf<"usage">): ChatUIChunk[] {
+    const usage: RunUsage = {
+      costUsd: event.costUsd,
+      inputTokens: event.inputTokens,
+      outputTokens: event.outputTokens,
+      cacheReadTokens: event.cacheReadTokens,
+      cacheCreationTokens: event.cacheCreationTokens,
+      numTurns: event.numTurns,
+      modelRequests: event.modelRequests,
+      durationMs: event.durationMs,
+      durationApiMs: event.durationApiMs,
     };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener("abort", done, { once: true });
-  });
+    this.#metadata = { ...this.#metadata, usage };
+    return [
+      { type: "data-usage", id: "usage", data: usage },
+      { type: "message-metadata", messageMetadata: { ...this.#metadata } },
+    ];
+  }
+
+  #runFinished(event: AgentEventOf<"run.finished">): ChatUIChunk[] {
+    this.#finished = true;
+    const chunks = this.#closeOpenParts();
+    this.#metadata = { ...this.#metadata, status: event.status };
+    chunks.push({ type: "message-metadata", messageMetadata: { ...this.#metadata } });
+    switch (event.status) {
+      case "completed":
+        chunks.push({ type: "finish", finishReason: "stop" });
+        break;
+      case "cancelled":
+        chunks.push({ type: "abort", reason: event.stopReason ?? "cancelled" });
+        break;
+      case "timed_out":
+        chunks.push({ type: "abort", reason: event.stopReason ?? "timeout" });
+        break;
+      case "failed":
+        chunks.push({
+          type: "error",
+          errorText: this.#options.redact(event.error?.message ?? FAILED_RUN_TEXT),
+        });
+        break;
+    }
+    return chunks;
+  }
+
+  #closeOpenParts(): ChatUIChunk[] {
+    const chunks: ChatUIChunk[] = [];
+    for (const id of this.#openReasoning) chunks.push({ type: "reasoning-end", id });
+    for (const id of this.#openText) chunks.push({ type: "text-end", id });
+    this.#openReasoning.clear();
+    this.#openText.clear();
+    for (const [toolCallId, tool] of this.#tools) {
+      if (tool.settled) continue;
+      tool.settled = true;
+      if (tool.approvalId !== null && tool.approved === null) {
+        chunks.push(...this.#respond(tool, false, UNDECIDED_APPROVAL_TEXT));
+      }
+      if (tool.approved === false) {
+        chunks.push({ type: "tool-output-denied", toolCallId });
+      } else {
+        chunks.push({ type: "tool-output-error", toolCallId, errorText: INTERRUPTED_TOOL_TEXT });
+      }
+    }
+    return chunks;
+  }
+
+  #drop(message: string): ChatUIChunk[] {
+    this.#anomaly(message);
+    return [];
+  }
+
+  #anomaly(message: string): void {
+    this.#options.onAnomaly?.(message);
+  }
 }
 
-/** Splits text into word-sized deltas that keep their trailing whitespace. */
-export function toDeltas(text: string): string[] {
-  return text.match(/\S+\s*/g) ?? [];
+function noticeFor(connection: RunConnection): NoticeData {
+  const label = INTEGRATIONS[connection.integration].label;
+  return {
+    level: connection.state === "not_configured" ? "info" : "warning",
+    code: "connection_unavailable",
+    integration: connection.integration,
+    message: connection.detail ?? `${label} is unavailable for this run.`,
+  };
 }
 
-async function writeBlock(
-  writer: ChatStreamWriter,
-  kind: "text" | "reasoning",
-  text: string,
-  pacing: { delayMs: number; signal: AbortSignal | undefined },
-): Promise<void> {
-  const id = `${kind}_${randomUUID()}`;
-  writer.write({ type: `${kind}-start`, id });
-  for (const delta of toDeltas(text)) {
-    if (pacing.signal?.aborted) break;
-    writer.write({ type: `${kind}-delta`, id, delta });
-    await pause(pacing.delayMs, pacing.signal);
-  }
-  writer.write({ type: `${kind}-end`, id });
-}
-
-// ---------------------------------------------------------------------------
-// The fixed spike script: a financial action held for approval.
-// Fictional data only; nothing here calls a model or an external system.
-// ---------------------------------------------------------------------------
-
-export const SPIKE_MODEL = "scripted";
-export const SPIKE_TOOL_NAME = "stripe_create_refund";
-export const SPIKE_TOOL_TITLE = "Refund Stripe charge";
-
-export const SPIKE_TOOL_METADATA: ToolMetadata = {
-  integration: "stripe",
-  connectionKind: "api",
-  operation: "refunds.create",
-  actionClass: "financial",
-};
-
-export const SPIKE_TOOL_INPUT = {
-  charge: "ch_spike_duplicate_0002",
-  amount: 4900,
-  currency: "usd",
-  reason: "duplicate",
-} as const;
-
-export const SPIKE_APPROVAL_DESCRIPTOR: ApprovalDescriptor = {
-  actionClass: "financial",
-  integration: "stripe",
-  consequence: "Refund $49.00 to Kestrel Analytics",
-  facts: [
-    { label: "Amount", value: "$49.00 USD" },
-    { label: "Customer", value: "Kestrel Analytics, Inc." },
-    { label: "Charge", value: "ch_spike_duplicate_0002" },
-    { label: "Reason", value: "Duplicate charge" },
-  ],
-};
-
-export const SPIKE_TOOL_OUTPUT = {
-  id: "re_spike_0001",
-  object: "refund",
-  status: "succeeded",
-  amount: 4900,
-  currency: "usd",
-  charge: "ch_spike_duplicate_0002",
-} as const;
-
-const SPIKE_REASONING =
-  "The customer reports two charges for one invoice. Two charges of $49.00 were made " +
-  "on the same day for the same invoice, so the second one is a duplicate. A refund is " +
-  "a financial action and needs approval.";
-
-const SPIKE_INTRO =
-  "I found two identical $49.00 charges for Kestrel Analytics on the same invoice. " +
-  "I'll refund the duplicate charge once you approve it.";
-
-function closingText(decision: ApprovalDecision): string {
-  if (decision.approved) {
-    return `Refunded $49.00 to Kestrel Analytics (refund ${SPIKE_TOOL_OUTPUT.id}). The original charge is unchanged.`;
-  }
-  if (decision.decidedBy === "timeout") {
-    return "I did not refund the charge because no decision arrived in time.";
-  }
-  return decision.reason
-    ? `I did not refund the charge because the approval was declined: ${decision.reason}`
-    : "I did not refund the charge because the approval was declined.";
-}
-
-export type SpikeScriptOptions = {
-  waiters: ApprovalWaiters;
-  approvalTimeoutMs: number;
-  /** Delay between deltas, so the UI visibly streams. 0 in tests. */
-  chunkDelayMs: number;
-  /** Aborts on Stop or client disconnect; a pending approval is then denied. */
-  signal?: AbortSignal | undefined;
-};
-
-/**
- * Writes the fixed script. The chunk order mirrors what the Agent SDK mapping
- * produces: the assistant message holding tool_use ends its step before
- * canUseTool runs, so finish-step precedes tool-approval-request.
- */
-export async function writeSpikeScript(
-  writer: ChatStreamWriter,
-  options: SpikeScriptOptions,
-): Promise<void> {
-  const { signal } = options;
-  const pacing = { delayMs: options.chunkDelayMs, signal };
-  const toolCallId = `call_${randomUUID()}`;
-  const approvalId = `apr_${randomUUID()}`;
-
-  writer.write({
-    type: "start",
-    messageMetadata: { runId: `run_${randomUUID()}`, model: SPIKE_MODEL },
-  });
-  writer.write({ type: "start-step" });
-  await writeBlock(writer, "reasoning", SPIKE_REASONING, pacing);
-  await writeBlock(writer, "text", SPIKE_INTRO, pacing);
-
-  writer.write({
-    type: "tool-input-start",
-    toolCallId,
-    toolName: SPIKE_TOOL_NAME,
-    dynamic: true,
-    title: SPIKE_TOOL_TITLE,
-    toolMetadata: SPIKE_TOOL_METADATA,
-  });
-  for (const fragment of toJsonFragments(SPIKE_TOOL_INPUT)) {
-    writer.write({ type: "tool-input-delta", toolCallId, inputTextDelta: fragment });
-    await pause(pacing.delayMs, signal);
-  }
-  writer.write({
-    type: "tool-input-available",
-    toolCallId,
-    toolName: SPIKE_TOOL_NAME,
-    input: SPIKE_TOOL_INPUT,
-    dynamic: true,
-    title: SPIKE_TOOL_TITLE,
-    toolMetadata: SPIKE_TOOL_METADATA,
-  });
-  writer.write({ type: "finish-step" });
-
-  writer.write({
-    type: "tool-approval-request",
-    approvalId,
-    toolCallId,
-    approvalDescriptor: SPIKE_APPROVAL_DESCRIPTOR,
-    reason: SPIKE_APPROVAL_DESCRIPTOR.consequence,
-  });
-  const decision = await options.waiters.wait(approvalId, {
-    timeoutMs: options.approvalTimeoutMs,
-    signal,
-  });
-
-  // Always answer the request before the output: tool-output-denied alone
-  // leaves approval.approved undefined, and Confirmation then renders nothing.
-  writer.write({
-    type: "tool-approval-response",
-    approvalId,
-    approved: decision.approved,
-    ...(decision.reason ? { reason: decision.reason } : {}),
-  });
-  if (decision.approved) {
-    writer.write({ type: "tool-output-available", toolCallId, output: SPIKE_TOOL_OUTPUT });
-  } else {
-    writer.write({ type: "tool-output-denied", toolCallId });
-  }
-
-  if (decision.decidedBy === "stop") {
-    writer.write({ type: "abort", reason: "stopped" });
-    writer.setOutcome({ status: "aborted" });
-    return;
-  }
-
-  writer.write({ type: "start-step" });
-  await writeBlock(writer, "text", closingText(decision), pacing);
-  writer.write({ type: "finish-step" });
-  writer.write({ type: "finish", finishReason: "stop" });
-  writer.setOutcome({ status: "completed" });
-}
-
-/** Streams JSON the way a model does: a few fragments that only parse once joined. */
-function toJsonFragments(value: unknown): string[] {
+function textOf(value: JsonValue): string {
+  if (typeof value === "string") return value;
   const json = JSON.stringify(value);
-  const size = Math.max(8, Math.ceil(json.length / 5));
-  const fragments: string[] = [];
-  for (let index = 0; index < json.length; index += size) {
-    fragments.push(json.slice(index, index + size));
-  }
-  return fragments;
-}
-
-// ---------------------------------------------------------------------------
-// HTTP routes.
-// ---------------------------------------------------------------------------
-
-export const SPIKE_CHAT_PATH = "/api/spike/chat";
-export const SPIKE_APPROVALS_PATH = "/api/spike/approvals";
-
-export type SpikeRoutesOptions = {
-  waiters?: ApprovalWaiters;
-  /** Default 5 minutes. */
-  approvalTimeoutMs?: number;
-  /** Default 30 ms. */
-  chunkDelayMs?: number;
-  /** Receives the server-side reduction of the response (what W3 persists). */
-  onRunEnd?: UIMessageStreamOnEndCallback<ChatUIMessage>;
-};
-
-const chatRequestSchema = z.object({
-  conversationId: z.string().min(1).max(200),
-  message: z.object({
-    id: z.string().max(200),
-    role: z.literal("user"),
-    parts: z.array(z.looseObject({ type: z.string() })).max(50),
-  }),
-});
-
-const approvalRequestSchema = z.strictObject({
-  approved: z.boolean(),
-  reason: z.string().trim().max(500).optional(),
-});
-
-const APPROVAL_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-
-function apiError(c: Context, status: 400 | 403 | 404 | 409 | 415, code: string, message: string) {
-  return c.json({ error: { code, message } }, status);
-}
-
-/**
- * Minimal mutation guard for the spike: JSON only, and a browser Origin must
- * match the Host. The real routes add the per-boot CSRF cookie and header.
- */
-function rejectUnsafeMutation(c: Context): Response | undefined {
-  const contentType = c.req.header("content-type") ?? "";
-  if (!/^application\/json\s*(;|$)/i.test(contentType)) {
-    return apiError(c, 415, "unsupported_media_type", "Send the request body as application/json.");
-  }
-  const origin = c.req.header("origin");
-  if (origin !== undefined) {
-    let originHost: string | undefined;
-    try {
-      originHost = new URL(origin).host;
-    } catch {
-      originHost = undefined;
-    }
-    if (originHost === undefined || originHost !== c.req.header("host")) {
-      return apiError(c, 403, "forbidden_origin", "Cross-origin requests are not allowed.");
-    }
-  }
-  return undefined;
-}
-
-async function readJsonBody(c: Context): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch {
-    return undefined;
-  }
-}
-
-export function createSpikeRoutes(options: SpikeRoutesOptions = {}): Hono {
-  const waiters = options.waiters ?? new ApprovalWaiters();
-  const approvalTimeoutMs = options.approvalTimeoutMs ?? 5 * 60_000;
-  const chunkDelayMs = options.chunkDelayMs ?? 30;
-  const app = new Hono();
-
-  app.post(SPIKE_CHAT_PATH, async (c) => {
-    const rejected = rejectUnsafeMutation(c);
-    if (rejected) return rejected;
-    const parsed = chatRequestSchema.safeParse(await readJsonBody(c));
-    if (!parsed.success) {
-      return apiError(c, 400, "invalid_request", "Expected {conversationId, message}.");
-    }
-
-    // Aborts when the client disconnects (@hono/node-server) or stops.
-    const signal = c.req.raw.signal;
-    const stream = createUIMessageStream<ChatUIMessage>({
-      execute: ({ writer }) =>
-        writeSpikeScript(writer, { waiters, approvalTimeoutMs, chunkDelayMs, signal }),
-      onError: (error) => {
-        process.stderr.write(
-          `spike chat stream failed: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-        return "The run failed.";
-      },
-      // Passing onEnd also runs the AI SDK reducer on the server, so a chunk
-      // sequence the client would reject fails here too.
-      onEnd: async (event) => {
-        await options.onRunEnd?.(event);
-      },
-    });
-    return createUIMessageStreamResponse({ stream });
-  });
-
-  app.post(`${SPIKE_APPROVALS_PATH}/:approvalId`, async (c) => {
-    const rejected = rejectUnsafeMutation(c);
-    if (rejected) return rejected;
-    const approvalId = c.req.param("approvalId");
-    if (!APPROVAL_ID_PATTERN.test(approvalId)) {
-      return apiError(c, 404, "not_found", "No pending approval has this id.");
-    }
-    const parsed = approvalRequestSchema.safeParse(await readJsonBody(c));
-    if (!parsed.success) {
-      return apiError(c, 400, "invalid_request", "Expected {approved: boolean, reason?: string}.");
-    }
-
-    const outcome = waiters.decide(approvalId, {
-      approved: parsed.data.approved,
-      ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
-    });
-    if (outcome === "unknown") {
-      return apiError(c, 404, "not_found", "No pending approval has this id.");
-    }
-    if (outcome === "already_decided") {
-      return apiError(c, 409, "already_decided", "This approval was already decided.");
-    }
-    return c.json({ status: "accepted" });
-  });
-
-  return app;
+  return json === undefined ? "The tool failed." : json;
 }

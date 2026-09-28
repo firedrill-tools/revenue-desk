@@ -1,10 +1,17 @@
+// Entry point of `pnpm dev:server` and `pnpm start`.
+//
+// The full server is startServer() in runtime.ts. It needs the agent core's
+// runTurn (src/agent, W1), the integration definitions (src/integrations, W2),
+// the configuration snapshot, redactor and approval gate (src/config and
+// src/policy, W1). Until those are wired here, this entry point serves
+// /api/health and the built SPA only; every other /api route answers 404.
+
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
+import { SERVER_HOST } from "./runtime.js";
 
-// Loopback only: the API will hold approvals for financial and outbound actions.
-const HOST = "127.0.0.1";
 const DEFAULT_PORT = 4320;
 
 function readPort(value: string | undefined): number {
@@ -32,8 +39,9 @@ const app = createApp({
   webRoot: fileURLToPath(new URL("../web", import.meta.url)),
 });
 
-const server = serve({ fetch: app.fetch, hostname: HOST, port }, (info) => {
-  process.stderr.write(`Revenue Desk listening on http://${HOST}:${info.port}\n`);
+const server = serve({ fetch: app.fetch, hostname: SERVER_HOST, port }, (info) => {
+  process.stderr.write(`Revenue Desk listening on http://${SERVER_HOST}:${info.port}\n`);
+  process.stderr.write("The agent API is not wired into this entry point yet (health only).\n");
 });
 
 function shutdown(signal: NodeJS.Signals): void {
