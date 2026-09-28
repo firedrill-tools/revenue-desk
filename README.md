@@ -6,8 +6,10 @@ at a small B2B company. It reads and acts across Gmail and Google Calendar
 Slack (through their REST APIs), and asks for approval before anything that
 moves money or leaves the company.
 
-**Status: scaffold.** The toolchain builds and serves `/api/health` and an empty
-app shell. The agent, integrations, database, chat UI and headless CLI are not
+**Status: spikes passed; shared contracts frozen.** The toolchain builds and
+serves `/api/health` and an empty app shell. The shared contracts
+(`src/contracts/`), the database schema and its first migration are in place;
+the agent, integrations, server routes, chat UI and headless CLI are not
 implemented yet. The design reference is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Requirements
@@ -27,7 +29,7 @@ implemented yet. The design reference is [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 | `pnpm lint` / `pnpm lint:fix` | Biome lint and format check / apply fixes |
 | `pnpm test` | Vitest unit and integration tests |
 | `pnpm test:e2e` | Playwright UI tests (none yet; run `pnpm exec playwright install chromium` first) |
-| `pnpm db:generate` / `pnpm db:migrate` | Drizzle migrations (the schema is still a placeholder) |
+| `pnpm db:generate` / `pnpm db:migrate` | Generate SQL from `src/db/schema.ts` into `src/db/migrations` (committed) / apply it; the app also applies migrations when it opens the database |
 | `pnpm db:seed` | Not implemented yet; exits non-zero |
 | `pnpm verify` | Typecheck, lint, unit tests and build (CLI and UI end-to-end suites join later) |
 

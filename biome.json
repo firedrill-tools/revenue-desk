@@ -10,6 +10,7 @@
     "includes": [
       "**",
       "!pnpm-lock.yaml",
+      "!src/db/migrations",
       "!web/src/components/ui",
       "!web/src/components/ai-elements"
     ]

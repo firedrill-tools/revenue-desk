@@ -1,30 +1,31 @@
 # Revenue Desk architecture
 
 This is the design reference for Revenue Desk. It adapts the September 28, 2026
-architecture proposal with the lead's decisions applied. Where this document and
-the code disagree, the code is the current state and this document is the
+architecture proposal with the lead's decisions, the spike results and the
+scope change applied (see the decisions log at the end). Where this document
+and the code disagree, the code is the current state and this document is the
 target; implementation status is tracked in §13, not implied by the text.
 
-Current state: **scaffold only.** The repository builds, type-checks, serves
-`GET /api/health` and a static app shell. Everything else below is specified,
-not implemented.
+Current state: **spikes S1–S4 passed; shared contracts frozen.** The
+repository builds, type-checks, serves `GET /api/health`, a static app shell
+and the S1 spike routes. The contracts in `src/contracts/`, the database
+schema with its first migration and the database client are in place.
+Everything else below is specified, not implemented.
 
 ## 0. Ground rules
 
-- **Location and distribution.** `repositories/revenue-desk` in the Firedrill
+- **Scope: the agent only.** Revenue Desk is built as an ordinary production
+  agent. Connecting it to any external test or simulation platform, and CI for
+  that, are out of scope until Kiran asks (decisions log).
+- **Location and distribution.** `repositories/revenue-desk` in this
   workspace. Local git only: no remote, never pushed. `package.json` has
   `"private": true`; there is no licence file until Kiran decides.
-- **Customer-shaped agent.** Revenue Desk imports nothing from Firedrill and
-  contains no Firedrill files in phase 1. The Firedrill runner configuration,
-  worlds, drills and CI workflow are phase 2 (§14) and start only when Kiran says.
-- **The Firedrill seam is configuration only.** Every Tool endpoint is a URL
-  plus a token, optionally with one extra auth-header name, read from
-  environment variables (§3). The agent core never reads `FIREDRILL_*`.
-- **Patterns reused** from `../gmail-agent`: the Composio session MCP and the
-  direct-MCP override (`src/composio.ts`), `canUseTool` approvals and SDK options
-  (`src/agent.ts`), and the SQLite action log (`src/db.ts`). From
-  `../firedrill-example-gmail-agent`: the "stdin, one turn, one JSON on stdout"
-  adapter (`test/run-agent.mjs`). Its retired standalone runtime is not used.
+- **Configuration is ordinary.** Each integration has its own base URL and
+  credential variables (§3). There are no adapter-specific variables or
+  output contracts.
+- **Patterns reused** from `../gmail-agent`: the Composio session MCP
+  (`src/composio.ts`), `canUseTool` approvals and SDK options (`src/agent.ts`),
+  and the SQLite action log (`src/db.ts`).
 - **gmail-agent defects that must not be repeated:** emitting `tool_call` twice
   per call; reporting an approval as decided by "user" when the user denied;
   letting the Claude CLI child inherit the whole `process.env` (including
@@ -32,9 +33,10 @@ not implemented.
 - **Secrets.** No key value is ever printed, logged, stored in SQLite, streamed
   to the browser, copied or committed. Local runs that need real keys load them
   at runtime from a file outside the repository named by `DOTENV_PATH` (or
-  `process.loadEnvFile(path)`). A redactor (§5) scrubs every configured secret
-  value and `Bearer …`, `sk_`, `rk_`, `xox`, `pat-` patterns from logs, database
-  rows, SSE output and stdout.
+  `process.loadEnvFile(path)`). Secrets travel as `SecretValue`
+  (`src/contracts/env.ts`), which serialises as `[redacted]`. A redactor (§5)
+  scrubs every configured secret value and `Bearer …`, `sk_`, `rk_`, `xox`,
+  `pat-` patterns from logs, database rows, SSE output and stdout.
 - **Composio development rule.** Implementers and automated checks may create
   Composio sessions and make read-only toolkit, catalog and tool-listing calls
   with the configured key. They never execute a Gmail or Calendar tool that
@@ -71,178 +73,191 @@ money or leaves the company. It has five jobs:
 - **J5 Weekly digest.** The agent reads new HubSpot deals, Stripe payments and
   refunds, and QuickBooks AR aging, and posts a digest to Slack.
 
-Each job crosses three or more Tools and all three connection kinds, and every
-outcome is causally checkable: a refund created exactly once for the right
-amount with an idempotency key; no email to the wrong customer; no financial
-write without approval; correct handling of a declined card, a 429, a missing
-record, a partial QuickBooks page or an unavailable Tool.
+Each job crosses three or more systems and all three connection kinds, and
+every outcome is checkable in tests: a refund created exactly once for the
+right amount with an idempotency key; no email to the wrong customer; no
+financial write without approval; correct handling of a declined card, a 429,
+a missing record, a partial QuickBooks page or an unavailable integration.
 
 ## 2. Integrations and connection kinds
 
 | Integration | Kind | Production endpoint and auth |
 |---|---|---|
-| Gmail | **Composio** | Composio session MCP: `sessions.create(userId, {toolkits:['gmail'], tools:{gmail:{enable:[…]}}, sessionPreset:'direct_tools', manageConnections:false, sandbox:{enable:false}, mcp:true})`. Composio manages the Google OAuth. |
-| Google Calendar | **Composio** | Same session shape with the `googlecalendar` toolkit. |
+| Gmail | **Composio** | Composio session MCP: `sessions.create(userId, {toolkits, tools:{<toolkit>:{enable:[…]}}, sessionPreset:'direct_tools', manageConnections:false, sandbox:{enable:false}, mcp:true})`. Composio manages the Google OAuth. |
+| Google Calendar | **Composio** | The same session, `googlecalendar` toolkit. |
 | HubSpot | **MCP** | Default: `@hubspot/mcp-server` 0.4.0 over stdio with `HUBSPOT_ACCESS_TOKEN`. Alternative: any Streamable HTTP MCP via `HUBSPOT_MCP_URL`/`HUBSPOT_MCP_TOKEN`. |
 | Stripe | **API** | REST `https://api.stripe.com/v1/*`, form-encoded, `Authorization: Bearer sk_test_…`, `Idempotency-Key` on writes. |
 | QuickBooks Online | **API** | REST `https://sandbox-quickbooks.api.intuit.com/v3/company/{realmId}/*`, Bearer access token, `requestid` idempotency. |
 | Slack | **API** | Web API `https://slack.com/api/<method>`, bot token. |
 
-Result: two Composio, one MCP, three API integrations. Why each kind:
+Result: two Composio, one MCP, three API integrations
+(`INTEGRATIONS` in `src/contracts/integration.ts`). Why each kind:
 
-- Gmail is already connected in Composio; Calendar's auth config exists but its
-  connection must be reconnected by Kiran.
-- HubSpot's Firedrill Tool aliases equal the 11 tool names of
-  `@hubspot/mcp-server` 0.4.0, so a simulation shows the same tool surface.
-- Stripe over REST, not `mcp.stripe.com`: the current Stripe MCP
-  (`stripe_api_read`/`stripe_api_write`) does not match Firedrill's per-resource
-  aliases, while Firedrill serves a faithful `/v1` REST subset.
-- QuickBooks writes use the REST operations `customers.post`, `invoices.post`,
-  `payments.post` and `invoices.send`, which carry no MCP aliases. That avoids
-  the Stripe/QuickBooks `create_customer`/`create_invoice` alias collision.
-- Slack's official MCP needs user OAuth and the reference Slack MCP server is
-  deprecated; a bot token is simple and Firedrill serves `/api/<method>`.
+- **Gmail and Calendar through Composio:** Composio holds the Google OAuth
+  grant, so the agent never stores Google tokens. Gmail is already connected in
+  Composio; Calendar's connection must be reconnected by Kiran.
+- **HubSpot through MCP:** HubSpot publishes an official MCP server, so the MCP
+  path runs a real vendor server. Any Streamable HTTP MCP server can replace it.
+- **Stripe, QuickBooks and Slack through their REST APIs:** direct REST is the
+  most common and most testable integration style. Stripe and QuickBooks have
+  sandbox accounts, idempotency keys and documented error envelopes; a Slack bot
+  token is simple to obtain, while Slack's official MCP needs user OAuth and
+  the reference Slack MCP server is deprecated.
 
 ### Tool surfaces
 
 Every tool reaches the model through one in-process MCP server per integration,
-so tool names look like `mcp__<integration>__<tool>`.
+so tool names look like `mcp__<integration>__<tool>`. Operations are named
+`<integration>.<resource>.<verb>`. The base class applies before the input is
+known; `classify()` decides the final class from the complete input (§5, §7).
+These tables are the frozen profiles; W2 implements them as `ToolProfile`s.
 
-**Gmail, profile `composio`** (direct_tools slugs; exact slugs and schemas are
-captured once, read-only, from the live catalog and dated):
-reads `GMAIL_FETCH_EMAILS`, `GMAIL_FETCH_MESSAGE_BY_THREAD_ID`,
-`GMAIL_LIST_THREADS`, `GMAIL_LIST_LABELS`; internal writes
-`GMAIL_CREATE_EMAIL_DRAFT`, `GMAIL_ADD_LABEL_TO_EMAIL`; outbound
-`GMAIL_SEND_DRAFT`, `GMAIL_REPLY_TO_THREAD`.
+**Gmail, profile `composio`** (Composio `direct_tools` slugs, captured
+read-only in `test/fixtures/surfaces/composio-direct.json`; allowlist and
+access levels in `src/integrations/composio/session.ts`):
 
-**Gmail, profile `google`** (Google Gmail MCP names, used in simulation):
-`search_threads`, `get_thread`, `list_labels`, `list_drafts`, `create_draft`,
-`label_thread`, `label_message`, plus canonical `gmail.drafts.send` (shown by the
-SDK as `gmail_drafts_send`) because Firedrill has no alias for sending.
+| Tool | Operation | Base class |
+|---|---|---|
+| `GMAIL_FETCH_EMAILS` | `gmail.messages.list` | read |
+| `GMAIL_FETCH_MESSAGE_BY_THREAD_ID` | `gmail.threads.get` | read |
+| `GMAIL_LIST_THREADS` | `gmail.threads.list` | read |
+| `GMAIL_LIST_LABELS` | `gmail.labels.list` | read |
+| `GMAIL_CREATE_EMAIL_DRAFT` | `gmail.drafts.create` | internal_write |
+| `GMAIL_ADD_LABEL_TO_EMAIL` | `gmail.messages.label` | internal_write |
+| `GMAIL_SEND_DRAFT` | `gmail.drafts.send` | outbound |
+| `GMAIL_REPLY_TO_THREAD` | `gmail.threads.reply` | outbound |
 
-**Calendar, profile `composio`:** `GOOGLECALENDAR_EVENTS_LIST`,
-`GOOGLECALENDAR_FIND_FREE_SLOTS`, `GOOGLECALENDAR_FIND_EVENT`,
-`GOOGLECALENDAR_CREATE_EVENT`, `GOOGLECALENDAR_UPDATE_EVENT` (verified at capture).
+**Google Calendar, profile `composio`:**
 
-**Calendar, profile `google`:** `list_calendars`, `list_events`, `get_event`,
-`search_events`, `suggest_time`, `create_event`, `update_event`. `delete_event`
-is excluded.
+| Tool | Operation | Base class |
+|---|---|---|
+| `GOOGLECALENDAR_EVENTS_LIST` | `google_calendar.events.list` | read |
+| `GOOGLECALENDAR_FIND_FREE_SLOTS` | `google_calendar.freebusy.query` | read |
+| `GOOGLECALENDAR_FIND_EVENT` | `google_calendar.events.find` | read |
+| `GOOGLECALENDAR_CREATE_EVENT` | `google_calendar.events.create` | outbound; internal_write when every attendee is inside `internalEmailDomains` |
+| `GOOGLECALENDAR_UPDATE_EVENT` | `google_calendar.events.update` | as create |
 
-**HubSpot, profile `hubspot-mcp-0.4`** (all 11): `hubspot-get-user-details`,
-`hubspot-list-objects`, `hubspot-search-objects`, `hubspot-batch-read-objects`,
-`hubspot-batch-create-objects`, `hubspot-batch-update-objects`,
-`hubspot-list-associations`, `hubspot-batch-create-associations`,
-`hubspot-get-association-definitions`, `hubspot-list-properties`,
-`hubspot-get-property`. Notes and tasks are created with
-`hubspot-batch-create-objects`.
+**HubSpot, profile `hubspot-mcp-0.4`** (10 of the 21 tools of 0.4.0, captured
+in `test/fixtures/surfaces/hubspot-mcp-0.4.0.json`). The jobs need CRM reads
+and creating or updating records. Notes and tasks are created with
+`hubspot-batch-create-objects`, their associations inline in
+`inputs[].associations[]` (0.4.0 requires `associationCategory`), so one call
+creates the record and its links. The other 11 tools (property and engagement
+administration, association batches, workflows, links, feedback) are not
+offered.
 
-**Stripe** (own tools, each 1:1 with a REST operation inside Firedrill's subset):
+| Tool | Operation | Base class |
+|---|---|---|
+| `hubspot-get-user-details` | `hubspot.account.get` | read |
+| `hubspot-list-objects` | `hubspot.objects.list` | read |
+| `hubspot-search-objects` | `hubspot.objects.search` | read |
+| `hubspot-batch-read-objects` | `hubspot.objects.batch_read` | read |
+| `hubspot-list-associations` | `hubspot.associations.list` | read |
+| `hubspot-get-association-definitions` | `hubspot.associations.definitions` | read |
+| `hubspot-list-properties` | `hubspot.properties.list` | read |
+| `hubspot-get-property` | `hubspot.properties.get` | read |
+| `hubspot-batch-create-objects` | `hubspot.<objectType>.create`, e.g. `hubspot.notes.create` | internal_write |
+| `hubspot-batch-update-objects` | `hubspot.<objectType>.update` | internal_write |
 
-| Tool | REST route |
-|---|---|
-| `find_customers` | `GET /v1/customers?email=&limit=` |
-| `get_customer` | `GET /v1/customers/{id}` |
-| `list_charges` | `GET /v1/charges?customer=` |
-| `list_payment_intents` | `GET /v1/payment_intents` |
-| `list_invoices` | `GET /v1/invoices` |
-| `get_invoice` | `GET /v1/invoices/{id}` |
-| `list_subscriptions` | `GET /v1/subscriptions` |
-| `list_refunds` | `GET /v1/refunds` |
-| `get_balance` | `GET /v1/balance` |
-| `create_refund` | `POST /v1/refunds` |
-| `cancel_subscription` | `DELETE /v1/subscriptions/{id}` |
+**Stripe** (own tools, each 1:1 with a REST operation):
+
+| Tool | REST route | Operation | Base class |
+|---|---|---|---|
+| `find_customers` | `GET /v1/customers?email=&limit=` | `stripe.customers.list` | read |
+| `get_customer` | `GET /v1/customers/{id}` | `stripe.customers.retrieve` | read |
+| `list_charges` | `GET /v1/charges?customer=` | `stripe.charges.list` | read |
+| `list_payment_intents` | `GET /v1/payment_intents` | `stripe.payment_intents.list` | read |
+| `list_invoices` | `GET /v1/invoices` | `stripe.invoices.list` | read |
+| `get_invoice` | `GET /v1/invoices/{id}` | `stripe.invoices.retrieve` | read |
+| `list_subscriptions` | `GET /v1/subscriptions` | `stripe.subscriptions.list` | read |
+| `list_refunds` | `GET /v1/refunds` | `stripe.refunds.list` | read |
+| `get_balance` | `GET /v1/balance` | `stripe.balance.retrieve` | read |
+| `create_refund` | `POST /v1/refunds` | `stripe.refunds.create` | financial |
+| `cancel_subscription` | `DELETE /v1/subscriptions/{id}` | `stripe.subscriptions.cancel` | financial |
 
 **QuickBooks** (own tools):
 
-| Tool | REST route |
-|---|---|
-| `get_company_info` | `GET /companyinfo/{realm}` (also the business clock) |
-| `find_customers` | `GET /query` (Customer) |
-| `get_customer` | `GET /customer/{id}` |
-| `list_invoices` | `GET /query` (Invoice, balance and due filters); pages until an empty `QueryResponse` |
-| `get_invoice` | `GET /invoice/{id}` |
-| `list_payments` | `GET /query` (Payment) |
-| `create_customer` | `POST /customer` |
-| `create_invoice` | `POST /invoice` |
-| `send_invoice` | `POST /invoice/{id}/send` |
-| `record_payment` | `POST /payment` |
-| `void_invoice` | `POST /invoice?operation=void` |
+| Tool | REST route | Operation | Base class |
+|---|---|---|---|
+| `get_company_info` | `GET /companyinfo/{realm}` (also the business clock) | `quickbooks.company_info.get` | read |
+| `find_customers` | `GET /query` (Customer) | `quickbooks.customers.query` | read |
+| `get_customer` | `GET /customer/{id}` | `quickbooks.customers.get` | read |
+| `list_invoices` | `GET /query` (Invoice, balance and due filters); pages until an empty `QueryResponse` | `quickbooks.invoices.query` | read |
+| `get_invoice` | `GET /invoice/{id}` | `quickbooks.invoices.get` | read |
+| `list_payments` | `GET /query` (Payment) | `quickbooks.payments.query` | read |
+| `create_customer` | `POST /customer` | `quickbooks.customers.create` | internal_write |
+| `create_invoice` | `POST /invoice` | `quickbooks.invoices.create` | financial |
+| `send_invoice` | `POST /invoice/{id}/send` | `quickbooks.invoices.send` | financial |
+| `record_payment` | `POST /payment` | `quickbooks.payments.create` | financial |
+| `void_invoice` | `POST /invoice?operation=void` | `quickbooks.invoices.void` | financial |
 
 **Slack** (own tools):
 
-| Tool | Web API method |
-|---|---|
-| `list_channels` | `conversations.list` |
-| `read_channel` | `conversations.history` |
-| `read_thread` | `conversations.replies` |
-| `find_user` | `users.list` / `users.info` |
-| `post_message` | `chat.postMessage` |
-| `add_reaction` | `reactions.add` |
+| Tool | Web API method | Operation | Base class |
+|---|---|---|---|
+| `list_channels` | `conversations.list` | `slack.conversations.list` | read |
+| `read_channel` | `conversations.history` | `slack.conversations.history` | read |
+| `read_thread` | `conversations.replies` | `slack.conversations.replies` | read |
+| `find_user` | `users.list` / `users.info` | `slack.users.lookup` | read |
+| `post_message` | `chat.postMessage` | `slack.chat.post_message` | outbound; internal_write when the channel is in `allowedSlackChannels` |
+| `add_reaction` | `reactions.add` | `slack.reactions.add` | internal_write |
 
-Slack errors are handled both ways: HTTP 200 with `ok:false` (real Slack) and
-4xx (Firedrill).
+Slack reports most errors as HTTP 200 with `ok:false`; the client also handles
+HTTP 4xx/5xx and 429 with `Retry-After`.
 
 ## 3. Environment and configuration contract
 
-The core reads the environment once, at start, into an immutable `AgentEnv`
-snapshot and never mutates `process.env`. Configuration names never use the
-`FIREDRILL_`, `GITHUB_`, `RUNNER_`, `ACTIONS_` or `INPUT_` prefixes, because the
-Firedrill runner strips them. `.env.example` lists every name with no values.
+The source of truth is `src/contracts/env.ts`: `ENV_VARS` (every name, its
+group, whether it is a secret, product or test scope) and the `AgentEnv`
+snapshot type. `.env.example` lists exactly those names in the same order; a
+unit test keeps them equal. The config layer (`src/config/env.ts`, W1) reads
+`process.env` once at start into an immutable `AgentEnv` and never mutates it.
 
-- **Model**
-  - `ANTHROPIC_API_KEY` (required to run the agent).
-  - `ANTHROPIC_BASE_URL` (tests only).
-  - `AGENT_MODEL`, default **`claude-sonnet-5`**.
-  - `AGENT_EFFORT`, default **`medium`**.
-  - `AGENT_THINKING_DISPLAY`: `summarized` in the UI, `omitted` headless.
-  - `AGENT_MAX_TURNS` (30), `AGENT_MAX_BUDGET_USD` (2.00 per run).
+- **Model:** `ANTHROPIC_API_KEY` (required to run), `ANTHROPIC_BASE_URL`
+  (optional; tests point it at the scripted API), `AGENT_MODEL` (default
+  **`claude-sonnet-5`**), `AGENT_EFFORT` (default **`medium`**; low, medium,
+  high, xhigh, max), `AGENT_THINKING_DISPLAY` (`summarized` in the UI,
+  `omitted` in the CLI when unset), `AGENT_MAX_TURNS` (30),
+  `AGENT_MAX_BUDGET_USD` (2.00 per run).
   - **No silent model fallback.** The SDK `fallbackModel` option is never set.
-    An unavailable or invalid model fails the run with `target.MODEL_ERROR`
-    (headless) or a visible error (UI); the configured model is what runs.
-- **Runtime**
-  - `PORT` (4320; the server always binds to 127.0.0.1).
-  - `AGENT_STATE_DIR` (`./data`, git-ignored).
-  - `AGENT_POLICY` (JSON overriding approval modes per action class).
-  - `AGENT_BUSINESS_DATE` (ISO date; defaults to today; Firedrill worlds use
-    fixed virtual dates).
-  - `AGENT_APPROVAL_TIMEOUT_MS` (900000 in the UI).
-  - `DOTENV_PATH` (optional env file outside the repository, loaded at start).
-- **Composio:** `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID`. Both come from
-  configuration only; **there is no default user ID in code.** Missing values
-  make Gmail and Calendar `not_configured`.
-- **Gmail override:** `GMAIL_MCP_URL`, `GMAIL_MCP_TOKEN`, `GMAIL_MCP_PROFILE`
-  (`google` default, or `composio`). When the URL is set, Composio is bypassed
-  for Gmail.
-- **Calendar override:** `GOOGLE_CALENDAR_MCP_URL`, `GOOGLE_CALENDAR_MCP_TOKEN`,
-  `GOOGLE_CALENDAR_MCP_PROFILE`.
-- **HubSpot**
-  - `HUBSPOT_MCP_URL` + `HUBSPOT_MCP_TOKEN` select HTTP.
-  - Otherwise stdio: `HUBSPOT_ACCESS_TOKEN` is passed to the child as
-    `PRIVATE_APP_ACCESS_TOKEN` in an explicit child environment.
-  - `HUBSPOT_MCP_COMMAND`/`HUBSPOT_MCP_ARGS` (JSON array) override the command,
-    for tests.
-  - The default command is `process.execPath` plus the resolved
-    `@hubspot/mcp-server` bin (`mcp-hubspot`, a pinned dependency). Never `npx`
-    at runtime.
-- **Stripe**
-  - `STRIPE_SECRET_KEY`. Keys starting `sk_live_`/`rk_live_` are refused unless
-    `ALLOW_LIVE_STRIPE=1`.
-  - `STRIPE_API_BASE_URL` (`https://api.stripe.com`),
-    `STRIPE_API_PROXY_AUTH_HEADER` (optional header name), `STRIPE_API_VERSION`.
+    An unavailable or invalid model fails the run with `model_error`; the
+    configured model is what runs.
+  - Model precedence for a run: CLI flag, then Settings (`defaultModel`,
+    `defaultEffort`), then the environment, then the defaults.
+- **Runtime:** `PORT` (4320; the server always binds to 127.0.0.1),
+  `AGENT_STATE_DIR` (`./data`, git-ignored, shared by server and CLI),
+  `AGENT_POLICY` (JSON modes per action class; those classes are locked in the
+  app), `AGENT_BUSINESS_DATE` (YYYY-MM-DD the agent treats as today; default
+  today in the workspace time zone; useful for reproducible tests and demos),
+  `AGENT_APPROVAL_TIMEOUT_MS` (900000), `AGENT_SANDBOX` (set only by
+  `pnpm dev:sandbox`, §11), `DOTENV_PATH`.
+- **Composio:** `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID` (from configuration
+  only; **there is no default user id in code**), `COMPOSIO_BASE_URL`
+  (default `https://backend.composio.dev`). Missing key or user id make Gmail
+  and Calendar `not_configured`.
+- **HubSpot:** `HUBSPOT_MCP_URL` (+ optional `HUBSPOT_MCP_TOKEN`) selects any
+  Streamable HTTP MCP server. Otherwise stdio: `HUBSPOT_ACCESS_TOKEN` is passed
+  to the child as `PRIVATE_APP_ACCESS_TOKEN` in an explicit child environment,
+  and `HUBSPOT_API_BASE_URL` becomes its `BASE_URL_OVERRIDE`.
+  `HUBSPOT_MCP_COMMAND`/`HUBSPOT_MCP_ARGS` (JSON array) replace the command for
+  tests. The default command is `process.execPath` plus the resolved
+  `@hubspot/mcp-server` bin; never `npx` at runtime.
+- **Stripe:** `STRIPE_SECRET_KEY` (keys starting `sk_live_`/`rk_live_` are
+  refused, state `invalid`, unless `ALLOW_LIVE_STRIPE=1`), `STRIPE_API_BASE_URL`
+  (`https://api.stripe.com`), `STRIPE_API_VERSION`.
 - **QuickBooks:** `QBO_ACCESS_TOKEN`, `QBO_REALM_ID`, `QBO_API_BASE_URL`
-  (`https://sandbox-quickbooks.api.intuit.com`), `QBO_API_PROXY_AUTH_HEADER`,
-  `QBO_MINOR_VERSION`.
-- **Slack:** `SLACK_BOT_TOKEN`, `SLACK_API_BASE_URL` (`https://slack.com`),
-  `SLACK_API_PROXY_AUTH_HEADER`.
-- **Proxy-auth rule.** When `<X>_API_PROXY_AUTH_HEADER` is set, the client also
-  sends `<name>: Bearer <same token>`. A base URL may contain a path prefix; the
-  client joins paths without dropping it. This lets Firedrill's `/v1/wire` plus
-  `X-Firedrill-World-Authorization` be supplied with pure environment aliases
-  (§14).
-- **Missing configuration.** An integration without configuration is
-  `not_configured`: its tools are not offered to the model, the system prompt
-  lists only available integrations, and the Connections screen shows the
-  missing variable *names*.
+  (`https://sandbox-quickbooks.api.intuit.com`), `QBO_MINOR_VERSION`.
+- **Slack:** `SLACK_BOT_TOKEN`, `SLACK_API_BASE_URL` (`https://slack.com`).
+- **Base URLs** may contain a path prefix; clients join paths without dropping
+  it.
+- **Passthrough (tests):** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and
+  `CLAUDE_CODE_MAX_RETRIES` are forwarded to the Claude CLI child when set
+  (`SDK_CHILD_PASSTHROUGH_VARS`); they are not app configuration.
+- **Missing or refused configuration.** `IntegrationDefinition.resolve(env)`
+  returns `configured`, `not_configured` (with the missing variable *names*) or
+  `invalid` (with problems that never contain values). Only configured
+  integrations are offered; the system prompt lists only available ones; the
+  Connections screen shows the missing names.
 
 ## 4. Stack and toolchain
 
@@ -268,104 +283,141 @@ Firedrill runner strips them. `.env.example` lists every name with no values.
   → `web/src/*`), `tsconfig.node.json` (config files, `test/`, `scripts/`). The
   root `tsconfig.json` only references them and repeats the `@/*` path for the
   shadcn CLI.
-- **Lint and format:** Biome. `web/src/components/ui` and
-  `web/src/components/ai-elements` are excluded so they stay diffable against
-  their registries; patches there are reviewed by hand (Appendix A).
+- **Contracts in the web client:** import `src/contracts/*.js` by relative
+  path (`../../../src/contracts/api.js`); both type-checking and the Vite
+  build resolve them, runtime constants included (checked 2026-09-28).
+- **Lint and format:** Biome. `web/src/components/ui`,
+  `web/src/components/ai-elements` (diffable against their registries; patches
+  reviewed by hand, Appendix A) and `src/db/migrations` (generated) are
+  excluded.
 - **Package manager:** pnpm 9.15.4 (`packageManager` pinned), `save-exact`, and
   install scripts limited to `better-sqlite3` and `esbuild`
   (`pnpm.onlyBuiltDependencies`).
 
 Exact versions are recorded in Appendix A.
 
-## 5. Core architecture and contracts
+## 5. Contracts
 
-These are framework-free modules under `src/agent`, `src/integrations`,
-`src/gateway` and `src/policy`.
+The shared contracts are TypeScript modules under `src/contracts/`. They are
+frozen: workstreams build against them and change them only through the lead,
+with a decisions-log entry. They use no Node-only globals and import no
+implementation module (type-only imports from `ai` are allowed), so the
+server, the CLI and the web client all import them.
+`test/unit/contracts.test.ts` checks them against the libraries they describe.
 
-### `IntegrationDefinition` (one per integration)
+| File | Contents |
+|---|---|
+| `json.ts` | `JsonValue`, `JsonObject` |
+| `integration.ts` | `IntegrationId`, `ConnectionKind`, `INTEGRATIONS`, `ProfileId`, tool naming (`sdkToolName`, `parseSdkToolName`, `TOOL_USE_ID_META_KEY`), `ActionClass`, `ApprovalMode`, `DEFAULT_POLICY`, `ToolSpec`/`ToolProfile`/`ProfileAllowlists`/`ToolDescriptor`, `Classification`, `ActionDetails`, `Money`, `WorkspaceSettings`, `ResolvedConnection` (per integration), `ConnectionResolution`, `ConnectionState`/`ConnectionStatus`/`ProbeResult`, `ApiCallContext`, `ToolFailure`, `IntegrationDefinition`, `composioAccessFor` |
+| `env.ts` | `ENV_VARS`, `EnvVarName`, `ENV_DEFAULTS`, `STATE_LAYOUT`, `SecretValue`, `ConfigProblem`, `AgentEffort`, `ModelSettings`, `AgentEnv` |
+| `events.ts` | `AgentEvent` and its ordering rules, `RunTurnInput`/`RunTurn`, `ApprovalGate`, `ConnectionPlan`, `ToolMetadata`, `ApprovalDescriptor`, `RunConnection`, `StatusData`, `RunUsage`, `RunStatus`, `RunError`, `ToolDecision`, `SdkTerminalReason` |
+| `api.ts` | `ChatUIMessage` (metadata and data parts), `API_PATHS`, `ApiEndpoints` (every route with params, query, body, response), `ApiErrorBody`/`API_ERROR_STATUS`, resource views, `CSRF_HEADER`, `SESSION_COOKIE`, `MAX_CONCURRENT_RUNS` |
+| `cli.ts` | `ASK_FLAGS`, `AskCommand`, `CLI_EXIT_CODES`, `RunSummary` (`--json`) |
 
-```ts
-{
-  id: 'gmail'|'google_calendar'|'hubspot'|'stripe'|'quickbooks'|'slack';
-  label: string;
-  kind: 'composio'|'mcp'|'api';
-  resolve(env: AgentEnv): ResolvedConnection | { status: 'not_configured'; missing: string[] };
-  profiles: Record<string, { allow: string[] }>;
-  classify(toolName: string, input: unknown, settings: WorkspaceSettings): Classification | null;
-  probe(conn: ResolvedConnection): Promise<ConnectionStatus>; // read-only
-}
-```
+### Integrations
 
-- `Classification` = `{ actionClass: 'read'|'internal_write'|'outbound'|'financial'|'destructive';
-  operation: string /* e.g. stripe.refunds.create */; title: string /* "Refund charge in Stripe" */;
-  summary?: string; descriptor?: { amount_minor?, currency?, customer?, record_ids?, recipients? } }`.
-- `null` means deny.
-- Slack `post_message` is `internal_write` when the channel is in the settings
-  allowlist, otherwise `outbound`. A calendar event with attendees outside the
-  internal domains is `outbound`.
+One `IntegrationDefinition` per integration (`src/integrations/<id>/`, W2):
+`id`, `label`, `kind`, `profile` (the §2 table as a `ToolProfile`),
+`resolve(env)` (reads the snapshot only), `classify(tool, input, settings)`
+(`Classification | null`; null means deny) and `probe(connection, signal)`
+(read-only).
 
-### `ResolvedConnection` (discriminated union)
+- `Classification` is `{actionClass, operation, title, details?}`; `details`
+  (`{consequence, facts[], amount?, recipients?, recordIds?}`) is required by
+  the type for `outbound`, `financial` and `destructive`, so every card that
+  can ask has its facts.
+- `ResolvedConnection` is a union discriminated by `integration`: Composio
+  `{composio:{apiKey, userId, baseUrl, toolkit}}`; HubSpot
+  `{mcp: {transport:'http', url, token} | {transport:'stdio', accessToken, apiBaseUrl, command}}`;
+  Stripe `{api:{baseUrl, secretKey, keyMode, apiVersion}}`; QuickBooks
+  `{api:{baseUrl, accessToken, realmId, minorVersion}}`; Slack
+  `{api:{baseUrl, botToken}}`. Every one carries `endpointLabel` (host only).
+  Secrets stay `SecretValue` until the gateway builds a transport.
+- Composio session exposure follows the run's policy (`composioAccessFor`):
+  outbound tools are offered, and then gated, unless outbound is `deny`.
+- An integration that resolves but whose last probe says `needs_auth` or
+  `expired` (Calendar today) is `unavailable` for the run: its tools are not
+  offered (S3: `direct_tools` lists Calendar tools even without a connection).
 
-- `{kind:'composio', mode:'session', composio:{apiKey, userId, toolkit}, profile:'composio'}`
-- `{kind:'composio', mode:'override', upstream:{transport:'http', url, headers}, profile}`
-- `{kind:'mcp', upstream:{transport:'http', url, headers} | {transport:'stdio', command, args, env}, profile}`
-- `{kind:'api', api:{baseUrl, token, proxyAuthHeader?, realmId?}}`
+### Tool gateway (proved by S2)
 
-### Tool gateway
+For each available integration, build **one in-process MCP server per
+`query()`**: `{type:'sdk', name:<integration>, instance, timeout:120000}`.
+An instance serves one query at a time; two concurrent queries sharing one
+silently get no tools.
 
-For each available integration, build **one in-process MCP server**:
-`{type:'sdk', name:<id>, instance: McpServer, timeout:120000}`.
-
-- **MCP and Composio integrations:** an MCP client from
-  `@modelcontextprotocol/sdk` connects upstream (Streamable HTTP, SSE if Composio
-  reports `type:'sse'`, or stdio), lists the upstream tools and exposes only the
-  intersection with the profile allowlist, passing the raw JSON schemas through
-  on `tools/list` and `tools/call` handlers. Calls are forwarded unchanged.
-  (Blocking spike S2; fallback is JSON-schema-to-zod through `tool()`.)
-- **API integrations:** each tool is registered with `tool()`/zod and calls a
-  thin typed fetch client.
-- **Why this layer exists:** per-integration names and allowlists; filtering of
-  Firedrill's single world-wide `/v1/mcp` endpoint; one place for action logging,
+- **MCP and Composio:** `connectUpstream` (Streamable HTTP or stdio; SSE only
+  if Composio ever reports it) plus `createFilteringProxy`, which lists only
+  the profile's tools with their raw upstream schemas (forwarded byte for
+  byte) and refuses any other name without an upstream call.
+- **API:** `createApiServer` with `defineApiTool` (zod shapes, typed `run`).
+  `ApiToolContext` grows to `ApiCallContext` `{runId, toolUseId,
+  idempotencyKey, signal}`.
+- **Tool-use id.** The Claude CLI sends the model's tool_use id on every
+  tools/call as `_meta["claudecode/toolUseId"]` (`TOOL_USE_ID_META_KEY`), to
+  both server kinds (verified 2026-09-28, CLI 2.1.283). The gateway reads it to
+  join each call to its action-log row and to derive
+  `idempotencyKey = sha256hex(runId + ':' + toolUseId)` (Stripe
+  `Idempotency-Key`, QuickBooks `requestid`). A write without it fails closed.
+- **Argument validation before approval.** The CLI does not validate
+  arguments of proxied tools, and the SDK validates API-tool zod shapes only
+  after `canUseTool` approved them. W1 validates every call against the
+  offered JSON schema (ajv, added as an explicit dependency) in a `PreToolUse`
+  hook, before any approval, and returns a compact message to the model.
+  Such calls are `rejected`.
+- **Why this layer exists:** per-integration names and allowlists (HubSpot
+  0.4.0 lists 21 tools, Revenue Desk offers 10); one place for action logging,
   output compaction (at most about 20k characters per result, with
   `truncated:true`) and connection-kind tagging. The Claude CLI child therefore
-  needs **no** Tool secrets.
-- **Composio sessions** are created lazily at run start and cached per
-  `(userId, toolkits)` for 30 minutes with `new Composio({apiKey,
-  disableVersionCheck:true})`. If creation fails, the integration is marked
-  `error` for that run and the agent is told.
+  needs **no** integration secrets.
+- **Composio sessions** are created lazily and cached per
+  `(toolkits, access)` for 30 minutes (`ComposioSessionManager`), with
+  `disableVersionCheck:true`, `allowTracking:false` and a stderr logger. If
+  creation fails, the integration is `unavailable` for that run and the agent
+  is told.
 
 ### HTTP clients (API kind)
 
 - No automatic retry on writes. Reads retry at most twice, only on 429
   (honouring `Retry-After`) or on a network error before any byte is sent.
-- Stripe: bracket-syntax form encoding; `Idempotency-Key = sha256(runId + ':' + toolUseId)`.
-  QuickBooks uses the same value as `requestid`.
-- Errors are normalised to `{provider, status, code, message}` and the tool
-  result sets `isError:true`.
+- Stripe: bracket-syntax form encoding.
+- Errors are normalised to `ToolFailure` `{provider, status, code, message}`
+  (`ApiToolError`) and the tool result sets `isError:true`.
 
 ### Agent core
 
-`runTurn({conversationId, runId, text, connections, settings, policy, mode: 'interactive'|'headless', signal}): AsyncIterable<AgentEvent>`.
+`RunTurn = (input: RunTurnInput) => AsyncIterable<AgentEvent>`
+(`src/agent/run-turn.ts`, W1). The input carries ids, source, prompt,
+`resumeSessionId`, the `AgentEnv`, `ModelSettings`, `WorkspaceSettings`, the
+effective `PolicyModes`, the business date, one `ConnectionPlan` per
+integration and an `AbortSignal`, plus `mode:'interactive'` with an
+`ApprovalGate` or `mode:'headless'`. The core is database-free: callers
+persist from the events.
 
-`query()` options:
+`query()` options (S2 gate configuration):
 
-- `model` (`AGENT_MODEL`), `effort` (`AGENT_EFFORT`),
-  `thinking:{type:'adaptive', display}`, `maxTurns`, `maxBudgetUsd`. No
-  `fallbackModel`.
+- `model`, `effort`, `thinking:{type:'adaptive', display}`, `maxTurns`,
+  `maxBudgetUsd`. No `fallbackModel`.
 - `cwd:<state>/work`, `settingSources:[]`, `tools:[]`, `strictMcpConfig:true`,
-  `includePartialMessages:true`, `permissionMode:'default'`.
-- `mcpServers`: the gateway servers. `canUseTool`: the policy engine (§7).
-  `hooks.PreToolUse`: deny any tool not in the registry (defence in depth).
-- `resume: sdk_session_id`, `abortController`.
-- `env`, an explicit **allowlist** (it replaces the child environment): `PATH`,
-  `HOME=<state>/home`, `CLAUDE_CONFIG_DIR=<state>/claude`, `ANTHROPIC_API_KEY`,
-  `ANTHROPIC_BASE_URL?`, `HTTP(S)_PROXY`/`NO_PROXY` (tests only),
-  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `DISABLE_TELEMETRY=1`,
+  `includePartialMessages:true`, `permissionMode:'default'`, and **no
+  `allowedTools`** (bare entries skip `canUseTool` and print
+  `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`). `canUseTool` is the single policy point
+  and auto-allows reads, which still run concurrently.
+- `mcpServers`: the gateway servers. `hooks.PreToolUse`: deny any tool not in
+  the registry and any input that fails its schema.
+- `resume`, `abortController`.
+- `env`, an explicit **allowlist** that replaces the child environment:
+  `PATH`, `HOME=<state>/home`, `CLAUDE_CONFIG_DIR=<state>/claude`,
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL?`, the passthrough variables when
+  set, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `DISABLE_TELEMETRY=1`,
   `DISABLE_ERROR_REPORTING=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
   `ENABLE_TOOL_SEARCH=false`, `CLAUDE_AGENT_SDK_CLIENT_APP=revenue-desk/<version>`.
-- The native Claude CLI comes from the SDK's optional per-platform package
-  (`@anthropic-ai/claude-agent-sdk-<platform>-<arch>`), resolved by the SDK
-  itself. Tests **fail, not skip**, when it is missing.
+- Stop: on `signal` abort the core calls `q.interrupt()` and settles pending
+  approvals as denied with `interrupt:true`; `abortController.abort()` only
+  after 3 seconds. The abort reason (`RunStopReason`: user, timeout, shutdown)
+  sets the finished status.
+- The native Claude CLI comes from the SDK's optional per-platform package,
+  resolved by the SDK itself. Tests **fail, not skip**, when it is missing.
 
 ### System prompt
 
@@ -373,67 +425,96 @@ Built from settings plus the available integrations: role; company profile;
 business date; "look before acting" and "cross-check across systems"; amounts
 are minor units and are shown formatted; never invent IDs; draft before sending;
 explain the pending action before a gated call; after a denial, do not retry,
-report it; concise formatting with tables for lists. It never names
-profile-specific tool names. Stable parts come first, for prompt caching.
+report it; concise formatting with tables for lists. It never names tool names.
+Stable parts come first, for prompt caching. MCP server instructions reach the
+model as a system message inside `messages` (S2), only when the gateway passes
+them.
 
-### `AgentEvent` (contract between core, server and CLI)
+### `AgentEvent`
 
-- `run.started{runId, model, connections[{id, kind, profile, status}]}`
-- `session{sdkSessionId}`
-- `status{phase:'requesting'|'compacting'|'retrying', attempt?, max?}`
-- `step.start` / `step.finish`
-- `reasoning.start|delta|end{id, text}`, `text.start|delta|end{id, text}`
-- `tool.input.start{toolCallId, toolName, integration, connectionKind, operation, actionClass, title}`
-- `tool.input.delta{toolCallId, partialJson}`, `tool.input.available{toolCallId, input}`
-- `approval.requested{approvalId, toolCallId, summary, descriptor}`
-- `approval.resolved{approvalId, toolCallId, approved, decidedBy:'user'|'timeout'|'stop'|'policy', reason?}`
-- `tool.progress{toolCallId, elapsedSeconds}`
-- `tool.output{toolCallId, output, isError, durationMs}`, `tool.denied{toolCallId, reason}`
-- `usage{costUsd, inputTokens, outputTokens, cacheReadTokens, turns, durationMs}`
-- `run.finished{status:'completed'|'failed'|'cancelled'|'timed_out', stopReason, terminalReason, error?{code, message}}`
+The union and its rules are in `src/contracts/events.ts`: `run.started`,
+`session`, `status`, `step.start`/`step.finish`, `reasoning.*`, `text.*`,
+`tool.input.start`/`.delta`/`.available`, `approval.requested`,
+`approval.resolved`, `tool.progress`, `tool.output`, `tool.denied`, `usage`,
+`run.finished`. The rules proved by S1 and S2:
 
-Rules: exactly one `tool.input.available` per `tool_use` id, deduplicated
-between the assistant message and `canUseTool`, and always before any approval;
-skip messages with `parent_tool_use_id !== null`; a `<synthetic>` or
-`message.error` assistant message is an error, never an answer.
+- `run.started` first, `run.finished` last, exactly once each.
+- A step is one model request; `step.finish` comes at message_stop, **before**
+  any approval or output of that step's tool calls.
+- Per tool call: `tool.input.start` once, deltas, `tool.input.available`
+  exactly once (from the assistant message; `canUseTool` never emits a
+  second), then the outcome. `approval.resolved` always precedes
+  `tool.denied`/`tool.output` of that call.
+- `tool.input.start` carries the tool's base class; `tool.input.available`
+  carries the classification from the complete input.
+- The core emits `approval.requested` only after `ApprovalGate.open()` has
+  persisted the row and registered the waiter.
+- Subagent messages are skipped; a `<synthetic>` or `message.error` assistant
+  message fails the run with `model_error`, never becomes text.
 
-## 6. Server stream: SDK to AI SDK v7 UI message stream
+## 6. Server stream: AgentEvent to AI SDK v7 UI message stream
 
 `POST /api/chat` returns
 `createUIMessageStreamResponse(createUIMessageStream({originalMessages, execute, onStepEnd, onEnd}))`
-(header `x-vercel-ai-ui-message-stream: v1`, terminated by `[DONE]`).
+(header `x-vercel-ai-ui-message-stream: v1`, terminated by `[DONE]`). The
+mapping is a pure function in `src/server/ui-stream.ts` that the CLI also uses
+(through `readUIMessageStream`) to persist its messages, so CLI conversations
+render in the app.
 
 | AgentEvent | UI message chunk |
 |---|---|
-| `run.started` | `start{messageId, messageMetadata:{runId, model}}` |
-| `step.*` | `start-step` / `finish-step` |
-| `text.*` | `text-start` / `text-delta` / `text-end` |
-| `reasoning.*` | `reasoning-start` / `-delta` / `-end` |
-| `tool.input.start` | `tool-input-start{toolCallId, toolName, dynamic:true, title, toolMetadata:{integration, connectionKind, operation, actionClass}}` |
-| `tool.input.delta` / `tool.input.available` | `tool-input-delta` / `tool-input-available` |
-| `approval.requested` | `tool-approval-request{approvalId, toolCallId, approvalDescriptor, reason:summary}` |
-| `approval.resolved` | `tool-approval-response{approvalId, approved, reason}`, then `tool-output-denied` if not approved |
-| `tool.output` | `tool-output-available`, or `tool-output-error` when `isError` |
-| `status`, `tool.progress` | transient `data-status` / `data-progress` |
-| `usage` | persisted `data-usage` part plus message metadata |
-| `run.finished` | `finish{finishReason}`; stop gives `abort`; failure gives a sanitised `error{errorText}` |
+| `run.started` | `start{messageId, messageMetadata:{runId, model, effort}}`; each unavailable connection also gives a persisted `data-notice` |
+| `session` | none (stored as `conversations.sdk_session_id`) |
+| `status` | transient `data-status` |
+| `step.start` / `step.finish` | `start-step` / `finish-step` |
+| `text.*`, `reasoning.*` | `text-start`/`-delta`/`-end`, `reasoning-start`/`-delta`/`-end` |
+| `tool.input.start` | `tool-input-start{toolCallId, toolName, dynamic:true, title, toolMetadata}` |
+| `tool.input.delta` | `tool-input-delta{toolCallId, inputTextDelta}` |
+| `tool.input.available` | `tool-input-available{toolCallId, toolName, dynamic:true, input, title, toolMetadata}` (replaces the part's toolMetadata with the classified one) |
+| `approval.requested` | `tool-approval-request{approvalId, toolCallId, approvalDescriptor, reason: consequence}` |
+| `approval.resolved` | `tool-approval-response{approvalId, approved, reason}` |
+| `tool.denied` after an approval | `tool-output-denied` |
+| `tool.denied` `policy_denied` | `tool-approval-request{isAutomatic:true, …}`, `tool-approval-response{approved:false, reason}`, `tool-output-denied` (recommended; not yet proved) |
+| `tool.denied` `rejected` | `tool-output-error{errorText: reason}` |
+| `tool.progress` | transient `data-progress` |
+| `tool.output` | `tool-output-available{output}`, or `tool-output-error{errorText}` when `isError` |
+| `usage` | persisted `data-usage` plus `message-metadata{usage}` |
+| `run.finished` | `message-metadata{status}`, then `finish{finishReason}`; stopped or timed out gives `abort{reason}`; failed gives a sanitised `error{errorText}` |
 
-- `GET /api/chat/:conversationId/stream` reattaches to the active run (the
-  default reconnect URL for `useChat({resume:true})`): it replays that run's
-  buffered chunks from the start of the assistant message, then streams live;
-  204 when there is no active run. Chunks fan out to every subscriber.
-- The assistant `UIMessage` snapshot is persisted at every `onStepEnd` and at
-  `onEnd`.
+Reducer facts from S1 (AI SDK 7.0.118):
+
+- `tool-approval-request`, `tool-approval-response` and `tool-output-*`
+  throw if the tool part does not exist yet; output and approval lookups by id
+  search the whole message, so they may follow `finish-step` or a later
+  `start-step`. `tool-input-start`/`-available` only look in the current step:
+  re-sending `tool-input-available` after a new `start-step` duplicates the
+  part, hence the exactly-once rule.
+- `tool-output-denied` without a preceding `tool-approval-response` leaves
+  `approved` undefined and the stock `ConfirmationRejected` renders nothing.
+- Passing `onEnd` also runs the reducer on the server; its `responseMessage`
+  equals the client's final parts. `onStepEnd` fires at `finish-step` with the
+  tool still `input-available`, so the snapshot with a pending approval is
+  persisted by the approval gate, not by `onStepEnd`.
+
+Runs outlive HTTP connections. A run lives in the server's run registry; a
+client disconnect only detaches that subscriber. `GET
+/api/chat/:conversationId/stream` (the default reconnect URL for
+`useChat({resume:true})`) replays the active run's buffered chunks from the
+start of the assistant message, then streams live; 204 when there is no
+active run. Chunks fan out to every subscriber. Stop is explicit (`POST
+/api/runs/:id/stop`); the UI does not call `useChat().stop()` for it, it waits
+for the server's `abort` chunk.
 
 Client:
 
 ```ts
-useChat({
+useChat<ChatUIMessage>({
   id: conversationId,
   messages: fromDb,
   resume: true,
   transport: new DefaultChatTransport({
     api: '/api/chat',
+    headers: { 'x-rd-csrf': csrfToken },
     prepareSendMessagesRequest: ({ id, messages }) =>
       ({ body: { conversationId: id, message: messages.at(-1) } }),
   }),
@@ -454,65 +535,78 @@ only source of truth, and re-sending would replay side effects.
 | `financial` (refund, invoice create/send/void, payment record, subscription cancel) | ask |
 | `destructive` | deny |
 
-A `policies` row per class holds the mode; `AGENT_POLICY` overrides it.
+A `policies` row per class holds the saved mode; `AGENT_POLICY` overrides and
+locks it; the CLI's `--policy` overrides both for one run.
 
-In `canUseTool`: classify (unknown means deny); `auto` allows; `deny` returns
-`{behavior:'deny', message}`; `ask` inserts a pending approvals row with a
-descriptor and `expires_at`, emits `approval.requested`, and awaits a waiter
-held on `globalThis` (`Map<approvalId, resolve>`). The waiter is settled by
-`POST /api/approvals/:id {approved, reason?}` (404 unknown, 409 already
-decided), by timeout (deny, `timeout`), by Stop (deny with `interrupt:true`,
-`stop`) or by the abort signal.
+In `canUseTool`: classify (unknown or unclassifiable means deny); `auto`
+allows; `deny` returns `{behavior:'deny', message}` (`policy_denied`); `ask`
+calls `ApprovalGate.open()` (the server inserts the pending approvals row
+with its descriptor and `expires_at`, and registers the waiter on
+`globalThis`), emits `approval.requested`, and awaits the decision. The waiter
+settles once: `POST /api/approvals/:id {approved, reason?}` (404 unknown, 409
+already decided), the timeout (deny, `timeout`), or Stop (deny with
+`interrupt:true`, `stop`). Writes are asked one at a time (S2).
 
-- **Stop:** `POST /api/runs/:id/stop` calls `q.interrupt()` and denies pending
-  approvals with `interrupt:true`. `abortController.abort()` is only a fallback
-  after 3 seconds.
-- **Headless:** `ask` becomes deny ("Requires human approval; not available in
-  headless mode") unless the policy says `auto`; decisions are recorded as
-  `policy`.
-- **Boot recovery:** runs still `running` become `failed` (`server_restart`);
-  pending approvals become `expired` (`restart`).
+- **Stop:** `POST /api/runs/:id/stop` aborts the run's signal with reason
+  `user`; the run ends `cancelled` with its pending approvals `cancelled`.
+- **Headless:** `ask` becomes `policy_denied` with the message "Requires human
+  approval; not available in headless mode." unless the policy says `auto`.
+- **Boot recovery:** runs still `running` become `failed` (`server_restart`),
+  their in-flight tool calls `interrupted`; pending approvals become `expired`
+  with `decided_by='restart'`.
 - **Security:** loopback does not stop drive-by requests from other sites.
-  Every mutating `/api` route requires a same-origin `Origin`,
-  `Content-Type: application/json`, and a per-boot session cookie
-  (`SameSite=Strict`, HttpOnly) echoed as an `x-rd-csrf` header. One active run
-  per conversation (409 otherwise); at most 4 concurrent runs.
+  - Every `/api` request must carry a loopback `Host` (`127.0.0.1`,
+    `localhost` or `[::1]`, any port): the DNS-rebinding guard.
+  - `GET /api/session` sets the per-boot cookie `rd_session` (HttpOnly,
+    `SameSite=Strict`, `Path=/api`) and returns the matching `csrfToken` in its
+    JSON body, which other origins cannot read.
+  - Every mutating route (POST, PATCH) requires a same-origin `Origin` when
+    one is sent, `Content-Type: application/json` (send `{}` when there is no
+    body), the cookie, and `x-rd-csrf` equal to the token.
+  - One active run per conversation (409 `run_active`); at most 4 concurrent
+    runs (429 `too_many_runs`).
 
 ## 8. Database
 
-SQLite through better-sqlite3 with Drizzle; WAL mode and `foreign_keys=ON`.
+SQLite through better-sqlite3 with Drizzle (`src/db/schema.ts`), opened by
+`openDatabase()` in `src/db/client.ts` with WAL, `foreign_keys=ON`,
+`busy_timeout=5000` and `synchronous=NORMAL`, applying migrations on open.
 Migrations are generated by drizzle-kit (`pnpm db:generate`, output
-`src/db/migrations`) and committed as SQL. One file per state directory:
-`<AGENT_STATE_DIR>/revenue-desk.sqlite`, or
-`<AGENT_STATE_DIR>/runs/<runId>/agent.sqlite` headless. IDs from `randomUUID`
-except messages (UIMessage IDs). Times are ISO UTC text. Money is integer minor
-units plus currency. No secrets are ever stored.
+`src/db/migrations`, committed, excluded from Biome) and resolved from
+`src/db/migrations` both under `tsx` and from `dist/`. One file per state
+directory, `<AGENT_STATE_DIR>/revenue-desk.sqlite`, shared by the server and
+the CLI (WAL lets both work at once). IDs from `randomUUID` except messages
+(UIMessage ids). Times are ISO UTC text. Business money is integer minor units
+plus currency; model cost is USD `REAL`. No secrets are ever stored. Every
+enum column has a CHECK constraint equal to its contract list
+(`test/unit/db-schema.test.ts`).
 
 | Table | Columns |
 |---|---|
-| `workspace_settings` (singleton, id=1) | company_name, agent_name, sender_name, email_signature, internal_email_domains json, notify_slack_channel, allowed_slack_channels json, timezone, currency, default_model, updated_at |
+| `workspace_settings` (singleton, CHECK id=1) | company_name, agent_name, sender_name, email_signature, internal_email_domains json, notify_slack_channel, allowed_slack_channels json, timezone, currency, default_model, default_effort, updated_at |
 | `policies` | action_class PK, mode `auto`/`ask`/`deny`, updated_at |
-| `connections` | integration PK, kind, profile, status (`connected`, `needs_auth`, `not_configured`, `error`, `unknown`), status_detail, endpoint_label (host only), composio_account_hint (masked), last_checked_at |
-| `conversations` | id, title, source `ui`/`cli`, external_run_id, status (`idle`, `running`, `awaiting_approval`, `error`), sdk_session_id, total_cost_usd, input_tokens, output_tokens, archived_at, created_at, updated_at |
-| `messages` | id (UIMessage id), conversation_id FK, run_id, role, parts_json (exact rendered UIMessage parts), text (plain, for search), seq, created_at |
-| `runs` | id, conversation_id FK, source, external_run_id, interaction_id, status, stop_reason, terminal_reason, model, effort, num_turns, model_requests, cost_usd, input_tokens, output_tokens, cache_read_tokens, duration_ms, error_code, error_message, policy_snapshot json, connections_snapshot json (id, kind, profile, endpoint host), started_at, finished_at |
-| `tool_calls` | id, run_id FK, conversation_id, tool_use_id UNIQUE, integration, connection_kind, tool_name (as the model saw it), upstream_tool (slug, MCP name or `POST /v1/refunds`), operation, action_class, title, input_json (redacted), output_json (compacted), is_error, error_code, http_status, idempotency_key, approval_id, decision (`auto`, `approved`, `denied`, `policy_denied`, `timed_out`, `stopped`), started_at, finished_at, duration_ms |
-| `approvals` | id, run_id, conversation_id, tool_use_id, integration, action_class, summary, descriptor_json, status (`pending`, `approved`, `denied`, `expired`, `cancelled`), decided_by, reason, requested_at, decided_at, expires_at |
+| `connections` | integration PK, kind, profile, status (`ConnectionState`), status_detail, endpoint_label (host only), account_hint (masked), missing_vars json (names), last_checked_at, updated_at |
+| `conversations` | id, title, source `ui`/`cli`, status (`idle`, `running`, `awaiting_approval`, `error`), sdk_session_id, total_cost_usd, input_tokens, output_tokens, archived_at, created_at, updated_at |
+| `messages` | id (UIMessage id), conversation_id FK cascade, run_id FK set null, role `user`/`assistant`, parts_json (the rendered parts, transient data parts excluded), metadata_json, text (plain, for search), seq (unique per conversation), created_at, updated_at |
+| `runs` | id, conversation_id FK cascade, source, mode, status (CHECK: `running` exactly when finished_at is null), stop_reason, terminal_reason, model, effort, user_message_id, assistant_message_id, num_turns, model_requests, cost_usd, input/output/cache_read/cache_creation tokens, duration_ms, duration_api_ms, error_code, error_message, policy_snapshot json, connections_snapshot json (`RunConnection[]`), started_at, finished_at |
+| `tool_calls` | id, run_id FK cascade, conversation_id FK cascade, tool_use_id UNIQUE, integration, connection_kind, tool_name (as the model saw it), upstream_tool, operation, action_class (all four null only for a rejected unknown tool), title, status (`ToolCallStatus`), decision (`ToolDecision`), input_json (redacted), output_json (compacted), truncated, is_error, error_code, error_message, http_status, idempotency_key, approval_id, started_at, finished_at, duration_ms |
+| `approvals` | id, run_id FK cascade, conversation_id FK cascade, tool_use_id UNIQUE, integration, action_class, operation, consequence, descriptor_json (`ApprovalDescriptor`), status (`pending`, `approved`, `denied`, `expired`, `cancelled`; CHECK: pending exactly when undecided), decided_by (`user`, `timeout`, `stop`, `restart`), reason, requested_at, decided_at, expires_at |
 
-`pnpm db:seed` (idempotent) writes only the default workspace settings (company
-name blank, which Settings prompts for) and the default policies. There are
-**no** fabricated conversations, runs or tool data. Connection rows come from
-probes at boot. Until the schema lands, `src/db/schema.ts` is a placeholder and
-`pnpm db:seed` exits non-zero.
+`approvals.tool_use_id` and `tool_calls.approval_id` are plain references,
+not foreign keys: the gate writes the approval row from `canUseTool` while the
+event consumer may not yet have written the tool-call row.
+
+`pnpm db:seed` (idempotent, W3) writes only the default workspace settings
+(company name blank, which Settings prompts for) and `DEFAULT_POLICY`. There
+are **no** fabricated conversations, runs or tool data. Connection rows come
+from probes at boot.
 
 ## 9. UI
 
 ### Visual identity
 
-The agent's own identity, deliberately distinct from Firedrill cobalt so
-side-by-side demos read as two products. Implemented in
-`web/src/styles/tokens.css` and bridged to Tailwind and shadcn in
-`web/src/styles/globals.css`.
+The agent's own identity. Implemented in `web/src/styles/tokens.css` and
+bridged to Tailwind and shadcn in `web/src/styles/globals.css`.
 
 - **Colour.** Cool neutral surfaces `#FFFFFF`/`#F6F7F8`, border `#E4E6EA`, text
   `#111418`/`#5B616E`. The primary button is ink `#111418` (light ink on dark in
@@ -535,10 +629,10 @@ side-by-side demos read as two products. Implemented in
 ### Shell
 
 - 56px app bar: product name, a connections-health popover (dot plus label per
-  integration), the model label, a theme toggle and, only in sandbox demo mode,
-  a persistent "Local sandbox" label.
-- Left rail 264px: search, New chat, conversations with running and
-  awaiting-approval markers.
+  integration), the model label, a theme toggle and, only in sandbox demo mode
+  (`SessionInfo.mode === 'sandbox'`), a persistent "Local sandbox" label.
+- Left rail 264px: search, New chat (`POST /api/conversations`), conversations
+  with running and awaiting-approval markers.
 - Centre thread capped at 760px.
 - Optional right inspector 380px, closed by default, tabs Activity and Run:
   tool-call ledger grouped by connection kind, approvals, cost and tokens.
@@ -557,17 +651,17 @@ side-by-side demos read as two products. Implemented in
   blocks; assistant turns are plain prose.
 - `Reasoning` only when summarised thinking exists.
 - `Tool` (`ToolHeader`/`ToolContent`/`ToolInput`/`ToolOutput`): patched for
-  #490 (undefined input while streaming); the yellow/green/blue rounded-full
-  badges become a status dot plus label, a neutral outline chip
-  "Composio"/"MCP"/"API", and a tabular duration or live elapsed time. Three or
-  more consecutive reads collapse into "Checked N sources".
-- `Confirmation` (`ConfirmationRequest`/`ConfirmationActions`/
-  `ConfirmationAction`/`ConfirmationAccepted`/`ConfirmationRejected`): patched
-  for #484 (type derived from `DynamicToolUIPart['approval']`); renders a facts
-  table (amount, currency, record IDs, recipients) and names the consequence
-  ("Refund $49.00 to Acme"); financial and destructive approvals use the danger
-  colour on the primary action; shows a pending spinner after a click until the
-  server's response chunk arrives.
+  #490 (done in S1); the yellow/green/blue rounded-full badges become a status
+  dot plus label, a neutral outline chip "Composio"/"MCP"/"API", and a tabular
+  duration or live elapsed time. Three or more consecutive reads collapse into
+  "Checked N sources".
+- `Confirmation`: patched for #484 (done in S1); renders a facts table and
+  names the consequence ("Refund $49.00 to Acme"); financial and destructive
+  approvals use the danger colour on the primary action (restate the sizing
+  classes when passing `className` to `ConfirmationAction`); shows a pending
+  spinner after a click until the server's response chunk arrives. It renders
+  a shadcn `Alert` with `role="alert"`; prefer a polite live region. A card
+  with `approval.isAutomatic` reads "Blocked by policy".
 - `Shimmer` status line; composer `PromptInput`, `PromptInputTextarea`,
   `PromptInputFooter`, `PromptInputSubmit` (status-aware Stop; Enter ignored
   while streaming, #439); `Context` for tokens and cost; `CodeBlock` inside
@@ -589,68 +683,74 @@ checks: per-row spinner.
 - **Connections:** integration, kind chip, profile, status dot and label,
   endpoint host, last checked, missing env var names. "Check" runs a read-only
   probe. "Connect" appears only for Composio and, on the user's click, calls
-  `session.authorize(toolkit, {callbackUrl})` and opens `redirectUrl` in a new
-  tab.
+  `POST /api/connections/:integration/connect`; the server calls
+  `session.authorize(toolkit, {callbackUrl})` with a callback on its own
+  origin, and the UI opens `redirectUrl` in a new tab.
 - **Runs:** source, status, duration, cost, tool calls per kind, with a detail
   Sheet that reuses `Tool` read-only and lists approvals.
-- **Settings:** workspace profile, policy per action class, Slack channel
-  allowlist, internal email domains.
+- **Settings:** workspace profile, policy per action class (locked classes
+  shown as set by the environment), Slack channel allowlist, internal email
+  domains.
 
-## 10. Headless "run one task" command
+## 10. Headless CLI
 
-`node dist/cli/main.js run-task [--result target-result|value] [--timeout-ms 240000] [--max-turns 30] [--policy '<json>'] [--instruction "…"]`
-(dev: `node --import tsx src/cli/main.ts run-task`; never relies on `NODE_OPTIONS`).
+`revenue-desk ask "<prompt>"` (built: `node dist/cli/main.js ask …`; dev:
+`node --import tsx src/cli/main.ts ask …`; `package.json` gets a `bin`
+entry). The contract is `src/contracts/cli.ts`. It is useful for scripting
+and drives our own end-to-end tests.
 
-- **Input:** stdin JSON `{schemaVersion:1, runId, interactionId, actorId, instruction, input?, bindingEnvironment?}`,
-  or `--instruction` locally. `bindingEnvironment` keys that match known agent
-  variable names overlay the env snapshot in memory.
-- **State:** `${AGENT_STATE_DIR}/runs/<runId>` holds its own database, work
-  directory and `CLAUDE_CONFIG_DIR`. A later `interactionId` on the same `runId`
-  resumes the same conversation.
-- **Stdout:** before any import side effects, keep a private reference to
-  `process.stdout.write` and redirect `console.*` to stderr. Emit exactly one
-  JSON under 256 KiB.
-  - `target-result` success: `{schemaVersion:1, status:'completed', output:{reply (≤16k chars), conversationId, connectionsUsed:{composio:[…], mcp:[…], api:[…]}, toolCalls:[{integration, connectionKind, tool, operation, actionClass, decision, isError}], approvals:[{actionClass, summary, decision}], model, turns, costUsd, stopReason, terminalReason}, attachments:[]}`.
-  - Failures: `status` `failed`/`timed_out`/`cancelled` with
-    `error:{schemaVersion:1, source:'target', code:'target.CONFIG_MISSING'|'target.MODEL_ERROR'|'target.MAX_TURNS'|'target.BUDGET_EXCEEDED'|'target.TIMEOUT'|'target.CANCELLED', message, retryable:false, issues:[]}`.
-    Exit code 0 for every handled outcome.
-  - `--result value` prints only the output object; failures exit non-zero
-    with a message on stderr.
-- **Signals:** SIGTERM or SIGINT interrupts, writes a `cancelled` result and
-  exits within 1.5 seconds. `--timeout-ms` produces `timed_out`. No work
-  continues after the result is written.
+- **Prompt:** the argument, or `-` to read all of stdin.
+- **Flags:** `--json`, `--conversation <id>` (continue a conversation; its SDK
+  session is resumed), `--policy '<json>'`, `--model`, `--effort`,
+  `--max-turns`, `--max-budget-usd`, `--timeout-ms`, `--state-dir`.
+- **Mode:** headless. `ask` actions are denied unless `--policy` (or
+  `AGENT_POLICY`) makes them `auto`. It uses the same state directory and
+  database as the server, so its conversations and runs appear in the app with
+  source `cli`.
+- **Output:** without `--json`, the reply text on stdout and a one-line status
+  on stderr. With `--json`, exactly one `RunSummary` JSON document on stdout
+  (`kind: "revenue-desk.run-summary"`, `version: 1`: run id, conversation id,
+  status, reply, model, effort, times, usage, stop and terminal reasons, error,
+  connections, tool calls with their decisions). Before any module with side
+  effects is imported, stdout is guarded (a private reference to
+  `process.stdout.write`; `console.*` goes to stderr).
+- **Exit codes** (`CLI_EXIT_CODES`): 0 completed, 1 failed, 2 usage, 3
+  configuration, 124 timed out, 130 cancelled.
+- **Signals:** SIGINT or SIGTERM stops the run (interrupt), prints the summary
+  with `--json`, and exits within 1.5 seconds. `--timeout-ms` ends it
+  `timed_out`. No work continues after the output is written.
 
 ## 11. Testing, fakes and the sandbox demo mode
 
-**Unit (Vitest, no network):** env resolution for every integration
-(configured, `not_configured`, override precedence, live-key refusal); path
-joining with prefixed base URLs and the proxy-auth header; Stripe bracket form
-encoding; idempotency and `requestid` derivation; QuickBooks query builder and
-paging; Slack `ok:false` on 200 and 4xx; error normalisation; classifier tables
-for all three naming schemes; policy decisions; redactor; AgentEvent to
-UIMessageChunk mapping with golden sequences from the real SDK against the mock;
-`readUIMessageStream` proving that `tool-approval-request`, then
-`tool-approval-response` and `tool-output-*` in one stream render correctly;
-database repositories and boot recovery.
+**Unit (Vitest, no network):** contracts (`contracts.test.ts`) and schema
+(`db-schema.test.ts`); env resolution for every integration (configured,
+`not_configured`, `invalid`, live-key refusal); path joining with prefixed
+base URLs; Stripe bracket form encoding; idempotency and `requestid`
+derivation; QuickBooks query builder and paging; Slack `ok:false` and HTTP
+errors; error normalisation; classifier tables for every profile; policy
+decisions; redactor; AgentEvent to UIMessageChunk mapping with golden
+sequences from the real SDK against the mock; `readUIMessageStream` proving
+the approval sequences render; database repositories and boot recovery.
 
 **Contract-faithful local fakes** (`test/support/fakes`): stateful, loopback
 ephemeral ports, dated fixtures, never reachable from product code paths.
 Stripe REST (form-only with 415 on JSON, Bearer-only, idempotency replay, error
 envelope, 402 decline, 429); QuickBooks REST (companyinfo, customer, invoice,
 payment, query with a size-truncated page, Fault envelope, `requestid`, 403 for
-a wrong realm); Slack Web API (both error modes); HubSpot MCP (Streamable HTTP
-and stdio, the 11 tools, schemas captured offline from `@hubspot/mcp-server`
-0.4.0); Google MCP (Gmail and Calendar names plus `gmail.drafts.send`);
-Composio-profile MCP (`GMAIL_*`/`GOOGLECALENDAR_*` with schemas captured
-read-only). Fixtures describe one coherent fictional company on `*.test`
-domains. Every fake can require and assert the proxy-auth header.
+a wrong realm); Slack Web API (`ok:false` and HTTP errors); HubSpot MCP
+(Streamable HTTP and stdio, the profile's tools, schemas from the 0.4.0
+capture); Composio (a local Composio API fake that creates sessions whose MCP
+endpoint is a loopback MCP fake serving the captured `GMAIL_*`/
+`GOOGLECALENDAR_*` schemas, reached through `COMPOSIO_BASE_URL`; W2 allows an
+`http:` session MCP URL only for loopback hosts). Fixtures describe one
+coherent fictional company on `*.test` domains.
 
-**Scripted Messages API:** adapted from the platform's `mock-anthropic.ts` and
-`sdk-gate-support.ts` (with a provenance header) plus thinking blocks. The real
-SDK runs as a subprocess with `ANTHROPIC_BASE_URL` pointed at the mock, a dummy
-key, `HTTP(S)_PROXY` pointed at the mock with `NO_PROXY=127.0.0.1,localhost`
-(any non-loopback CONNECT gets 403 and fails the test) and
-`CLAUDE_CODE_MAX_RETRIES=0`.
+**Scripted Messages API:** `test/support/mock-anthropic.ts` and
+`sdk-gate-support.ts` (adapted with provenance headers, plus thinking blocks).
+The real SDK runs as a subprocess with `ANTHROPIC_BASE_URL` pointed at the
+mock, a dummy key, `HTTP(S)_PROXY` pointed at the mock with
+`NO_PROXY=127.0.0.1,localhost` (any non-loopback CONNECT gets 403 and fails the
+test) and `CLAUDE_CODE_MAX_RETRIES=0`.
 
 **Integration and full-stack E2E** (real SDK, mock model, fakes): J1 reads
 across all three kinds with draft auto and send approved; J2 refund approved
@@ -660,14 +760,16 @@ approval cancelled, no refund, no extra model request); approval timeout; J3
 with QuickBooks paging and an external calendar invite that asks for approval;
 failures (Stripe 402 and 429, QuickBooks Fault, Slack `ok:false`, HubSpot MCP
 down at start, Composio session failure); model 529 with
-`x-should-retry:false`; multi-turn resume; HTTP layer (SSE order, reconnect
-replay, approvals 404/409, foreign `Origin` 403, one active run per
-conversation).
+`x-should-retry:false`; multi-turn resume; invalid arguments rejected before
+approval; HTTP layer (SSE order, reconnect replay, disconnect does not stop a
+run, approvals 404/409, foreign `Origin` 403, non-loopback `Host` refused,
+missing CSRF 403, one active run per conversation).
 
-**Headless CLI E2E:** exactly one valid TargetResult on stdout even when a
-module logs; `value` mode; missing-config result; SIGTERM gives `cancelled`
-within 2 seconds; 8 parallel cases with isolated state; tokens absent from
-output.
+**CLI E2E:** the built CLI prints the reply; `--json` prints exactly one valid
+`RunSummary` even when a module logs; exit codes for completed, failed,
+configuration and usage errors; SIGTERM gives `cancelled` within 2 seconds;
+parallel runs with isolated `--state-dir`; tokens absent from all output; the
+run appears in the database with source `cli`.
 
 **Playwright UI E2E** (built app against fakes plus the mock): desktop Chromium
 1440×900 and phone 390×844 with touch (`playwright.config.ts`). Flows:
@@ -676,161 +778,175 @@ approval card → approve → final answer; deny; Stop; reload mid-approval with
 card still actionable; Connections (configured, not configured, error); a policy
 change affecting the next run; keyboard-only approval. Checks: axe with no
 serious violations, `scrollWidth <= clientWidth` at 390px, dark mode, reduced
-motion, screenshots saved as artifacts (not pixel-gated).
+motion, screenshots saved as artifacts (not pixel-gated). Playwright 1.63
+needs Chromium build 1243, which is not installed; W5 either installs it
+(`pnpm exec playwright install chromium`, a download) or uses the installed
+Chrome with `channel: 'chrome'`, and the web server needs `pnpm build` first.
 
 **Sandbox demo mode (`pnpm dev:sandbox`).** Ships as an explicit, clearly
-labelled demo: it starts the server and UI with every integration pointed at
-the local fakes (via the ordinary §3 variables) and either the scripted model or
-the real model (real keys loaded via `DOTENV_PATH`, chosen explicitly by flag).
-The app bar and Connections screen show "Local sandbox" for the whole session.
-It is only ever entered by running that script; no product code path selects
-fakes on its own, and a missing configuration in normal mode is never replaced
-by sandbox data.
+labelled demo: `scripts/dev-sandbox.ts` starts the fakes, then the server and
+UI with `AGENT_SANDBOX=1` and every integration pointed at the fakes through the
+ordinary §3 variables, with either the scripted model or the real model (real
+keys loaded via `DOTENV_PATH`, chosen explicitly by flag). With
+`AGENT_SANDBOX=1` the server refuses to start if any configured endpoint is not
+loopback, and the app bar and Connections screen show "Local sandbox" for the
+whole session. It is only ever entered by running that script; no product code
+path selects fakes on its own, and a missing configuration in normal mode is
+never replaced by sandbox data.
 
 **Optional live E2E** (`pnpm test:live`, `LIVE_E2E=1`, keys loaded at runtime
 via `DOTENV_PATH`): real Anthropic plus Composio Gmail, **read-only**; the
-policy forces every non-read class to deny, `AGENT_MAX_BUDGET_USD=0.50`; asserts
-that only read-class tools ran and nothing was sent. Stripe, HubSpot, QuickBooks
-and Slack live tests run only with sandbox credentials from Kiran and are
-read-only by default.
+policy forces every non-read class to deny (so the Composio session is created
+with access `read`), `AGENT_MAX_BUDGET_USD=0.50`; asserts that only read-class
+tools ran and nothing was sent. Stripe, HubSpot, QuickBooks and Slack live tests
+run only with sandbox credentials from Kiran and are read-only by default.
 
-**`pnpm verify`** currently runs typecheck, lint, unit tests and the build; the
-integration, CLI E2E and Playwright suites join it as they land.
+**`pnpm verify`** currently runs typecheck, lint, unit and integration tests
+and the build; the CLI E2E and Playwright suites join it as they land.
 
 ## 12. Repository layout
 
-Present now: `package.json`, `pnpm-lock.yaml`, `tsconfig*.json`,
-`vite.config.ts`, `vitest.config.ts`, `playwright.config.ts`,
-`drizzle.config.ts`, `biome.json`, `components.json`, `.env.example`,
-`src/server/{main,app}.ts`, `src/db/{schema,seed}.ts` (placeholders),
-`web/index.html`, `web/src/{main.tsx, app/App.tsx, lib/, styles/}`,
-`web/src/components/{ui,ai-elements}`, `test/unit/health.test.ts`.
+Present now: toolchain config, `.env.example`, `src/contracts/*`,
+`src/db/{schema,client,seed}.ts` and `src/db/migrations/`,
+`src/gateway/{types,api-server,mcp-proxy}.ts`,
+`src/integrations/composio/session.ts`, `src/integrations/hubspot/launch.ts`,
+`src/server/{main,app,ui-stream}.ts` (ui-stream holds the S1 spike routes),
+`scripts/surfaces/capture-{composio-direct,hubspot-mcp}.ts`, the web shell
+with the S1 spike page, and `test/{unit,integration,e2e-ui,support,fixtures}`.
 
 Target:
 
 ```
 revenue-desk/
   src/
-    config/        env.ts (AgentEnv snapshot), redact.ts
-    integrations/  types.ts  registry.ts
-                   gmail/ google-calendar/ (composio.ts, profiles.ts, classify.ts)
-                   hubspot/ (mcp.ts, profiles.ts, classify.ts)
-                   stripe/ quickbooks/ slack/ (client.ts, tools.ts, classify.ts)
-                   composio/session.ts (disableVersionCheck, cache, authorize, status)
-    gateway/       mcp-proxy.ts  api-server.ts  compact.ts
-    policy/        classes.ts  engine.ts  approvals.ts (globalThis waiter registry)
-    agent/         run-turn.ts  sdk-options.ts  events.ts  prompt.ts  sdk-mapper.ts
-    db/            schema.ts  client.ts  repos/*.ts  migrations/*.sql  seed.ts  recover.ts
-    server/        main.ts  app.ts  routes/{chat,runs,approvals,conversations,connections,settings}.ts
-                   ui-stream.ts  run-registry.ts  security.ts
-    cli/           main.ts  run-task.ts  target-result.ts  stdout-guard.ts
+    contracts/     json.ts integration.ts env.ts events.ts api.ts cli.ts   (lead)
+    config/        env.ts (AgentEnv snapshot, SecretValue), redact.ts
+    integrations/  registry.ts
+                   gmail/ google-calendar/ (profile.ts, classify.ts, probe.ts)
+                   hubspot/ (launch.ts, profile.ts, classify.ts, probe.ts)
+                   stripe/ quickbooks/ slack/ (client.ts, tools.ts, profile.ts, classify.ts, probe.ts)
+                   composio/session.ts
+    gateway/       mcp-proxy.ts  api-server.ts  compact.ts  validate.ts  types.ts
+    policy/        engine.ts
+    agent/         run-turn.ts  sdk-options.ts  sdk-mapper.ts  prompt.ts
+    db/            schema.ts  client.ts  repos/*.ts  migrations/  seed.ts  recover.ts
+    server/        main.ts  app.ts  routes/{chat,runs,approvals,conversations,connections,settings,session}.ts
+                   ui-stream.ts  run-registry.ts  approvals.ts (ApprovalGate, globalThis waiters)  security.ts
+    cli/           main.ts  ask.ts  summary.ts  stdout-guard.ts
   web/src/
     main.tsx  app/routes (chat, runs, connections, settings)  lib/api.ts  lib/chat.ts
     components/ai-elements/*  components/ui/*  components/app/*  styles/{globals,tokens}.css
   test/
     unit/  integration/  e2e-cli/  e2e-ui/  live/
-    support/ mock-anthropic.ts  sdk-gate.ts  fakes/{stripe,quickbooks,slack,hubspot-mcp,google-mcp,composio-mcp}.ts  harness.ts
-    fixtures/ business/*.json  surfaces/{hubspot-mcp-0.4.0,google-mcp,composio-direct}.json (dated, with source)
+    support/ mock-anthropic.ts  sdk-gate-support.ts  fakes/{stripe,quickbooks,slack,hubspot-mcp,composio}.ts  harness.ts
+    fixtures/ business/*.json  surfaces/{hubspot-mcp-0.4.0,composio-direct}.json (dated, with source)
     scenarios/ *.ts
-  scripts/ dev-sandbox.ts  capture-surfaces.ts (read-only)
+  scripts/ dev-sandbox.ts  surfaces/capture-*.ts (read-only)
   data/ (git-ignored)
 ```
 
-## 13. Workstreams and milestones
+## 13. Workstreams, ownership and status
 
 | Item | Status |
 |---|---|
-| Scaffold (this commit): toolchain, tokens, shadcn + AI Elements, health route, app shell | done |
-| S1 spike: Vite + Hono + AI SDK v7; approval request and response in one stream render in `useChat` | pending |
-| S2 spike: SDK 0.3.283 accepts `instance: McpServer` with raw JSON-schema handlers against the mock | pending |
-| S3 spike: Composio 0.21 `direct_tools` session MCP through the proxy (session creation and tool listing only) | pending |
-| S4 spike: offline capture of `@hubspot/mcp-server` 0.4.0 `tools/list` | pending |
+| Scaffold: toolchain, tokens, shadcn + AI Elements, health route, app shell | done (`9f6ab0c`) |
+| S1: AI SDK v7 approval request and response in one stream, rendered by `useChat` | passed (`795cbd5`) |
+| S2: SDK 0.3.283 accepts a hand-built `McpServer` with raw JSON-schema handlers; API and proxy servers | passed (`cd8d940`) |
+| S3: Composio 0.21 `direct_tools` session MCP through the proxy (listing only) | passed (`20ba5c2`) |
+| S4: offline capture of `@hubspot/mcp-server` 0.4.0 and the stdio launch | passed (`c8a52fb`) |
+| Shared contracts, database schema, first migration and client | frozen (this commit) |
 
-Workstreams after the spikes, joined through the §5 contracts: W1 agent core,
-policy and gateway; W2 integrations; W3 database and server; W4 web UI; W5 test
-infrastructure; W6 CLI and README. M1: core, integrations, database and CLI
-green on unit, integration and CLI E2E. M2: server and UI green on full-stack
-and Playwright. M3: live read-only E2E and polish; done only when `pnpm verify`
-is fully green and live read-only E2E has run.
+Workstreams build in parallel against `src/contracts`. Shared files are
+lead-only: `src/contracts/**`, `docs/ARCHITECTURE.md`, `package.json`,
+`pnpm-lock.yaml`, `tsconfig*.json`, `vite.config.ts`, `vitest.config.ts`,
+`playwright.config.ts`, `biome.json`, `drizzle.config.ts`, `.env.example`,
+`src/db/schema.ts` and `src/db/migrations`. A workstream that needs a change
+there (a dependency, a script, a column) asks the lead.
 
-## 14. Firedrill phase 2 (documented now, built only when Kiran says)
+| Workstream | Owns | Builds against |
+|---|---|---|
+| W1 agent core, policy and gateway | `src/config`, `src/agent`, `src/policy`, `src/gateway` | `RunTurn`, `AgentEvent`, `AgentEnv`, `IntegrationDefinition`, `ApprovalGate`, `ApiCallContext` |
+| W2 integrations | `src/integrations/**` | `IntegrationDefinition`, `ToolProfile` (§2 tables), `Classification`, `ResolvedConnection`, `ProbeResult` |
+| W3 database and server | `src/db/{repos,seed,recover}`, `src/server/**` | `ApiEndpoints`, `ChatUIMessage`, `AgentEvent`, `ApprovalGate`, schema |
+| W4 web UI | `web/src/**` | `ApiEndpoints`, `ChatUIMessage`, `ToolMetadata`, `ApprovalDescriptor`, `SessionInfo` |
+| W5 test infrastructure | `test/support/**`, `test/fixtures/business`, `test/scenarios`, `test/e2e-ui`, `scripts/dev-sandbox.ts` | §2 tables, §11, `RunTurn` |
+| W6 CLI and README | `src/cli/**`, `test/e2e-cli`, `README.md` | `src/contracts/cli.ts`, `RunTurn`, repositories |
 
-Substitution through `firedrill run` (path A) aliases only; no agent code
-changes.
+W3 removes `/api/spike/*`, the `/spike/approvals` page and its lazy import
+once `/api/chat` and the chat screen land; W3 and W4 then delete the duplicated
+stream types in `src/server/ui-stream.ts` and `web/src/lib/chat.ts` in favour
+of `src/contracts`.
 
-| Integration | Aliases and host variables |
-|---|---|
-| Stripe | `STRIPE_API_BASE_URL ← FIREDRILL_WIRE_HTTP_URL`, `STRIPE_SECRET_KEY ← FIREDRILL_WIRE_HTTP_TOKEN`, `STRIPE_API_PROXY_AUTH_HEADER ← FIREDRILL_WIRE_HTTP_AUTHORIZATION_HEADER` |
-| QuickBooks | Same wire trio into the `QBO_*` variables; host `QBO_REALM_ID` set to the world realm |
-| Slack | Same wire trio into the `SLACK_*` variables |
-| HubSpot | `HUBSPOT_MCP_URL`/`HUBSPOT_MCP_TOKEN ← FIREDRILL_MCP_URL`/`FIREDRILL_MCP_TOKEN` (identical 11 names) |
-| Gmail | `GMAIL_MCP_URL`/`GMAIL_MCP_TOKEN ← FIREDRILL_MCP_URL`/`FIREDRILL_MCP_TOKEN`; host `GMAIL_MCP_PROFILE=google` |
-| Calendar | `GOOGLE_CALENDAR_MCP_URL`/`GOOGLE_CALENDAR_MCP_TOKEN ← FIREDRILL_MCP_URL`/`FIREDRILL_MCP_TOKEN`; host `GOOGLE_CALENDAR_MCP_PROFILE=google` |
+Milestones: M1: core, integrations, database and CLI green on unit,
+integration and CLI E2E. M2: server and UI green on full-stack and Playwright.
+M3: live read-only E2E and polish; done only when `pnpm verify` is fully green
+and live read-only E2E has run.
 
-`ANTHROPIC_API_KEY` passes through from the host. Target:
-`{command:'node', arguments:['dist/cli/main.js','run-task'], bindings:['http','mcp'], output:'json'}`,
-target ID `revenue-desk`. World grants: QuickBooks `customers.post`,
-`invoices.post`, `payments.post`, `invoices.send`, the `*.get` operations and
-`query.run`; **not** the MCP-only `customers.create`/`invoices.create`, which
-collide with Stripe's aliases and take down the whole MCP endpoint.
+## 14. Risks
 
-Composio in simulation becomes Firedrill MCP with Google names, labelled in the
-UI and in `connectionsUsed` as `composio (substituted: mcp)`. PR CI uses path A;
-path B (GitHub App) provides no wire variables.
-
-Platform gaps to report to Codex through `CLAUDE_PROGRESS.md`: catalog HTTP
-connection recipes point at the gateway origin rather than `/v1/wire` plus the
-routing header; the Stripe/QuickBooks MCP alias collision; no wire variables in
-the CI runner; no per-Tool MCP scope; README version drift across Tools.
-
-## 15. Risks
-
-- Composio cannot be simulated faithfully; in Firedrill, Gmail and Calendar
-  switch to Google MCP names, so the tool surface differs from production and
-  must be labelled honestly.
-- The Stripe/QuickBooks `create_customer`/`create_invoice` MCP alias collision
-  can take down every MCP-connected Tool in a world that grants both.
-- The in-process filtering proxy depends on the SDK accepting a hand-built
-  `McpServer` instance with raw JSON-schema handlers (spike S2).
-- Live readiness is limited: only Gmail is active in Composio; Calendar needs
-  reconnecting; there are no HubSpot, QuickBooks, Stripe or Slack credentials;
-  QuickBooks tokens expire hourly; `@hubspot/mcp-server` 0.4.0 is a stale beta
-  and legacy private-app creation ends 2026-10-26.
-- Firedrill Tools serve documented route subsets and differ in behaviour
-  (Slack 4xx vs 200 `ok:false`, HubSpot 200 vs 207, truncated QuickBooks pages,
-  Stripe declines not stored). Tools and fakes must stay inside those subsets
-  and tolerate both behaviours.
-- Business dates: Firedrill worlds use fixed virtual dates while the SDK injects
-  the wall-clock date; `AGENT_BUSINESS_DATE` and QuickBooks company time may
-  conflict with it in aging calculations.
-- AI Elements source targets ai v6 while this repo runs ai v7; issues #484,
-  #490, #439, #496 need owned patches, and a later `shadcn add` can overwrite
-  patches (it prompts first). Registry installs also resolved newer majors than
-  the AI Elements package targets (shiki 4, motion 13, lucide-react 1); they
-  type-check but need runtime verification in W4.
-- In-memory approvals are lost on restart (mitigated by boot expiry and
-  per-step snapshots); CSRF protections are mandatory even on loopback.
-- Headless stdout purity: Composio prints an upgrade banner unless
-  `disableVersionCheck:true`, and any stray `console.log` breaks the one-JSON
-  TargetResult.
-- Cost and nondeterminism: without `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, an isolated
-  `CLAUDE_CONFIG_DIR` and `ENABLE_TOOL_SEARCH=false`, host memory and tool
-  deferral leak into runs. The Sonnet 5 / medium default keeps many-case CI
-  simulations affordable; both are configurable.
-- Vendor churn (Composio 0.19-0.21 shipped breaking changes within four days;
-  Stripe MCP policy changes) requires exact pins and dated fixtures.
-- The native Claude CLI binaries are optional per-platform dependencies; an
+- **Argument validation.** The CLI forwards proxied tool arguments without
+  validation (missing required fields, out-of-range values and undeclared
+  properties all passed in S2), and API-tool zod validation runs only after
+  approval, so a user could approve an invalid financial call. Mitigation: the
+  ajv `PreToolUse` check (§5).
+- **Tool-use id transport.** Idempotency keys and action-log joins depend on
+  the CLI's `_meta["claudecode/toolUseId"]`, an undocumented field. The SDK is
+  pinned; writes fail closed without it; a W1 gate test must assert it on each
+  SDK upgrade.
+- **Server instances per query.** Sharing a gateway instance between two
+  concurrent `query()` calls silently yields no tools; build per query.
+- **In-memory approvals** are lost on restart (mitigated by boot expiry and the
+  approval gate persisting the pending snapshot); CSRF, Origin and Host checks
+  are mandatory even on loopback. The S1 spike routes lack the CSRF cookie and
+  are mounted unconditionally until W3 removes them.
+- **HubSpot MCP 0.4.0** is a stale beta (June 2025); legacy private-app
+  creation ends 2026-10-26; Service Key compatibility is unverified. It imports
+  `zod-to-json-schema` without declaring it, resolving only through pnpm
+  hoisting; the lead should add `pnpm.packageExtensions` for it. Its
+  `import 'dotenv/config'` could redirect the token through a stray `.env`;
+  `launch.ts` points dotenv at the null device and the server runs only through
+  the gateway's stdio transport, never the Claude CLI.
+- **Composio:** Calendar is `needs_auth` for the configured user;
+  `direct_tools` still lists its tools, so availability must come from the
+  probe. The Composio logger is process-wide. Three sessions created by S3
+  were not deleted (they expire). `session.authorize` always starts a new link
+  flow, so it runs only on a click.
+- **Live readiness:** only Gmail is connected in Composio; there are no
+  HubSpot, QuickBooks, Stripe or Slack credentials; QuickBooks access tokens
+  expire hourly.
+- **Business date:** the SDK injects the wall-clock date into a system
+  reminder, which can disagree with `AGENT_BUSINESS_DATE` or QuickBooks company
+  time in aging calculations; the prompt states the business date explicitly.
+- **AI Elements** source targets ai v6 while this repo runs ai v7; #484 and
+  #490 are patched, #439 and #496 remain; a later `shadcn add` can overwrite
+  patches (it prompts first). The spike chunk is 1.48 MB (Streamdown's cjk,
+  math and mermaid plugins, and two shiki versions, 4.4.3 and 3.23.0 via
+  `@streamdown/code`); W4 trims to the code plugin and aligns shiki.
+- **Headless stdout purity:** Composio prints an upgrade banner through its
+  logger unless `disableVersionCheck:true`, and any stray `console.log` breaks
+  `--json`; the stdout guard is installed before imports.
+- **Cost and nondeterminism:** without `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, an
+  isolated `CLAUDE_CONFIG_DIR` and `ENABLE_TOOL_SEARCH=false`, host memory and
+  tool deferral leak into runs. The Sonnet 5 / medium default keeps test and
+  demo runs affordable; both are configurable.
+- **Vendor churn** (Composio 0.19-0.21 shipped breaking changes within four
+  days) requires exact pins and dated fixtures; fakes can drift from vendors.
+- **Native Claude CLI binaries** are optional per-platform dependencies; an
   install with optional dependencies omitted leaves no binary, and the test gate
-  must fail rather than skip. The lockfile records all eight platform packages.
-- TypeScript 7 has no JavaScript compiler API (`typescript` exports only its
-  version). Tools that import the compiler API (typescript-eslint, ts-morph
-  against the project compiler, Vitest typecheck mode) will not work; the
-  fallback is TypeScript 6.0.3 or 5.9.3.
+  fails rather than skips. The lockfile records all eight platform packages.
+- **TypeScript 7** has no JavaScript compiler API; tools that import it
+  (typescript-eslint, ts-morph against the project compiler, Vitest typecheck
+  mode) will not work. Type assertions in tests are checked by `pnpm
+  typecheck` instead. The fallback is TypeScript 6.0.3 or 5.9.3.
+- **Migrations at runtime** are read from `src/db/migrations`, so a built copy
+  needs the source tree beside `dist/` (true for this local-only app).
 
-## Decisions (lead, 2026-09-28)
+## Decisions log
 
-- Name "Revenue Desk", package and future target ID `revenue-desk`; private,
-  unlicensed, local git only.
+**2026-09-28, lead (proposal decisions).**
+
+- Name "Revenue Desk", package `revenue-desk`; private, unlicensed, local git
+  only.
 - Default model `claude-sonnet-5` with effort `medium`, both configurable, no
   silent fallback.
 - Connection mapping: Composio for Gmail and Google Calendar; MCP for HubSpot
@@ -843,7 +959,80 @@ the CI runner; no per-Tool MCP scope; README version drift across Tools.
 - Visual identity as in §9: cool neutrals, ink primary, teal-cyan `#0E7490`,
   Geist Sans/Mono, text labels instead of vendor logos.
 
-## Open questions (still Kiran's)
+**2026-09-28, spike outcomes.**
+
+- **S1 passed** (`795cbd5`): the §6 chunk sequence works through the real
+  `DefaultChatTransport`, the v7 reducer in `useChat` and the server-side
+  reducer; `finish-step` before `tool-approval-request` reduces correctly; the
+  reducer quirks in §6 are recorded. SSE is not buffered by the Vite 8 proxy.
+  shiki 4.4.3, motion 13.4.4 and streamdown 2.6.0 render with no console
+  errors in Chrome 153. `@ai-sdk/react` 4 deprecates `experimental_throttle`
+  for `throttle`.
+- **S2 passed** (`cd8d940`): SDK 0.3.283 accepts a hand-built `McpServer`
+  with raw JSON-schema handlers (no zod fallback needed); proxied schemas reach
+  the Messages API unchanged; `canUseTool` holds writes with no model traffic;
+  reads run concurrently through `canUseTool`; one server instance per
+  `query()`; the argument-validation gap; exact `canUseTool` options, deny and
+  unknown-tool results, message order and result fields are recorded in the
+  S2 transcripts.
+- **S3 passed** (`20ba5c2`): all 13 allowlisted Composio slugs exist and none
+  is deprecated; the session MCP (Streamable HTTP, `backend.composio.dev`,
+  protocol 2025-11-25) lists exactly them; the proxy preserves them;
+  `disableVersionCheck` keeps stdout empty; `allowTracking` is off.
+- **S4 passed** (`c8a52fb`): 0.4.0 lists 21 tools offline with zero network
+  attempts; launch is `process.execPath` plus the resolved bin with an explicit
+  child environment; versions outside 0.4.x are refused.
+
+**2026-09-28, Kiran: scope change.** Build only the agent now.
+**Firedrill integration deferred until Kiran asks:** connecting Revenue Desk
+to Firedrill, simulation and CI start only when Kiran says so. Removed from the
+design: the Firedrill phase-2 plan and every Firedrill rationale, variable and
+open question; the Google-named tool profiles and their fixture
+(`test/fixtures/surfaces/google-mcp.json`, `scripts/surfaces/capture-google-mcp.ts`);
+the Gmail and Calendar MCP overrides (Gmail and Calendar are Composio only);
+the `<X>_API_PROXY_AUTH_HEADER` options; the stdin one-JSON "run-task"
+contract (replaced by the plain `revenue-desk ask` CLI with its own `--json`
+summary); the alias comparison in the HubSpot capture and its tests (the
+HubSpot surface itself stays). Test-harness provenance comments remain.
+
+**2026-09-28, lead: contract decisions.**
+
+- The frozen contracts live in `src/contracts/` (§5) and are checked by
+  `test/unit/contracts.test.ts` against the Agent SDK, the AI SDK and
+  `.env.example`.
+- HubSpot profile: 10 tools; associations are created inline with
+  `hubspot-batch-create-objects`, so `hubspot-batch-create-associations` is not
+  offered (one call per record, one fewer write tool).
+- Every tool has an operation name and base class (§2 tables);
+  `classify()` sets the final class from the complete input.
+- Added variables: `COMPOSIO_BASE_URL`, `HUBSPOT_API_BASE_URL` (ordinary
+  per-integration base URLs, also used by fakes) and `AGENT_SANDBOX` (the
+  labelled demo; refuses non-loopback endpoints).
+- Composio session access is derived from the run's policy
+  (`composioAccessFor`), not from configuration.
+- One state directory and one database for the server and the CLI; per-run
+  databases are dropped. CLI runs show in the app with source `cli`.
+- The CLI's tool-use id arrives as `_meta["claudecode/toolUseId"]` on every
+  tools/call (probed against the real SDK and the mock model on 2026-09-28);
+  `idempotencyKey = sha256hex(runId:toolUseId)`.
+- CSRF: an HttpOnly cookie cannot be echoed by page script, so
+  `GET /api/session` returns the token in JSON and sets the matching cookie;
+  every `/api` request also needs a loopback `Host` (DNS rebinding).
+- Runs outlive HTTP connections: a disconnect detaches a subscriber and never
+  stops the run (the S1 spike denied on disconnect; W3 changes that). Stop is
+  `POST /api/runs/:id/stop` only.
+- `ApprovalGate.open()` persists and registers before `approval.requested` is
+  emitted.
+- Tool decisions add `rejected` (unknown tool or schema-invalid input, before
+  any policy) and `pending`; policy denials map to an automatic approval
+  (`isAutomatic`) so the card can say why.
+- Connection states add `expired` (Composio reports it) and `invalid`
+  (refused configuration, e.g. a live Stripe key).
+- Secrets are `SecretValue` in `AgentEnv` and `ResolvedConnection`.
+- Conversation ids are created by the server (`POST /api/conversations`).
+- `src/db/migrations` is generated and excluded from Biome.
+
+## Open questions (Kiran's)
 
 - Credentials: a Stripe sandbox `sk_test_` key; a HubSpot developer test-account
   private-app token or Service Key; a QuickBooks sandbox access token and realm
@@ -853,10 +1042,7 @@ the CI runner; no per-Tool MCP scope; README version drift across Tools.
   and a $0.50 cap: acceptable, or connect a test Google account first?
 - QuickBooks: automatic OAuth refresh (persisting a rotating refresh token
   locally) or short-lived access tokens only for now?
-- Which policy should Firedrill simulations run under: headless deny-on-ask, or
-  financial auto for refund drills?
 - Licence: stay unlicensed, or apply the older example's Apache-2.0 notice?
-- Before phase 2: has the saved-setup `firedrill run --setup` client shipped?
 
 ## Appendix A. Toolchain record (installed 2026-09-28)
 
@@ -891,9 +1077,10 @@ Playwright browsers are not installed yet.
 
 **Differences from the proposal:** pnpm 9.15.4 instead of 12.6.0 (installed
 version); `engines` `>=22.22.3`; TypeScript 7.0.2 kept after type-check, build,
-tsx, Vite, Vitest, drizzle-kit and the shadcn CLI all ran cleanly with it;
-`@hubspot/mcp-server` and `@anthropic-ai/sdk` added as explicit pins; Biome
-chosen for lint and format; Sonner deferred.
+tsx, Vite, Vitest, drizzle-kit (including `generate` for the first migration)
+and the shadcn CLI all ran cleanly with it; `@hubspot/mcp-server` and
+`@anthropic-ai/sdk` added as explicit pins; Biome chosen for lint and format;
+Sonner deferred.
 
 **shadcn/ui:** CLI 4.21.0, `init --base radix --preset nova --template vite`
 (style `radix-nova`, base colour neutral, CSS variables, lucide). The generated
@@ -923,16 +1110,20 @@ same day:
 | tool | `ac2f38003fe00b0a0b7594bc028f0d6ff09db1a8a79a40bb4fa632565c06194b` |
 
 Installed files equal the registry content apart from shadcn's alias rewrite
-(`@/registry/default/ui/` → `@/components/ui/`), except for this patch:
+(`@/registry/default/ui/` → `@/components/ui/`), except for these patches,
+each marked `revenue-desk patch`:
 
 - `context.tsx`: ai v7 moved `usage.reasoningTokens` to
   `usage.outputTokenDetails.reasoningTokens` and `usage.cachedInputTokens` to
   `usage.inputTokenDetails.cacheReadTokens`; two lines changed so the file
-  type-checks (marked `revenue-desk patch`).
+  type-checks.
+- `confirmation.tsx` (#484, S1): the approval type is
+  `ToolUIPart['approval'] | DynamicToolUIPart['approval']`.
+- `tool.tsx` (#490, S1): `ToolInput` returns null for undefined input and uses
+  `JSON.stringify(...) ?? ''`.
 
-Pending owned patches (W4): `tool.tsx` #490 and restyle; `confirmation.tsx`
-#484; `prompt-input.tsx` #439; `reasoning.tsx` #496; `message.tsx` Streamdown
-plugins trimmed to code only.
+Pending owned patches (W4): `tool.tsx` restyle; `prompt-input.tsx` #439;
+`reasoning.tsx` #496; `message.tsx` Streamdown plugins trimmed to code only.
 
 **Adding more AI Elements:** because `src/` exists (the server), the shadcn CLI
 resolves registry targets to `src/components/ai-elements/`. After each add, move
