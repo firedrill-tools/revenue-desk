@@ -27,7 +27,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",
-    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm test:e2e-cli",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm test:e2e-cli && pnpm test:e2e",
     "cli": "node --import tsx src/cli/main.ts"
   },
   "dependencies": {
