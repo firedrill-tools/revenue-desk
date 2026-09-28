@@ -31,6 +31,7 @@ import {
 import type { JsonObject } from "../../src/contracts/json.js";
 import { ApiToolError, defineApiTool } from "../../src/gateway/api-server.js";
 import type { IntegrationCatalog } from "../../src/gateway/catalog.js";
+import { noteHttpRequest, noteHttpResponse } from "../../src/gateway/http-report.js";
 import type { UpstreamConfig } from "../../src/gateway/mcp-proxy.js";
 
 export const TEST_SETTINGS: WorkspaceSettings = {
@@ -234,6 +235,8 @@ export function testCatalog(options: TestCatalogOptions = {}): IntegrationCatalo
     readOnly: true,
     run: async (args, context) => {
       stripeCalls.push({ tool: "list_charges", args: plain(args), key: context.idempotencyKey });
+      // As the HTTP layer reports a read: its status, no key (src/gateway/http-report.ts).
+      noteHttpResponse(200);
       return {
         data: [
           { id: "ch_1", amount: 4900, currency: "usd", customer: args.customer },
@@ -254,6 +257,9 @@ export function testCatalog(options: TestCatalogOptions = {}): IntegrationCatalo
     readOnly: false,
     run: async (args, context) => {
       stripeCalls.push({ tool: "create_refund", args: plain(args), key: context.idempotencyKey });
+      // As the HTTP layer reports a write: the key it sent and the response's status.
+      noteHttpRequest(context.idempotencyKey);
+      noteHttpResponse(args.charge === "ch_declined" ? 400 : 200);
       if (args.charge === "ch_declined") {
         throw new ApiToolError("stripe", "Charge ch_declined has already been refunded.", {
           status: 400,

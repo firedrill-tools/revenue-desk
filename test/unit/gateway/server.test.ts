@@ -12,6 +12,7 @@ import {
   toolUseIdFromMeta,
   untrackedToolUseId,
 } from "../../../src/gateway/context.js";
+import { noteHttpRequest, noteHttpResponse } from "../../../src/gateway/http-report.js";
 import { createGatewayServer } from "../../../src/gateway/server.js";
 import type {
   ExecutionContext,
@@ -76,6 +77,9 @@ function stripeServer(
     readOnly: false,
     run: async (args, context) => {
       contexts.push({ ...context, signal: context.signal ?? new AbortController().signal });
+      // As Stripe's client reports a write through the HTTP layer.
+      noteHttpRequest(context.idempotencyKey);
+      noteHttpResponse(200);
       return { id: "re_1", charge: args.charge };
     },
   });
@@ -164,7 +168,8 @@ describe("a gateway server", () => {
         truncated: false,
         isError: false,
         error: null,
-        httpStatus: null,
+        httpStatus: 200,
+        idempotencyKey: key,
         durationMs: expect.any(Number),
       },
     ]);

@@ -203,7 +203,7 @@ export function upstreamGatewayTools(
                   message: textOf(result).slice(0, 1_000) || "The tool reported an error.",
                 }
               : null;
-          return { result, error, httpStatus: null };
+          return { result, error, httpStatus: null, idempotencyKey: null };
         } catch (caught) {
           const message = caught instanceof Error ? caught.message : String(caught);
           const failure: ToolFailure = {
@@ -212,7 +212,12 @@ export function upstreamGatewayTools(
             code: "upstream_error",
             message: `The ${descriptor.integration} MCP server failed: ${message}`,
           };
-          return { result: errorResult(failure.message), error: failure, httpStatus: null };
+          return {
+            result: errorResult(failure.message),
+            error: failure,
+            httpStatus: null,
+            idempotencyKey: null,
+          };
         }
       },
     });

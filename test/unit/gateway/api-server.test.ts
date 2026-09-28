@@ -123,6 +123,8 @@ describe("API tools", () => {
       },
       error: failure,
       httpStatus: 400,
+      // The test tool never sent anything over HTTP.
+      idempotencyKey: null,
     });
   });
 

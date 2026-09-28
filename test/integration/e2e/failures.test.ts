@@ -75,6 +75,11 @@ describe("full stack: failures, with the database checked against what happened"
         http_status: 402,
         error_code: "card_declined",
       });
+      // The declined write reached Stripe, so its key is recorded with it.
+      expect(refund.idempotency_key).toBe(
+        harness.fakes.stripe.http.requestsTo("POST", "/v1/refunds")[0]?.headers["idempotency-key"],
+      );
+      expect(refund.idempotency_key).toMatch(/^[0-9a-f]{64}$/);
       expect(refund.error_message).toMatch(/declined/i);
       expect(rows.approval("j2_refund")).toMatchObject({ status: "approved", decided_by: "user" });
     });

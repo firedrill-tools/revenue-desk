@@ -195,6 +195,7 @@ export class QuickBooksClient {
           ...(body === undefined ? {} : { body }),
           retryable: !write,
           signal,
+          idempotencyKey: write ? idempotencyKey : null,
         },
         this.#http,
       );

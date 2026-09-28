@@ -307,12 +307,22 @@ describe("runTurn on the real Claude Agent SDK", () => {
         output: { data: [{ id: "ch_1" }, { id: "ch_2" }] },
         execution: {
           upstreamTool: "GET /v1/charges",
-          httpStatus: null,
-          idempotencyKey: idempotencyKeyFor(turn.runId, "toolu_charges"),
+          // A read reports its status; it sends no idempotency key, so none is recorded.
+          httpStatus: 200,
+          idempotencyKey: null,
         },
       });
-      expect(outputs.get("toolu_crm")?.execution?.upstreamTool).toBe("search_contacts");
-      expect(outputs.get("toolu_mail")?.execution?.upstreamTool).toBe("GMAIL_FETCH_EMAILS");
+      // MCP and Composio calls send no idempotency key and report no HTTP status.
+      expect(outputs.get("toolu_crm")?.execution).toMatchObject({
+        upstreamTool: "search_contacts",
+        httpStatus: null,
+        idempotencyKey: null,
+      });
+      expect(outputs.get("toolu_mail")?.execution).toMatchObject({
+        upstreamTool: "GMAIL_FETCH_EMAILS",
+        httpStatus: null,
+        idempotencyKey: null,
+      });
       expect(outputs.get("toolu_note")?.output).toMatchObject({ note_id: "n_1" });
       expect(outputs.size).toBe(5);
       expect(ofType(events, "approval.requested")).toEqual([]);
@@ -399,7 +409,10 @@ describe("runTurn on the real Claude Agent SDK", () => {
           key,
         },
       ]);
-      expect(ofType(events, "tool.output")[0]?.execution?.idempotencyKey).toBe(key);
+      expect(ofType(events, "tool.output")[0]?.execution).toMatchObject({
+        httpStatus: 200,
+        idempotencyKey: key,
+      });
       expect(ofType(events, "approval.resolved")[0]).toMatchObject({
         approved: true,
         decidedBy: "user",

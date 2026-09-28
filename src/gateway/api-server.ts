@@ -6,6 +6,8 @@
 // before any approval. `run` receives the parsed arguments and the call's
 // ApiCallContext (runId, toolUseId, idempotencyKey, signal); it returns JSON
 // data or throws ApiToolError for a provider error the model should see.
+// Its HTTP exchanges report the provider's status (2xx included) and the
+// idempotency key a write actually sent, for the action log (http-report.ts).
 
 import type { AnyZodRawShape, InferShape } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult, Tool, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
@@ -17,6 +19,7 @@ import type {
   ToolFailure,
 } from "../contracts/integration.js";
 import type { JsonObject } from "../contracts/json.js";
+import { reportingHttp } from "./http-report.js";
 import { errorResult, type GatewayTool, type ToolExecution } from "./types.js";
 
 /** What an API tool's `run` receives besides its arguments: exactly the frozen ApiCallContext. */
@@ -168,24 +171,38 @@ export function apiGatewayTool(
           code: "invalid_arguments",
           message: `Invalid arguments: ${zodIssues(parsed.error)}`,
         };
-        return { result: failureResult(failure), error: failure, httpStatus: null };
+        return {
+          result: failureResult(failure),
+          error: failure,
+          httpStatus: null,
+          idempotencyKey: null,
+        };
       }
-      try {
-        const data = await definition.run(parsed.data as InferShape<AnyZodRawShape>, {
+      // The HTTP layer reports the last status and the key a write sent (http-report.ts).
+      const outcome = await reportingHttp(() =>
+        definition.run(parsed.data as InferShape<AnyZodRawShape>, {
           runId: context.runId,
           toolUseId: context.toolUseId,
           idempotencyKey: context.idempotencyKey,
           signal: context.signal,
-        });
+        }),
+      );
+      const { report } = outcome;
+      if (outcome.ok) {
         return {
-          result: { content: [{ type: "text", text: JSON.stringify(data ?? null) }] },
+          result: { content: [{ type: "text", text: JSON.stringify(outcome.value ?? null) }] },
           error: null,
-          httpStatus: null,
+          httpStatus: report.httpStatus,
+          idempotencyKey: report.idempotencyKey,
         };
-      } catch (error) {
-        const failure = failureOf(descriptor.integration, error);
-        return { result: failureResult(failure), error: failure, httpStatus: failure.status };
       }
+      const failure = failureOf(descriptor.integration, outcome.error);
+      return {
+        result: failureResult(failure),
+        error: failure,
+        httpStatus: failure.status ?? report.httpStatus,
+        idempotencyKey: report.idempotencyKey,
+      };
     },
   };
 }

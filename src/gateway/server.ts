@@ -107,6 +107,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
           message: MISSING_TOOL_USE_ID,
         },
         httpStatus: null,
+        idempotencyKey: null,
       };
     } else {
       notify(() => observer?.callStarted?.(gatewayCall));
@@ -130,6 +131,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
           result: errorResult(message),
           error: { provider: descriptor.integration, status: null, code: null, message },
           httpStatus: null,
+          idempotencyKey: null,
         };
       } finally {
         clearInterval(progress);
@@ -155,6 +157,7 @@ export function createGatewayServer(options: GatewayServerOptions): GatewayServe
         isError: compacted.result.isError === true,
         error,
         httpStatus: execution.httpStatus,
+        idempotencyKey: execution.idempotencyKey,
         durationMs: Math.round(performance.now() - started),
       }),
     );

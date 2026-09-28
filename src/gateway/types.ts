@@ -33,8 +33,10 @@ export type ToolExecution = {
   readonly result: CallToolResult;
   /** Normalised provider error when the call failed. */
   readonly error: ToolFailure | null;
-  /** HTTP status of the provider response, when the executor knows it. */
+  /** HTTP status of the provider's last response (2xx included), when the executor knows it. */
   readonly httpStatus: number | null;
+  /** The idempotency key a write actually sent to the provider; null when none was sent. */
+  readonly idempotencyKey: string | null;
 };
 
 /** One tool a gateway server offers. */
@@ -68,6 +70,8 @@ export type GatewayCallResult = {
   readonly isError: boolean;
   readonly error: ToolFailure | null;
   readonly httpStatus: number | null;
+  /** The idempotency key the call actually sent (only API writes send one). */
+  readonly idempotencyKey: string | null;
   readonly durationMs: number;
 };
 

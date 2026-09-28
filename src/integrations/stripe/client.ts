@@ -130,6 +130,7 @@ export class StripeClient {
           ...(inQuery ? {} : { body: encoded }),
           retryable: !write,
           signal,
+          idempotencyKey: write ? idempotencyKey : null,
         },
         this.#http,
       );

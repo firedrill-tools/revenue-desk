@@ -4,8 +4,13 @@
 //   - reads retry at most twice, only on HTTP 429 (honouring Retry-After) or
 //     on a network error raised before the request reached the server.
 // Provider clients turn the outcome into data or an ApiToolError.
+//
+// Every response's status, and the idempotency key of every write that may
+// have reached the provider, are noted for the action log of the API tool
+// call in progress (src/gateway/http-report.ts).
 
 import type { JsonValue } from "../../contracts/json.js";
+import { noteHttpRequest, noteHttpResponse } from "../../gateway/http-report.js";
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -39,6 +44,8 @@ export type HttpRequest = {
   /** True only for side-effect-free calls. Writes are never retried. */
   readonly retryable: boolean;
   readonly signal: AbortSignal | undefined;
+  /** The idempotency key this request carries (header or query), for the action log. */
+  readonly idempotencyKey?: string | null;
 };
 
 export type HttpResponse = {
@@ -147,6 +154,7 @@ async function attempt(
     request.signal === undefined ? timeout : AbortSignal.any([request.signal, timeout]);
   let response: Response;
   let text: string;
+  const cancelledBeforeSending = request.signal?.aborted === true;
   try {
     response = await fetchImpl(request.url, {
       method: request.method,
@@ -155,8 +163,14 @@ async function attempt(
       signal,
       redirect: "error",
     });
+    noteHttpRequest(request.idempotencyKey);
+    noteHttpResponse(response.status);
     text = await response.text();
   } catch (error) {
+    // A request that may have reached the provider carried its key there.
+    if (!cancelledBeforeSending && !isPreSendNetworkError(error)) {
+      noteHttpRequest(request.idempotencyKey);
+    }
     if (request.signal?.aborted) {
       throw new TransportError("aborted", "The request was cancelled", { cause: error });
     }

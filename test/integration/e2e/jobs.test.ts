@@ -175,8 +175,8 @@ describe("full stack: the jobs, with the database checked against what happened"
         decision: "approved",
         status: "succeeded",
         is_error: 0,
-        // A successful API call records no status; failures record the provider's.
-        http_status: null,
+        // The provider's status, 2xx included, and the key the write sent.
+        http_status: 200,
         idempotency_key: key,
         upstream_tool: "POST /v1/refunds",
       });
@@ -187,6 +187,7 @@ describe("full stack: the jobs, with the database checked against what happened"
         status: "approved",
         decided_by: "user",
       });
+      // An MCP write sends no idempotency key and reports no HTTP status.
       expect(rows.call("j2_note")).toMatchObject({
         integration: "hubspot",
         connection_kind: "mcp",
@@ -195,7 +196,10 @@ describe("full stack: the jobs, with the database checked against what happened"
         action_class: "internal_write",
         decision: "auto",
         status: "succeeded",
+        http_status: null,
+        idempotency_key: null,
       });
+      // Slack has no idempotency key: the post records its status and no key.
       expect(rows.call("j2_post")).toMatchObject({
         integration: "slack",
         connection_kind: "api",
@@ -203,6 +207,8 @@ describe("full stack: the jobs, with the database checked against what happened"
         action_class: "internal_write",
         decision: "auto",
         status: "succeeded",
+        http_status: 200,
+        idempotency_key: null,
       });
       expect(rows.approvals).toHaveLength(1);
       // The refund row's input is what was approved; no key or token was stored.

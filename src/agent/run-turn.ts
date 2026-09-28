@@ -241,7 +241,8 @@ async function execute(
             execution: {
               upstreamTool: result.call.upstreamTool,
               httpStatus: result.httpStatus,
-              idempotencyKey: result.call.idempotencyKey,
+              // Only a write that sent its key to the provider records it.
+              idempotencyKey: result.idempotencyKey,
             },
           });
         }
