@@ -115,19 +115,37 @@ describe("parseApiError", () => {
 });
 
 describe("createApiClient", () => {
-  it("sends GET requests without a body or CSRF header", async () => {
+  it("sends GET requests without a body or CSRF header, after the session sets its cookie", async () => {
     const server = fakeServer(() => json({ items: [], nextCursor: null }));
     const client = createApiClient({ fetch: server.fetch });
     const page = await client.request("GET /api/conversations", {
       query: { q: "kestrel", limit: 10 },
     });
     expect(page.items).toEqual([]);
+    // Every /api read needs the session cookie, which GET /api/session sets.
+    expect(server.requests.map((request) => request.url)).toEqual([
+      "/api/session",
+      "/api/conversations?q=kestrel&limit=10",
+    ]);
     const request = server.requests.at(-1);
-    expect(request?.url).toBe("/api/conversations?q=kestrel&limit=10");
     expect(request?.method).toBe("GET");
     expect(request?.body).toBeNull();
     expect(request?.headers.has(CSRF_HEADER)).toBe(false);
-    expect(server.sessionCount()).toBe(0);
+    expect(server.sessionCount()).toBe(1);
+  });
+
+  it("re-reads the session once when a read finds it stale, and retries the read", async () => {
+    let reads = 0;
+    const server = fakeServer(() => {
+      reads += 1;
+      return reads === 1
+        ? json({ error: { code: "csrf_failed", message: "Stale." } }, 403)
+        : json({ items: [], nextCursor: null });
+    });
+    const client = createApiClient({ fetch: server.fetch });
+    await expect(client.request("GET /api/runs")).resolves.toMatchObject({ items: [] });
+    expect(server.sessionCount()).toBe(2);
+    expect(reads).toBe(2);
   });
 
   it("sends JSON and the session's CSRF token on mutating requests, {} when there is no body", async () => {

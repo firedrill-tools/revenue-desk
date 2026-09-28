@@ -2,10 +2,12 @@
 //
 // - Routes are the contract's "METHOD /path" keys, so a call's params, query,
 //   body and response are all checked against ApiEndpoints.
-// - Every mutating request (POST, PATCH) sends JSON (`{}` when there is no
-//   body) and the per-boot CSRF token from GET /api/session. If the server
-//   restarted, the token is stale: the client re-reads the session once and
-//   retries (docs/ARCHITECTURE.md §7).
+// - Every request waits for GET /api/session first: it sets the per-boot
+//   session cookie that every other /api route, reads included, requires.
+//   Mutating requests (POST, PATCH) also send JSON (`{}` when there is no
+//   body) and the session's CSRF token. If the server restarted, the cookie
+//   and token are stale: the client re-reads the session once and retries
+//   (docs/ARCHITECTURE.md §7).
 // - Errors become ApiError with the contract's code and a plain message.
 //
 // Alias-free and DOM-free so the Node test suite can import it.
@@ -169,8 +171,9 @@ export type ApiClient = {
   session(): Promise<SessionInfo>;
   refreshSession(): Promise<SessionInfo>;
   /**
-   * fetch with the CSRF header added to mutating requests and one retry after
-   * a stale token. The chat transport uses it for POST /api/chat.
+   * fetch after the session is loaded (its cookie), with the CSRF header on
+   * mutating requests and one retry after a stale session. The chat transport
+   * uses it for POST /api/chat and the stream resume.
    */
   fetchWithCsrf(input: FetchInput, init?: RequestInit): Promise<Response>;
 };
@@ -234,10 +237,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     return session();
   }
 
-  async function withCsrf(init: RequestInit | undefined): Promise<RequestInit> {
+  /** The request with the session loaded (so its cookie is set) and, for a mutation, its token. */
+  async function withSession(
+    init: RequestInit | undefined,
+    mutating: boolean,
+  ): Promise<RequestInit> {
     const { csrfToken } = await session();
     const headers = new Headers(init?.headers);
-    headers.set(CSRF_HEADER, csrfToken);
+    if (mutating) headers.set(CSRF_HEADER, csrfToken);
     return { ...init, headers, credentials: init?.credentials ?? "same-origin" };
   }
 
@@ -248,12 +255,11 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   }
 
   async function fetchWithCsrf(input: FetchInput, init?: RequestInit): Promise<Response> {
-    const method = (init?.method ?? "GET").toUpperCase();
-    if (!MUTATING.has(method)) return doFetch(input, init);
-    const first = await doFetch(input, await withCsrf(init));
+    const mutating = MUTATING.has((init?.method ?? "GET").toUpperCase());
+    const first = await doFetch(input, await withSession(init, mutating));
     if (!(await isStaleCsrf(first))) return first;
     await refreshSession();
-    return doFetch(input, await withCsrf(init));
+    return doFetch(input, await withSession(init, mutating));
   }
 
   async function request<R extends ApiRoute>(

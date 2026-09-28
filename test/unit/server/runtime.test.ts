@@ -100,7 +100,11 @@ describe("startServer", () => {
     );
 
     await expect.poll(() => integrations.probeCalls.get("stripe")).toBe(1);
-    const connections = (await (await fetch(`${server.url}/api/connections`)).json()) as {
+    const session = await fetch(`${server.url}/api/session`);
+    const cookie = (session.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const connections = (await (
+      await fetch(`${server.url}/api/connections`, { headers: { cookie } })
+    ).json()) as {
       items: ConnectionView[];
     };
     expect(connections.items.find((item) => item.integration === "stripe")?.state).toBe(

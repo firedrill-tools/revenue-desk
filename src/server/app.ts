@@ -15,7 +15,7 @@ import { registerConversationRoutes } from "./routes/conversations.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { healthResponse, registerSessionRoutes } from "./routes/session.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
-import { apiGuard, createSessionSecrets } from "./security.js";
+import { apiGuard, createSessionSecrets, securityHeaders } from "./security.js";
 import type { ApiServices } from "./services.js";
 
 export interface AppOptions {
@@ -45,6 +45,7 @@ export function createApp(options: AppOptions): Hono {
     return apiError(c, "internal", "The server could not handle this request.");
   });
 
+  app.use("*", securityHeaders());
   app.use("/api/*", apiGuard(api?.secrets ?? createSessionSecrets()));
   app.get(API_PATHS.health, (c) => c.json(healthResponse(options.version)));
 

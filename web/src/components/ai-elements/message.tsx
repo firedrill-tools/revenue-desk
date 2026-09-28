@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { codeHighlighter } from "@/lib/highlight";
+import { SAFE_COMPONENTS, SAFE_REHYPE_PLUGINS } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
@@ -329,6 +330,9 @@ const streamdownControls = {
   mermaid: false,
 } as const;
 
+// revenue-desk patch: model text never renders an image, so a reply cannot
+// make the browser fetch a URL (web/src/lib/markdown.ts). Set after the
+// props, so a caller cannot turn it back on.
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown
@@ -340,6 +344,8 @@ export const MessageResponse = memo(
       lineNumbers={false}
       plugins={streamdownPlugins}
       {...props}
+      components={{ ...props.components, ...SAFE_COMPONENTS }}
+      rehypePlugins={SAFE_REHYPE_PLUGINS}
     />
   ),
   (prevProps, nextProps) =>

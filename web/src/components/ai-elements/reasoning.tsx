@@ -7,6 +7,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { codeHighlighter } from "@/lib/highlight";
+import { SAFE_COMPONENTS, SAFE_REHYPE_PLUGINS } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import { ChevronDownIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
@@ -221,7 +222,14 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Streamdown controls={false} lineNumbers={false} plugins={streamdownPlugins}>
+      {/* revenue-desk patch: no images in model text (web/src/lib/markdown.ts). */}
+      <Streamdown
+        components={SAFE_COMPONENTS}
+        controls={false}
+        lineNumbers={false}
+        plugins={streamdownPlugins}
+        rehypePlugins={SAFE_REHYPE_PLUGINS}
+      >
         {children}
       </Streamdown>
     </CollapsibleContent>

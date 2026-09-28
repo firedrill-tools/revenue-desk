@@ -606,7 +606,7 @@ export type TestServer = {
   readonly gate: ApiServices["approvals"];
   readonly integrations: FakeIntegrations;
   readonly logs: string[];
-  /** A request with a loopback Host and, for mutations, the session cookie, CSRF token and JSON. */
+  /** A request with a loopback Host and the session cookie, plus the CSRF token and JSON for mutations. */
   request(
     method: string,
     path: string,
@@ -660,7 +660,9 @@ export function createTestServer(options: TestServerOptions = {}): TestServer {
     return app.request(`${ORIGIN}${path}`, {
       method,
       headers: {
-        ...(mutating ? { ...sessionHeaders, "content-type": "application/json" } : { host: HOST }),
+        ...(mutating
+          ? { ...sessionHeaders, "content-type": "application/json" }
+          : { host: HOST, cookie: sessionHeaders.cookie }),
         ...headers,
       },
       ...(mutating ? { body: body === undefined ? "{}" : JSON.stringify(body) } : {}),

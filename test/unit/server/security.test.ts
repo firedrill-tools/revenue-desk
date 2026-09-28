@@ -159,6 +159,39 @@ describe("mutating requests", () => {
   });
 });
 
+describe("reads", () => {
+  it("need the session cookie: conversations and runs hold email bodies and invoices", async () => {
+    const server = createTestServer();
+    const conversation = { id: await server.createConversation("Private") };
+    for (const path of [
+      "/api/conversations",
+      `/api/conversations/${conversation.id}`,
+      "/api/runs",
+      "/api/runs/r_unknown",
+      `/api/chat/${conversation.id}/stream`,
+      "/api/connections",
+      "/api/settings",
+      "/api/policies",
+    ]) {
+      for (const cookie of ["", `${SESSION_COOKIE}=forged`]) {
+        const response = await server.request("GET", path, undefined, { cookie });
+        expect(response.status, `${path} ${cookie}`).toBe(403);
+        expect(await errorCode(response)).toBe("csrf_failed");
+      }
+    }
+    const allowed = await server.request("GET", `/api/conversations/${conversation.id}`);
+    expect(allowed.status).toBe(200);
+  });
+
+  it("of health and the session itself need no cookie", async () => {
+    const server = createTestServer();
+    for (const path of ["/api/health", "/api/session"]) {
+      const response = await server.request("GET", path, undefined, { cookie: "" });
+      expect(response.status, path).toBe(200);
+    }
+  });
+});
+
 describe("GET /api/session", () => {
   it("sets the HttpOnly SameSite=Strict cookie and returns the matching token", async () => {
     const server = createTestServer({ runtime: { sandbox: true } });

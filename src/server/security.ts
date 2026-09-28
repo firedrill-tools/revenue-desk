@@ -5,14 +5,17 @@
 //   port), so a DNS-rebinding page cannot reach the API under its own name;
 // - GET /api/session sets the per-boot HttpOnly, SameSite=Strict cookie and
 //   returns the matching CSRF token in JSON, which other origins cannot read;
-// - every mutating request needs a same-origin Origin when one is sent (and
-//   no cross-site Sec-Fetch-Site), Content-Type application/json, the cookie
-//   and the token in x-rd-csrf.
+// - every other request, reads included, needs that cookie: conversations
+//   and runs hold email bodies, invoices and charges, and a page on another
+//   localhost port is same-site, so the cookie is the proof of this app;
+// - every mutating request also needs a same-origin Origin when one is sent
+//   (and no cross-site Sec-Fetch-Site), Content-Type application/json and the
+//   token in x-rd-csrf.
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { CSRF_HEADER, SESSION_COOKIE } from "../contracts/api.js";
+import { API_PATHS, CSRF_HEADER, SESSION_COOKIE } from "../contracts/api.js";
 import { apiError } from "./http.js";
 
 export type SessionSecrets = {
@@ -42,6 +45,8 @@ export function requestHost(c: Context): string {
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+/** The only /api routes that answer without the session cookie: they hold no data. */
+const OPEN_PATHS = new Set<string>([API_PATHS.health, API_PATHS.session]);
 const JSON_CONTENT_TYPE = /^application\/json\s*(?:;|$)/i;
 
 function sameValue(actual: string | undefined, expected: string): boolean {
@@ -68,6 +73,14 @@ export function apiGuard(secrets: SessionSecrets): MiddlewareHandler {
     if (!isLoopbackHostHeader(host)) {
       return apiError(c, "forbidden_origin", "The API answers only on a loopback host name.");
     }
+    if (OPEN_PATHS.has(c.req.path)) return next();
+    if (!sameValue(getCookie(c, SESSION_COOKIE), secrets.sessionId)) {
+      return apiError(
+        c,
+        "csrf_failed",
+        "The session is missing or stale; reload the page to get a new one.",
+      );
+    }
     if (SAFE_METHODS.has(c.req.method)) return next();
 
     const origin = c.req.header("origin");
@@ -85,10 +98,7 @@ export function apiGuard(secrets: SessionSecrets): MiddlewareHandler {
         "Send the request body as application/json (use {} when there is none).",
       );
     }
-    if (
-      !sameValue(getCookie(c, SESSION_COOKIE), secrets.sessionId) ||
-      !sameValue(c.req.header(CSRF_HEADER), secrets.csrfToken)
-    ) {
+    if (!sameValue(c.req.header(CSRF_HEADER), secrets.csrfToken)) {
       return apiError(
         c,
         "csrf_failed",
@@ -96,6 +106,42 @@ export function apiGuard(secrets: SessionSecrets): MiddlewareHandler {
       );
     }
     return next();
+  };
+}
+
+/**
+ * The page's Content-Security-Policy. Model text is rendered without images
+ * (web/src/lib/markdown.ts); this is the second barrier: the browser loads
+ * scripts, styles, fonts and images only from this origin (images also from
+ * data: URLs the app itself makes), connects only to it, and is never framed.
+ * Inline styles stay allowed for the component library.
+ */
+export const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+/** Security headers on every response (the SPA and /api). */
+export function securityHeaders(): MiddlewareHandler {
+  return async (c, next) => {
+    await next();
+    const headers = c.res.headers;
+    try {
+      headers.set("content-security-policy", CONTENT_SECURITY_POLICY);
+      headers.set("x-content-type-options", "nosniff");
+      headers.set("referrer-policy", "no-referrer");
+      headers.set("x-frame-options", "DENY");
+    } catch {
+      // An immutable Response (none of the app's own) keeps its headers.
+    }
   };
 }
 

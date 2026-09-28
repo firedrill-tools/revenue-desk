@@ -38,6 +38,10 @@ async function openSession(baseUrl: string) {
         ...extra,
       };
     },
+    /** A read: the cookie only, as a browser sends it. */
+    get(path: string) {
+      return fetch(`${baseUrl}${path}`, { headers: { cookie } });
+    },
     post(path: string, body: unknown, extra: Record<string, string> = {}, signal?: AbortSignal) {
       return fetch(`${baseUrl}${path}`, {
         method: "POST",
@@ -178,7 +182,10 @@ describe("full stack: the HTTP layer over a real loopback port", () => {
       const requestsAtApproval = agentRequests(harness.model).length;
 
       // 2. The run outlives the connection and waits for the decision.
-      const waiting = await fetch(`${baseUrl}/api/conversations/${conversation.id}`);
+      const waiting = await tab.get(`/api/conversations/${conversation.id}`);
+      // Reads need the session cookie too: conversations hold email bodies and invoices.
+      const anonymous = await fetch(`${baseUrl}/api/conversations/${conversation.id}`);
+      expect(anonymous.status).toBe(403);
       const detail = (await waiting.json()) as {
         conversation: { status: string; activeRunId: string | null };
         pendingApprovals: { id: string }[];
@@ -222,7 +229,7 @@ describe("full stack: the HTTP layer over a real loopback port", () => {
       expect(agentRequests(harness.model)).toHaveLength(requestsAtApproval);
 
       // 4. A second client reconnects: the replay starts at the assistant message.
-      const reconnect = await fetch(`${baseUrl}/api/chat/${conversation.id}/stream`);
+      const reconnect = await tab.get(`/api/chat/${conversation.id}/stream`);
       expect(reconnect.status).toBe(200);
       expect(reconnect.headers.get(UI_MESSAGE_STREAM_HEADER)).toBe("v1");
       let decided: Response | null = null;
@@ -256,9 +263,10 @@ describe("full stack: the HTTP layer over a real loopback port", () => {
       expect(await again.json()).toMatchObject({ error: { code: "already_decided" } });
 
       // 5. The persisted message equals what the reconnected client rendered.
-      const final = (await (
-        await fetch(`${baseUrl}/api/conversations/${conversation.id}`)
-      ).json()) as { conversation: { status: string }; messages: ChatUIMessage[] };
+      const final = (await (await tab.get(`/api/conversations/${conversation.id}`)).json()) as {
+        conversation: { status: string };
+        messages: ChatUIMessage[];
+      };
       const rendered = await reduce(replay.chunks);
       expect(final.messages.at(-1)?.parts).toEqual(rendered?.parts);
       expect(final.conversation.status).toBe("idle");
@@ -270,7 +278,7 @@ describe("full stack: the HTTP layer over a real loopback port", () => {
       expect(harness.fakes.stripe.writes().map((write) => write.idempotencyKey)).toEqual([
         expectedIdempotencyKey(runId, "toolu_j2_refund"),
       ]);
-      const idle = await fetch(`${baseUrl}/api/chat/${conversation.id}/stream`);
+      const idle = await tab.get(`/api/chat/${conversation.id}/stream`);
       expect(idle.status).toBe(204);
     } finally {
       await harness.close();

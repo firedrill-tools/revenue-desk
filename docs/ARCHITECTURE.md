@@ -561,9 +561,16 @@ already decided), the timeout (deny, `timeout`), or Stop (deny with
   - `GET /api/session` sets the per-boot cookie `rd_session` (HttpOnly,
     `SameSite=Strict`, `Path=/api`) and returns the matching `csrfToken` in its
     JSON body, which other origins cannot read.
-  - Every mutating route (POST, PATCH) requires a same-origin `Origin` when
-    one is sent, `Content-Type: application/json` (send `{}` when there is no
-    body), the cookie, and `x-rd-csrf` equal to the token.
+  - Every other `/api` route, reads included, requires the cookie
+    (conversations and runs hold email bodies, invoices and charges).
+  - Every mutating route (POST, PATCH) also requires a same-origin `Origin`
+    when one is sent, `Content-Type: application/json` (send `{}` when there
+    is no body), and `x-rd-csrf` equal to the token.
+  - Every response carries a Content-Security-Policy (`default-src 'self'`,
+    `img-src 'self' data:`, `connect-src 'self'`, `frame-ancestors 'none'`),
+    and model text renders no images (`web/src/lib/markdown.ts`). The Vite
+    dev server has `cors: false` and serves only `web/`, `src/contracts` and
+    `node_modules`.
   - One active run per conversation (409 `run_active`); at most 4 concurrent
     runs (429 `too_many_runs`).
 
@@ -1128,6 +1135,13 @@ HubSpot surface itself stays). Test-harness provenance comments remain.
   `0004`, Settings › Internal domains and calendars) are internal calendars;
   group calendars are outbound until listed. Cards write the time with its
   weekday in the event's zone and say in words who Google emails.
+
+- **No fetch from model text.** A Markdown or HTML image in a reply or in
+  reasoning would make the browser request its URL (data in the query) with
+  no approval: images render as their alt text, Streamdown's harden step
+  allows no image source, and every response has a CSP. Reads need the
+  session cookie, and `pnpm dev`'s Vite server sends no CORS headers and
+  denies files outside the web app (it served the SQLite database before).
 
 **Integration follow-ups (open).**
 

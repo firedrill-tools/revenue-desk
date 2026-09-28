@@ -255,10 +255,16 @@ and the class's mode decides what happens:
   secret values and token shapes (`Bearer …`, `sk_`, `rk_`, `xox…`, `pat-`)
   from logs, stored rows, streamed output and CLI output.
 - **Local only.** The server binds to 127.0.0.1 and refuses requests whose
-  `Host` is not loopback. Changing requests need the per-session cookie, a
-  matching `x-rd-csrf` header and `Content-Type: application/json`, and are
-  refused when the browser sends a foreign `Origin`. One run at a time per
-  conversation, at most four at once.
+  `Host` is not loopback. Every `/api` request except `/api/health` and
+  `/api/session` needs the per-session cookie, reads included. Changing
+  requests also need a matching `x-rd-csrf` header and
+  `Content-Type: application/json`, and are refused when the browser sends a
+  foreign `Origin`. Pages carry a Content-Security-Policy that lets the
+  browser load and connect only to Revenue Desk itself, and the agent's
+  replies never render images, so text the model repeats cannot make the
+  browser fetch a URL. Under `pnpm dev`, Vite sends no CORS headers and serves
+  only the web app, the shared contracts and dependencies, never `./data`.
+  One run at a time per conversation, at most four at once.
 - **Composio** sign-in starts only from a click on Connect. Composio sessions
   offer outbound Gmail and Calendar tools only when the policy does not deny
   outbound actions.
