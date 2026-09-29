@@ -1,4 +1,4 @@
-// Read-only check of the HubSpot MCP connection: start or reach the server,
+// Read-only check of the HubSpot MCP connection: start the pinned server,
 // confirm it lists every tool of the hubspot-mcp-0.4 profile, then call
 // hubspot-get-user-details (a read) to prove the token works.
 
@@ -25,9 +25,7 @@ export type HubSpotProbeDeps = {
 const USER_DETAILS = "hubspot-get-user-details";
 
 function secretsOf(connection: HubSpotConnection): string[] {
-  const mcp = connection.mcp;
-  if (mcp.transport === "stdio") return [mcp.accessToken.reveal()];
-  return mcp.token === null ? [] : [mcp.token.reveal()];
+  return [connection.mcp.accessToken.reveal()];
 }
 
 function textOf(content: unknown): string {

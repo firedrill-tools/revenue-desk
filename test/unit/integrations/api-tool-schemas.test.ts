@@ -26,9 +26,8 @@ const stripe: StripeConnection = {
   integration: "stripe",
   kind: "api",
   profile: "stripe-api",
-  endpointLabel: "api.stripe.test",
+  endpointLabel: "api.stripe.com",
   api: {
-    baseUrl: "https://api.stripe.test",
     secretKey: secret("sk_test_schemas"),
     keyMode: "test",
     apiVersion: null,

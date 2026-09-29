@@ -18,7 +18,6 @@ import { createStripeTools } from "./tools.js";
 
 export function stripeClientFor(connection: StripeConnection, http?: HttpDeps): StripeClient {
   return new StripeClient({
-    baseUrl: connection.api.baseUrl,
     secretKey: connection.api.secretKey,
     apiVersion: connection.api.apiVersion,
     allowLive: connection.api.keyMode === "live",

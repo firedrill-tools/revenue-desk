@@ -36,7 +36,11 @@ export function resolveModelSettings(input: {
   };
 }
 
-/** YYYY-MM-DD of `now` in an IANA time zone. Throws RangeError for an unknown zone. */
+/**
+ * YYYY-MM-DD of `now` in an IANA time zone. The business date a run states
+ * as today is always this, in the workspace time zone; there is no
+ * override. Throws RangeError for an unknown zone.
+ */
 export function dateInTimeZone(now: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -47,9 +51,4 @@ export function dateInTimeZone(now: Date, timeZone: string): string {
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((candidate) => candidate.type === type)?.value ?? "";
   return `${part("year")}-${part("month")}-${part("day")}`;
-}
-
-/** AGENT_BUSINESS_DATE when set, otherwise today in the workspace time zone. */
-export function resolveBusinessDate(env: AgentEnv, timeZone: string, now = new Date()): string {
-  return env.runtime.businessDate ?? dateInTimeZone(now, timeZone);
 }

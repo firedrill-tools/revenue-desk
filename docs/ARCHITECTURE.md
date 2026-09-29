@@ -8,12 +8,13 @@ target; implementation status is tracked in §13, not implied by the text.
 
 Current state (2026-09-29): **integrated; milestone M3 met; QuickBooks and
 Slack moved to Composio; no mocking or simulation in the product or its
-tests** (Kiran's mapping: Composio for Gmail, Google Calendar, QuickBooks and
-Slack, MCP for HubSpot, API for Stripe; decisions log). `pnpm start` and
-`pnpm dev` serve the full `/api` and the app, and the CLI runs against the
-shared database. `pnpm verify` (typecheck, lint, 900 unit and integration
-tests, the build, 18 tests of the built CLI and 29 Playwright tests against
-the real app with one skipped) is green. The live suites run against the
+tests; vendor hosts pinned, so no configuration can point Revenue Desk at
+another server** (Kiran's mapping: Composio for Gmail, Google Calendar,
+QuickBooks and Slack, MCP for HubSpot, API for Stripe; decisions log).
+`pnpm start` and `pnpm dev` serve the full `/api` and the app, and the CLI
+runs against the shared database. `pnpm verify` (typecheck, lint, 905 unit
+and integration tests, the build, 18 tests of the built CLI and 29
+Playwright tests against the real app with one skipped) is green. The live suites run against the
 real model and accounts: Gmail and Stripe (test mode) are read live;
 Calendar, QuickBooks and Slack are not connected in Composio for the
 configured user and HubSpot has no token, so they have not run against a real
@@ -26,17 +27,20 @@ decisions log.
   ordinary production agent against the real services; nothing in the
   product is mocked or simulated. Connection mapping: **Composio** for every
   system Composio supports (Gmail, Google Calendar, QuickBooks Online,
-  Slack), **MCP** for HubSpot (the official `@hubspot/mcp-server` over stdio
-  with `HUBSPOT_ACCESS_TOKEN`, or any HTTP MCP URL) and the **REST API** for
-  Stripe (a test-mode key; live keys refused unless explicitly allowed).
-  Tests are to prove real behaviour; connecting Revenue Desk to any external
-  test or simulation platform is out of scope until Kiran asks.
+  Slack), **MCP** for HubSpot (always the official, pinned
+  `@hubspot/mcp-server` 0.4.x over stdio with `HUBSPOT_ACCESS_TOKEN`) and
+  the **REST API** for Stripe (a test-mode key; live keys refused unless
+  explicitly allowed). The product must not be able to point at a fake: no
+  configuration chooses where a service is reached (§3). Tests are to prove
+  real behaviour; connecting Revenue Desk to any external test or
+  simulation platform is out of scope until Kiran asks.
 - **Location and distribution.** `repositories/revenue-desk` in this
   workspace, pushed to a private GitHub repository (`origin`). `package.json`
   has `"private": true`; there is no licence file until Kiran decides.
-- **Configuration is ordinary.** Each integration has its own base URL and
-  credential variables (§3). There are no adapter-specific variables or
-  output contracts.
+- **Configuration supplies credentials, never hosts.** Each integration has
+  its own credential variables (§3); the vendor hosts are constants in
+  `src/integrations/shared/vendors.ts`. There are no adapter-specific
+  variables or output contracts.
 - **Patterns reused** from `../gmail-agent`: the Composio session MCP
   (`src/composio.ts`), `canUseTool` approvals and SDK options (`src/agent.ts`),
   and the SQLite action log (`src/db.ts`).
@@ -106,11 +110,11 @@ a missing record or an unavailable integration.
 
 | Integration | Kind | Production endpoint and auth |
 |---|---|---|
-| Gmail | **Composio** | Composio session MCP: `sessions.create(userId, {toolkits, tools:{<toolkit>:{enable:[…]}}, sessionPreset:'direct_tools', manageConnections:false, sandbox:{enable:false}, mcp:true})`. Composio manages the Google OAuth. |
+| Gmail | **Composio** | Composio session MCP from the pinned `https://backend.composio.dev`: `sessions.create(userId, {toolkits, tools:{<toolkit>:{enable:[…]}}, sessionPreset:'direct_tools', manageConnections:false, sandbox:{enable:false}, mcp:true})`. Composio manages the Google OAuth. |
 | Google Calendar | **Composio** | The same session, `googlecalendar` toolkit. |
 | QuickBooks Online | **Composio** | The same session, `quickbooks` toolkit. Composio-managed OAuth (Intuit): the managed Intuit app connects a real or trial QuickBooks Online company. Composio's QuickBooks auth scheme has a Base URL field (production by default); an Intuit sandbox company needs an Intuit developer app with Development keys as a Composio auth config, which Revenue Desk does not select yet (§14). |
 | Slack | **Composio** | The same session, `slack` toolkit. Composio-managed OAuth with user scopes: posts appear as the person who connected. |
-| HubSpot | **MCP** | Default: `@hubspot/mcp-server` 0.4.0 over stdio with `HUBSPOT_ACCESS_TOKEN`. Alternative: any Streamable HTTP MCP via `HUBSPOT_MCP_URL`/`HUBSPOT_MCP_TOKEN`. |
+| HubSpot | **MCP** | Always `@hubspot/mcp-server` 0.4.0 (0.4.x only) over stdio with `HUBSPOT_ACCESS_TOKEN`, calling its default `https://api.hubspot.com` (never given `BASE_URL_OVERRIDE`). There is no other transport. |
 | Stripe | **API** | REST `https://api.stripe.com/v1/*`, form-encoded, `Authorization: Bearer sk_test_…`, `Idempotency-Key` on writes. |
 
 Result: four Composio, one MCP, one API integration (`INTEGRATIONS` in
@@ -125,7 +129,9 @@ MCP and API for one or two others. Why each kind:
   sign-in. On 2026-09-29 Gmail was connected for the configured user; Google
   Calendar, QuickBooks and Slack were not (`needs_auth`).
 - **HubSpot through MCP:** HubSpot publishes an official MCP server, so the MCP
-  path runs a real vendor server. Any Streamable HTTP MCP server can replace it.
+  path runs a real vendor server, and it is the only HubSpot server Revenue
+  Desk runs (the `HUBSPOT_MCP_URL` alternative was removed; decisions log,
+  "vendor hosts pinned").
 - **Stripe through its REST API:** direct REST with a test-mode key,
   idempotency keys on writes and documented error envelopes.
 
@@ -221,11 +227,9 @@ workflows, links, feedback) are not offered.
 - **Owners lookup.** Input: `owner_id` (digits), or a list filtered by exact
   `email`, `limit` 1–500 (default 100) and the `after` cursor; output: id,
   name, email, user id, archived and teams, plus `next_after`. It uses the
-  stdio connection's credential: `HUBSPOT_ACCESS_TOKEN` as a Bearer token to
-  `HUBSPOT_API_BASE_URL` (default `https://api.hubspot.com`), exactly where
-  the stdio server sends its own requests. With `HUBSPOT_MCP_URL` Revenue
-  Desk holds only the MCP server's token, so the tool is not offered and the
-  profile has 10 tools. The action log records it under HubSpot with
+  MCP server's credential, `HUBSPOT_ACCESS_TOKEN`, as a Bearer token to
+  HubSpot's REST API at the pinned `https://api.hubapi.com`, and is always
+  offered. The action log records it under HubSpot with
   `connection_kind` `mcp` (the integration's kind), `upstream_tool`
   `GET /crm/v3/owners` and the HTTP status.
 
@@ -341,31 +345,46 @@ unit test keeps them equal. The config layer (`src/config/env.ts`, W1) reads
 - **Runtime:** `PORT` (4320; the server always binds to 127.0.0.1),
   `AGENT_STATE_DIR` (`./data`, git-ignored, shared by server and CLI),
   `AGENT_POLICY` (JSON modes per action class; those classes are locked in the
-  app), `AGENT_BUSINESS_DATE` (YYYY-MM-DD the agent treats as today; default
-  today in the workspace time zone; useful for reproducible tests and demos),
-  `AGENT_APPROVAL_TIMEOUT_MS` (900000), `DOTENV_PATH`.
+  app), `AGENT_APPROVAL_TIMEOUT_MS` (900000), `DOTENV_PATH`. The business
+  date is always today in the workspace time zone (Settings; UTC when the
+  stored zone is unusable); there is no override.
 - **Composio:** `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID` (from configuration
-  only; **there is no default user id in code**), `COMPOSIO_BASE_URL`
-  (default `https://backend.composio.dev`). Missing key or user id make Gmail,
-  Calendar, QuickBooks and Slack `not_configured`. Each is then connected
-  (or not) per toolkit in Composio; the check reports `needs_auth` or
-  `expired` for one nobody signed in to.
-- **HubSpot:** `HUBSPOT_MCP_URL` (+ optional `HUBSPOT_MCP_TOKEN`) selects any
-  Streamable HTTP MCP server. Otherwise stdio: `HUBSPOT_ACCESS_TOKEN` is passed
-  to the child as `PRIVATE_APP_ACCESS_TOKEN` in an explicit child environment,
-  and `HUBSPOT_API_BASE_URL` becomes its `BASE_URL_OVERRIDE`. The command is
-  always `process.execPath` plus the resolved
-  `@hubspot/mcp-server` bin; never `npx` at runtime. The owners lookup
-  (§2) sends the same token to `HUBSPOT_API_BASE_URL` (default
-  `https://api.hubspot.com`) and exists only with the stdio server.
+  only; **there is no default user id in code**). The API host is the pinned
+  `https://backend.composio.dev`, passed to the SDK explicitly, so the SDK's
+  own `COMPOSIO_BASE_URL` lookup and its CLI user config file cannot
+  redirect it. Missing key or user id make Gmail, Calendar, QuickBooks and
+  Slack `not_configured`. Each is then connected (or not) per toolkit in
+  Composio; the check reports `needs_auth` or `expired` for one nobody
+  signed in to.
+- **HubSpot:** `HUBSPOT_ACCESS_TOKEN` only. The pinned `@hubspot/mcp-server`
+  0.4.x always runs over stdio: the token is passed to the child as
+  `PRIVATE_APP_ACCESS_TOKEN` in an explicit child environment that never
+  holds `BASE_URL_OVERRIDE`, so the server calls its default
+  `https://api.hubspot.com`, and its `.env` lookup points at the null
+  device. The command is always `process.execPath` plus the resolved
+  `@hubspot/mcp-server` bin; never `npx` at runtime. The owners lookup (§2)
+  sends the same token to `https://api.hubapi.com`.
 - **Stripe:** `STRIPE_SECRET_KEY` (keys starting `sk_live_`/`rk_live_` are
-  refused, state `invalid`, unless `ALLOW_LIVE_STRIPE=1`), `STRIPE_API_BASE_URL`
-  (`https://api.stripe.com`), `STRIPE_API_VERSION`.
+  refused, state `invalid`, unless `ALLOW_LIVE_STRIPE=1`),
+  `STRIPE_API_VERSION`. Requests go to the pinned `https://api.stripe.com`.
 - **QuickBooks and Slack** have no variables of their own: they are Composio
   toolkits (the `QBO_*` and `SLACK_*` variables were removed on 2026-09-29).
-- **Base URLs** must be HTTPS and may contain a path prefix; clients join
-  paths without dropping it. The one exception is `HUBSPOT_MCP_URL`, which may
-  be plain HTTP on a loopback host (an MCP server run on this machine).
+- **Vendor hosts are pinned, not configured** (`src/integrations/shared/vendors.ts`):
+  Composio `https://backend.composio.dev`, Stripe `https://api.stripe.com`,
+  HubSpot's MCP server its own default `https://api.hubspot.com`, the
+  owners lookup `https://api.hubapi.com`. No variable, setting or request
+  can change them. As defence in depth, a Composio session MCP URL or
+  Connect sign-in link that is not HTTPS on a public host is refused before
+  anything connects to it or the browser is sent to it (`checkVendorUrl`,
+  `src/integrations/shared/url.ts`): loopback, `*.localhost`, `*.local`,
+  `*.internal`, a single-label name, or a private, shared, link-local or
+  otherwise non-public IPv4 or IPv6 address (IPv4 inside IPv6 included). It
+  judges the host as written and does not resolve names.
+- **Removed on 2026-09-29 (vendor hosts pinned):** `COMPOSIO_BASE_URL`,
+  `STRIPE_API_BASE_URL`, `HUBSPOT_API_BASE_URL`, `HUBSPOT_MCP_URL` and
+  `HUBSPOT_MCP_TOKEN` (with HubSpot's Streamable HTTP transport and the
+  loopback-HTTP exception of the base URL check), and `AGENT_BUSINESS_DATE`.
+  They are not read; set, they change nothing.
 - **Passthrough:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and
   `CLAUDE_CODE_MAX_RETRIES` are forwarded to the Claude CLI child when set
   (`SDK_CHILD_PASSTHROUGH_VARS`); they are not app configuration.
@@ -482,8 +501,8 @@ integrations and, for each, builds **one in-process MCP server per
 serves one query at a time; two concurrent queries sharing one silently get
 no tools.
 
-- **MCP and Composio:** `connectUpstream` (Streamable HTTP or stdio; SSE only
-  if Composio ever reports it) plus `upstreamGatewayTools`, which offers only
+- **MCP and Composio:** `connectUpstream` (Streamable HTTP for Composio's
+  session MCP, stdio for HubSpot; SSE only if Composio ever reports it) plus `upstreamGatewayTools`, which offers only
   the profile's tools with their raw upstream schemas (forwarded byte for
   byte); the server refuses any other name without an upstream call.
 - **API:** `defineApiTool` (zod shapes, typed `run`) wrapped by
@@ -1203,9 +1222,9 @@ The suites at HEAD (counted 2026-09-29):
 
 | Command | Suite | Tests |
 |---|---|---|
-| `pnpm test` | Vitest over `test/unit` and `test/integration`; no network, no model | 900 in 79 files |
+| `pnpm test` | Vitest over `test/unit` and `test/integration`; no network, no model | 905 in 81 files |
 | `pnpm test:cli` | `test/cli`: the built CLI before a model call (`pnpm build` first) | 18 |
-| `pnpm test:e2e` | Playwright `test/e2e-ui`: the built app with the real configuration, no model call (`pnpm build` first), desktop and phone projects | 30 listed: 29 run, 1 skipped (touch targets run on the phone project only) |
+| `pnpm test:e2e` | Playwright `test/e2e-ui`: the built app with the real configuration, no model call (`pnpm build` first; port 4320, or `E2E_PORT`), desktop and phone projects | 30 listed: 29 run, 1 skipped (touch targets run on the phone project only) |
 | `LIVE_E2E=1 pnpm test:live` | `test/live/*.test.ts`: the real model and accounts, read-only | 16 |
 | `LIVE_E2E=1 pnpm test:live:ui` | `test/e2e-ui/*.live.spec.ts`: the chat in the browser with the real model | 2 |
 | `LIVE_E2E=1 LIVE_E2E_WRITES=1 pnpm test:live:writes` | `test/live/writes`: real changes on test-safe targets | 5 |
@@ -1215,8 +1234,12 @@ The suites at HEAD (counted 2026-09-29):
 
 **Unit (Vitest, no network, no model):** contracts and schema; env
 resolution for every integration (configured, `not_configured`, `invalid`,
-live-key refusal, HTTPS-only base URLs, the variables that no longer exist);
-path joining with prefixed base URLs; Stripe bracket form encoding;
+live-key refusal, the pinned vendor hosts, the removed variables ignored
+when set); the private-network host check that Composio's session
+endpoints and sign-in links must pass; the real `@composio/core` reaching
+only `backend.composio.dev` through Revenue Desk's client while
+`COMPOSIO_BASE_URL` is set (a stubbed `fetch` records the URL); path
+joining; `LIVE_REQUIRE` parsing; Stripe bracket form encoding;
 idempotency key derivation; error normalisation; zoned timestamps;
 classifier tables, approval cards and run memories for every profile
 (QuickBooks and Slack from inputs shaped by the captured Composio schemas);
@@ -1239,14 +1262,19 @@ agent core's `runTurn` for the server's routes and streams, integration
 definitions for connection checks, a Composio client for the session
 manager), a `fetch` that answers what the test says (the Stripe and HubSpot
 REST clients), or a minimal MCP server in memory or on loopback (the
-gateway's MCP proxy). None is shared between tests or copies a vendor's
-service, and none carries business data.
+gateway's MCP proxy, handed its config directly). None is shared between
+tests or copies a vendor's service, and none carries business data. No test
+configures the product to reach a local server: there is no host to
+configure, and doubles sit only at internal ports (an injected `fetch`,
+Composio client, upstream connector or test catalog entry).
 
 **Integration (Vitest, no network):** the real `@hubspot/mcp-server` 0.4.0
 over stdio through `launch.ts`, with `test/support/deny-network.mjs`
 preloaded: it lists exactly the captured surface without a network attempt,
-a non-loopback call is blocked, and a `.env` in its working directory is
-ignored (a loopback recorder that answers 404 shows where a call would go).
+a call goes to HubSpot's own `api.hubspot.com` (and is blocked), and a
+`.env` in its working directory is ignored (a loopback recorder that answers
+404 shows where a call would go; only the control, run without the launch's
+dotenv guard, reaches it).
 The Vite dev server's CORS and file lockdown. The CLI's run start against a
 real database whose conversation another live process owns.
 
@@ -1260,8 +1288,9 @@ output. Every child gets an explicit environment without integration
 configuration.
 
 **Playwright (`test/e2e-ui`, no model):** `pnpm build` first; the suite
-starts `dist/server/main.js` on 127.0.0.1:4320 (a server already there is
-never reused) with the real configuration (`DOTENV_PATH`, default `.env`) and
+starts `dist/server/main.js` on 127.0.0.1:4320, or on `E2E_PORT` when set (a
+test-harness variable, so the suite can run beside an app already on 4320;
+a server already on the port is never reused), with the real configuration (`DOTENV_PATH`, default `.env`) and
 a fresh state directory in the system temp directory. The installed Chrome
 (`channel: 'chrome'`), desktop 1440×900 and phone 390×844 with touch. Screens
 are checked with axe (no serious or critical violations) and for sideways
@@ -1289,7 +1318,13 @@ in an explicit environment holding only the model key and the variables of
 the systems under test, and are never printed. Before each test the
 connections are checked read-only as Check does; a system that is not
 connected or not configured is skipped with the reason and what to do,
-never faked. Output carries states, counts, tool names and cost only;
+never faked. `LIVE_REQUIRE` (a comma-separated list of integration ids, or
+`all`) makes a listed integration whose test cannot run fail with that
+reason instead, including the write suite's refusals (no test channel, not
+a test account, not a sandbox company) and the browser suite's Gmail check
+(`test/live/require.ts`); unset, nothing is required, so a partial setup
+still runs, and an id that is not an integration fails the suite before it
+starts. Output carries states, counts, tool names and cost only;
 `LIVE_OUT_DIR` (outside the repository) keeps state directories, summaries,
 stderr and the browser suite's artifacts for review.
 
@@ -1338,7 +1373,7 @@ revenue-desk/
     contracts/     json.ts integration.ts env.ts events.ts api.ts cli.ts   (lead)
     config/        env.ts (AgentEnv snapshot)  secret.ts (SecretValue)  redact.ts  run-settings.ts
     integrations/  registry.ts (catalog, checks, connection snapshots, connectionFromFailure)
-                   shared/ (http.ts, errors.ts, api-tool.ts, time.ts, money.ts, schema.ts, …)
+                   shared/ (vendors.ts: the pinned vendor hosts; url.ts: checkVendorUrl; http.ts, errors.ts, api-tool.ts, …)
                    composio/ (session.ts, connector.ts, integration.ts, resolve.ts)
                    gmail/ google-calendar/ (profile.ts, classify.ts, run-memory.ts, definition.ts)
                    hubspot/ (profile.ts, classify.ts, input-rules.ts, owners.ts, launch.ts, upstream.ts, probe.ts, resolve.ts, definition.ts)
@@ -1363,7 +1398,7 @@ revenue-desk/
          components/ai-elements/*  components/ui/*  components/app/*  styles/{globals,tokens}.css
   test/
     unit/  integration/ (cli/, hubspot-mcp-stdio, vite-dev-server)  cli/  e2e-ui/ (*.spec.ts, *.live.spec.ts)
-    live/ (support.ts, connections, read-only, cli; writes/)
+    live/ (support.ts, require.ts (LIVE_REQUIRE), connections, read-only, cli; writes/)
     helpers/ (in-process test helpers)
     support/ api-client.ts  repository.ts  deny-network.mjs
     fixtures/ surfaces/{hubspot-mcp-0.4.0,composio-direct}.json (captured, dated, with source)
@@ -1399,6 +1434,7 @@ revenue-desk/
 | `pnpm verify` green | done at `8f30051` (1,205 + 8 + 49 tests, 1 skipped) |
 | Kiran's mapping (2026-09-29): QuickBooks and Slack through Composio; their REST and Web API integrations, variables, fakes and tests removed; captured Composio surface for four toolkits | done (Stage 1; typecheck, lint, 1,130 + 8 + 49 tests, 1 skipped, and 11 offline live-script checks green); not yet run against a connected QuickBooks or Slack account |
 | Stage 4 (2026-09-29): adversarial review of Stages 1 to 3 (decisions log) | done: `pnpm verify` green (900 + 18 + 29 tests, 1 skipped); the live suites were not rerun |
+| Vendor hosts pinned (2026-09-29): `COMPOSIO_BASE_URL`, `STRIPE_API_BASE_URL`, `HUBSPOT_API_BASE_URL`, `HUBSPOT_MCP_URL`, `HUBSPOT_MCP_TOKEN` and `AGENT_BUSINESS_DATE` removed; HubSpot stdio only; Composio's SDK always given its host; Composio endpoints and sign-in links on this machine or a private network refused; `LIVE_REQUIRE`; `E2E_PORT` for the Playwright harness (decisions log) | done: `pnpm verify` green (905 + 18 + 29 tests, 1 skipped); live `connections.test.ts` rerun for its reads: Gmail and Stripe answered through the pinned hosts, HubSpot skipped (not configured) and, with `LIVE_REQUIRE=hubspot`, failed with that reason; the model suites were not rerun |
 | Stage 2 (2026-09-29): no mocking or simulation. The sandbox demo, the local fakes, the scripted Messages API, the fictional company, the scripted jobs and the full-stack suite over them removed, with `AGENT_SANDBOX`, `ANTHROPIC_BASE_URL`, `HUBSPOT_MCP_COMMAND`/`HUBSPOT_MCP_ARGS` and plain-HTTP loopback base URLs; unit tests kept for Revenue Desk's own logic; `pnpm test:cli` for the built CLI before a model call; Playwright against the real app; live read, browser and write suites against the real model and accounts (§11) | done: `pnpm verify` green (878 + 17 + 27 tests, 1 skipped); `pnpm test:live` 8 passed and 8 skipped for systems not yet connected or configured; `pnpm test:live:ui` 2 passed; the write suite not run |
 
 Milestones M1, M2 and M3 are met: `pnpm verify` is green and the live
@@ -1449,9 +1485,10 @@ and live read-only E2E has run.
   creation ends 2026-10-26; Service Key compatibility is unverified. It imports
   `zod-to-json-schema` without declaring it; `package.json` declares it with
   `pnpm.packageExtensions` (3.25.2). Its `import 'dotenv/config'` could
-  redirect the token through a stray `.env`; `launch.ts` points dotenv at the
-  null device and the server runs only through the gateway's stdio transport,
-  never the Claude CLI. Its forwarded schema leaves record properties open,
+  redirect the token through a stray `.env`, and `BASE_URL_OVERRIDE` would
+  redirect it anywhere; `launch.ts` points dotenv at the null device, never
+  sets `BASE_URL_OVERRIDE` in the explicit child environment, and the server
+  runs only through the gateway's stdio transport, never the Claude CLI. Its forwarded schema leaves record properties open,
   so HubSpot's own requirements surface only as failed calls unless an input
   rule states them (`hs_timestamp` today). The owners lookup bypasses the MCP
   server and needs the token's owners read scope.
@@ -1488,10 +1525,14 @@ and live read-only E2E has run.
   QuickBooks, Slack and HubSpot have therefore been exercised only through
   their captured schemas in unit tests, never with a real account; no write
   of any integration has run live yet (`pnpm test:live:writes`).
-- **Business date:** the SDK injects the wall-clock date into a system
-  reminder, which can disagree with `AGENT_BUSINESS_DATE` in aging
-  calculations; the prompt states the business date and its weekday
-  explicitly.
+- **Business date:** the SDK injects the machine's wall-clock date into a
+  system reminder; the prompt states the business date (today in the
+  workspace time zone) and its weekday explicitly. Near midnight the two
+  can differ by a day when the machine's zone is not the workspace's.
+- **The private-network check reads names, not addresses.** A Composio
+  endpoint or sign-in link naming a public host that resolves to a private
+  address is not caught by it. The pinned API host, HTTPS with certificate
+  validation, and Composio returning its own hosts are the guards there.
 - **Prompt rules are not enforcement.** "Money moves only when asked", "no
   promises before approval" and "act first, then write" are instructions; the
   live runs needed several rounds to hold them. What enforces safety is the
@@ -2000,6 +2041,52 @@ review of Stages 1 to 3 against the code; each item was fixed with tests.
   company names in the new unit tests became neutral placeholders. The
   README and this document no longer say Connect asks which QuickBooks
   server to use, or that QuickBooks writes carry an idempotency key.
+
+**2026-09-29, Kiran: vendor hosts pinned.** Real integrations only, and
+the product must not be able to point at a fake. An independent audit found
+configuration that could route Revenue Desk to a server other than the
+vendor's: base URL variables for Composio, Stripe and HubSpot's API,
+`HUBSPOT_MCP_URL` (any Streamable HTTP MCP server, plain HTTP allowed on
+loopback) with `HUBSPOT_MCP_TOKEN`, and the Composio SDK's own
+`COMPOSIO_BASE_URL` and user-config lookups, which applied whenever no base
+URL was passed. This entry supersedes every earlier one that describes those
+variables, the HubSpot HTTP transport, the loopback-HTTP exception or
+`AGENT_BUSINESS_DATE`.
+
+- **Removed variables:** `COMPOSIO_BASE_URL`, `STRIPE_API_BASE_URL`,
+  `HUBSPOT_API_BASE_URL`, `HUBSPOT_MCP_URL`, `HUBSPOT_MCP_TOKEN` and
+  `AGENT_BUSINESS_DATE` (contract, loader, `.env.example`, README table). Set,
+  they are not read and change nothing (unit-tested).
+- **Pinned hosts** (`src/integrations/shared/vendors.ts`): Composio
+  `https://backend.composio.dev`, always passed to the SDK (a test with the
+  real SDK and `COMPOSIO_BASE_URL` set shows the SDK alone would follow the
+  variable, and Revenue Desk's client does not); Stripe
+  `https://api.stripe.com` (the client takes no base URL); HubSpot's MCP
+  server keeps its own default `https://api.hubspot.com` (the launch never
+  sets `BASE_URL_OVERRIDE`); the owners lookup calls
+  `https://api.hubapi.com`. The resolved connections carry no URL.
+- **HubSpot is stdio only:** `HubSpotMcpTransport` has one shape, the
+  HTTP branches of `resolve.ts`, `upstream.ts` and the owners lookup are
+  gone, and `checkBaseUrl`'s `allowLoopbackHttp` with them (no base URL is
+  validated any more, so `checkBaseUrl` and `checkUrlVariable` were removed).
+  The owners lookup is always offered.
+- **Defence in depth:** `checkVendorUrl` refuses a Composio session MCP URL
+  (at connect time, before the gateway opens it) or a Connect sign-in link
+  (before the browser is sent to it) unless it is HTTPS without credentials
+  on a public host; loopback, `*.localhost` and private-network addresses
+  are refused with a plain reason that never repeats the URL.
+- **Business date:** always today in the workspace time zone; the CLI and
+  the server share the rule.
+- **`LIVE_REQUIRE`:** the live suites skip what is not connected, which let
+  a partial setup pass silently. With `LIVE_REQUIRE` (ids or `all`) a listed
+  integration that cannot be tested fails with the reason; the default stays
+  skip.
+- **Tests:** unit tests keep in-process doubles of internal ports only; the
+  ones that configured the removed variables or a HubSpot HTTP connection
+  (including loopback addresses) were rewritten against the pinned hosts,
+  and the gateway tests serve their in-memory HubSpot upstream through the
+  test catalog's own entry. `E2E_PORT` (test harness only) lets
+  `pnpm test:e2e` run beside an app already serving 4320.
 
 **Open items.**
 

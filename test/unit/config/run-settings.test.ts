@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { loadAgentEnv } from "../../../src/config/env.js";
-import {
-  dateInTimeZone,
-  resolveBusinessDate,
-  resolveModelSettings,
-} from "../../../src/config/run-settings.js";
+import { dateInTimeZone, resolveModelSettings } from "../../../src/config/run-settings.js";
+import { ENV_VAR_NAMES } from "../../../src/contracts/env.js";
+import type { WorkspaceSettings } from "../../../src/contracts/integration.js";
+import { businessDate } from "../../../src/server/run-context.js";
 
 function env(environment: Record<string, string> = {}) {
   const result = loadAgentEnv(environment, { cwd: "/" });
@@ -63,12 +62,16 @@ describe("business date", () => {
   it("is today in the workspace time zone", () => {
     expect(dateInTimeZone(instant, "America/New_York")).toBe("2026-09-28");
     expect(dateInTimeZone(instant, "Asia/Tokyo")).toBe("2026-09-29");
-    expect(resolveBusinessDate(env(), "America/New_York", instant)).toBe("2026-09-28");
   });
 
-  it("is AGENT_BUSINESS_DATE when set", () => {
-    expect(resolveBusinessDate(env({ AGENT_BUSINESS_DATE: "2026-01-15" }), "UTC", instant)).toBe(
-      "2026-01-15",
+  it("has no override: AGENT_BUSINESS_DATE is not configuration and changes nothing", () => {
+    expect(ENV_VAR_NAMES).not.toContain("AGENT_BUSINESS_DATE");
+    expect(env({ AGENT_BUSINESS_DATE: "2026-01-15" })).toEqual(env());
+    const settings = { timezone: "America/New_York" } as WorkspaceSettings;
+    expect(businessDate(settings, instant)).toBe("2026-09-28");
+    // A time zone written some other way falls back to UTC.
+    expect(businessDate({ timezone: "Mars/Olympus" } as WorkspaceSettings, instant)).toBe(
+      "2026-09-29",
     );
   });
 

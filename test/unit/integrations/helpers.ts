@@ -32,7 +32,6 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
       port: 4320,
       stateDir: "/tmp/revenue-desk-test",
       policyOverrides: {},
-      businessDate: null,
       approvalTimeoutMs: 900_000,
       dotenvPath: null,
     },
@@ -42,14 +41,9 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
       NO_PROXY: null,
       CLAUDE_CODE_MAX_RETRIES: null,
     },
-    composio: { apiKey: null, userId: null, baseUrl: "https://backend.composio.dev" },
-    hubspot: { accessToken: null, apiBaseUrl: null, mcpUrl: null, mcpToken: null },
-    stripe: {
-      secretKey: null,
-      allowLive: false,
-      apiBaseUrl: "https://api.stripe.com",
-      apiVersion: null,
-    },
+    composio: { apiKey: null, userId: null },
+    hubspot: { accessToken: null },
+    stripe: { secretKey: null, allowLive: false, apiVersion: null },
   };
   return {
     model: { ...base.model, ...overrides.model },

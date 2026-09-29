@@ -33,7 +33,6 @@ export function createSlackIntegration(
           composio: {
             apiKey: config.apiKey,
             userId: config.userId,
-            baseUrl: config.baseUrl,
             toolkit: "slack",
           },
         },

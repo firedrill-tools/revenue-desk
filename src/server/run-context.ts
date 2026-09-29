@@ -3,7 +3,7 @@
 // policy, the business date and one connection plan per integration. The
 // precedence rules are the configuration's and the policy's, shared with the CLI.
 
-import { resolveBusinessDate, resolveModelSettings } from "../config/run-settings.js";
+import { dateInTimeZone, resolveModelSettings } from "../config/run-settings.js";
 import type { AgentEnv, ModelSettings } from "../contracts/env.js";
 import type { ConnectionPlan, RunConnection } from "../contracts/events.js";
 import type { PolicyModes, WorkspaceSettings } from "../contracts/integration.js";
@@ -29,14 +29,14 @@ export function uiModelSettings(env: AgentEnv, settings: WorkspaceSettings): Mod
 }
 
 /**
- * AGENT_BUSINESS_DATE, else today in the workspace time zone. Settings
- * refuses unknown zones; a row written some other way falls back to UTC.
+ * Today in the workspace time zone. Settings refuses unknown zones; a row
+ * written some other way falls back to UTC.
  */
-export function businessDate(env: AgentEnv, settings: WorkspaceSettings, now: Date): string {
+export function businessDate(settings: WorkspaceSettings, now: Date): string {
   try {
-    return resolveBusinessDate(env, settings.timezone, now);
+    return dateInTimeZone(now, settings.timezone);
   } catch {
-    return resolveBusinessDate(env, "UTC", now);
+    return dateInTimeZone(now, "UTC");
   }
 }
 
@@ -57,7 +57,7 @@ export function prepareRunContext(input: {
     settings,
     model: uiModelSettings(input.env, settings),
     policy: effectiveRunPolicy(input.db, input.env),
-    businessDate: businessDate(input.env, settings, input.now),
+    businessDate: businessDate(settings, input.now),
     connections: plans,
     connectionSnapshot: snapshot,
   };

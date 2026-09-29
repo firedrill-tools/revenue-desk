@@ -1,13 +1,20 @@
 /**
  * Direct access to the real services for the live write tests' own setup,
  * checks and clean-up: the Composio SDK for the connected accounts, and the
- * Stripe and HubSpot REST APIs with the configured keys. The agent's actions
- * themselves always go through Revenue Desk (the headless CLI); these helpers
- * only prepare a test-safe target, confirm what the agent did and remove it.
+ * Stripe and HubSpot REST APIs with the configured keys, at the same pinned
+ * vendor hosts as the product (src/integrations/shared/vendors.ts). The
+ * agent's actions themselves always go through Revenue Desk (the headless
+ * CLI); these helpers only prepare a test-safe target, confirm what the agent
+ * did and remove it.
  * Keys are never printed.
  */
 import { Composio } from "@composio/core";
 import type { JsonObject, JsonValue } from "../../../src/contracts/json.js";
+import {
+  COMPOSIO_API_BASE_URL,
+  HUBSPOT_API_BASE_URL,
+  STRIPE_API_BASE_URL,
+} from "../../../src/integrations/shared/vendors.js";
 import { liveValue } from "../support.js";
 
 // ---------------------------------------------------------------------------
@@ -19,10 +26,9 @@ let composio: Composio | undefined;
 function composioClient(): Composio {
   const apiKey = liveValue("COMPOSIO_API_KEY");
   if (apiKey === null) throw new Error("COMPOSIO_API_KEY is not set in the live env file.");
-  const baseURL = liveValue("COMPOSIO_BASE_URL");
   composio ??= new Composio({
     apiKey,
-    ...(baseURL === null ? {} : { baseURL }),
+    baseURL: COMPOSIO_API_BASE_URL,
     disableVersionCheck: true,
     allowTracking: false,
   });
@@ -116,7 +122,7 @@ export async function stripeApi(
 ): Promise<JsonObject> {
   const key = stripeTestKey();
   if (key === null) throw new Error("Refusing: STRIPE_SECRET_KEY is not a test-mode key.");
-  const base = liveValue("STRIPE_API_BASE_URL") ?? "https://api.stripe.com";
+  const base = STRIPE_API_BASE_URL;
   const body = new URLSearchParams(form).toString();
   const url = method === "GET" && body !== "" ? `${base}${path}?${body}` : `${base}${path}`;
   const response = await fetch(url, {
@@ -154,7 +160,7 @@ export async function hubspotApi(
 ): Promise<JsonObject | null> {
   const token = liveValue("HUBSPOT_ACCESS_TOKEN");
   if (token === null) throw new Error("HUBSPOT_ACCESS_TOKEN is not set in the live env file.");
-  const base = liveValue("HUBSPOT_API_BASE_URL") ?? "https://api.hubapi.com";
+  const base = HUBSPOT_API_BASE_URL;
   const response = await fetch(`${base}${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

@@ -111,11 +111,8 @@ describe("HubSpot MCP server launched over stdio", () => {
     expect(session.stderr()).not.toContain(DENY_MARKER);
   });
 
-  it("runs with the network guard active (a non-loopback base URL is blocked)", async () => {
-    const launch = buildHubSpotStdioLaunch({
-      accessToken: TOKEN,
-      apiBaseUrl: "https://hubspot-surface.invalid",
-    });
+  it("calls HubSpot's own host, which the network guard blocks", async () => {
+    const launch = buildHubSpotStdioLaunch({ accessToken: TOKEN });
     const session = await start(launch);
     try {
       const result = (await session.client.callTool({
@@ -126,7 +123,7 @@ describe("HubSpot MCP server launched over stdio", () => {
     } finally {
       await session.close();
     }
-    expect(session.stderr()).toContain(`${DENY_MARKER} hubspot-surface.invalid:443`);
+    expect(session.stderr()).toContain(`${DENY_MARKER} api.hubspot.com:443`);
   });
 
   it("ignores a .env file in the child's working directory", async () => {

@@ -194,7 +194,9 @@ describe("reads", () => {
 
 describe("GET /api/session", () => {
   it("sets the HttpOnly SameSite=Strict cookie and returns the matching token", async () => {
-    const server = createTestServer();
+    // 01:30 UTC on the 29th is still the 28th in New York.
+    const server = createTestServer({ now: () => new Date("2026-09-29T01:30:00.000Z") });
+    await server.request("PATCH", "/api/settings", { timezone: "America/New_York" });
     const response = await server.request("GET", "/api/session");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -237,7 +239,7 @@ describe("GET /api/session", () => {
   });
 
   it("reports Settings' model and effort over the environment's", async () => {
-    const server = createTestServer({ runtime: { businessDate: null } });
+    const server = createTestServer({ now: () => new Date("2026-09-28T12:00:00.000Z") });
     await server.request("PATCH", "/api/settings", {
       defaultModel: "claude-opus-5",
       defaultEffort: "high",
@@ -246,7 +248,8 @@ describe("GET /api/session", () => {
     const info = (await (await server.request("GET", "/api/session")).json()) as SessionInfo;
     expect(info).toMatchObject({ model: "claude-opus-5", effort: "high" });
     expect(info).not.toHaveProperty("mode");
-    expect(info.businessDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // The business date is always today in the Settings time zone (UTC+14 here).
+    expect(info.businessDate).toBe("2026-09-29");
   });
 });
 

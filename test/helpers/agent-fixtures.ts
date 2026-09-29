@@ -200,15 +200,21 @@ const noComposio: ComposioTestSession = async () => {
   throw new Error("Composio is not set up in this test.");
 };
 
-/** HubSpot over HTTP with its bearer token (the stdio launch is src/integrations/hubspot). */
+/**
+ * Where the test catalog's HubSpot upstream lives: an in-process MCP server
+ * that the test's own connector serves (`memory://crm/mcp`), handed the
+ * connection's token so a test can see which credential it received. The
+ * production definition always launches the pinned @hubspot/mcp-server
+ * (src/integrations/hubspot/upstream.ts); this replaces only the catalog
+ * entry of a test, never the product's configuration.
+ */
+export const TEST_HUBSPOT_UPSTREAM_URL = "memory://crm/mcp";
+
 function hubspotUpstream(connection: HubSpotConnection): UpstreamConfig {
-  const { mcp } = connection;
-  if (mcp.transport !== "http")
-    throw new Error("The test catalog connects to HTTP upstreams only.");
   return {
     transport: "http",
-    url: mcp.url,
-    headers: mcp.token === null ? {} : { Authorization: `Bearer ${mcp.token.reveal()}` },
+    url: TEST_HUBSPOT_UPSTREAM_URL,
+    headers: { Authorization: `Bearer ${connection.mcp.accessToken.reveal()}` },
   };
 }
 
@@ -317,7 +323,6 @@ export function stripeConnection(): StripeConnection {
     profile: "stripe-api",
     endpointLabel: "api.stripe.com",
     api: {
-      baseUrl: "https://api.stripe.com",
       secretKey: secretValue(STRIPE_KEY),
       keyMode: "test",
       apiVersion: null,
@@ -325,13 +330,14 @@ export function stripeConnection(): StripeConnection {
   };
 }
 
-export function hubspotHttpConnection(url: string, token: string): HubSpotConnection {
+/** A resolved HubSpot connection: the pinned stdio server with this token. */
+export function hubspotConnection(token: string): HubSpotConnection {
   return {
     integration: "hubspot",
     kind: "mcp",
     profile: "hubspot-mcp-0.4",
-    endpointLabel: new URL(url).host,
-    mcp: { transport: "http", url, token: secretValue(token) },
+    endpointLabel: "api.hubspot.com",
+    mcp: { transport: "stdio", accessToken: secretValue(token) },
   };
 }
 
@@ -344,7 +350,6 @@ export function gmailConnection(): ComposioConnection<"gmail"> {
     composio: {
       apiKey: secretValue(`composio-key-${"c".repeat(20)}`),
       userId: "user_test",
-      baseUrl: "https://backend.composio.dev",
       toolkit: "gmail",
     },
   };

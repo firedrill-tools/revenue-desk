@@ -21,11 +21,11 @@ export interface HubSpotIntegration extends IntegrationDefinition<"hubspot"> {
   readonly kind: "mcp";
   /** The upstream tool names the gateway's filtering proxy may list and forward. */
   readonly allowlist: readonly string[];
-  /** Where the gateway connects. Throws HubSpotLaunchError for an unusable stdio launch. */
+  /** The pinned stdio server the gateway starts. Throws HubSpotLaunchError when it cannot launch. */
   upstream(connection: HubSpotConnection): UpstreamConfig;
   /** HubSpot's rules that the forwarded schema does not state (input-rules.ts). */
   checkInput(tool: string, input: JsonObject): readonly SchemaIssue[];
-  /** Profile tools run in process against HubSpot's REST API (owners.ts); none over HTTP MCP. */
+  /** Profile tools run in process against HubSpot's REST API (owners.ts). */
   apiTools(connection: HubSpotConnection): readonly ApiTool[];
 }
 

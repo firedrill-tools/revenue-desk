@@ -19,11 +19,12 @@ describe("createComposioClient", () => {
     create.mockClear();
   });
 
-  it("disables the npm version check and analytics and logs to stderr", () => {
+  it("pins Composio's API host, disables the npm version check and analytics and logs to stderr", () => {
     createComposioClient({ apiKey: "ak_test" });
     expect(constructed).toEqual([
       {
         apiKey: "ak_test",
+        baseURL: "https://backend.composio.dev",
         disableVersionCheck: true,
         allowTracking: false,
         logger: stderrComposioLogger,
@@ -31,10 +32,12 @@ describe("createComposioClient", () => {
     ]);
   });
 
-  it("passes an explicit base URL and logger through", () => {
+  it("passes a logger through, and nothing can change the host", () => {
     const logger = { error() {}, warn() {}, info() {}, debug() {} };
-    createComposioClient({ apiKey: "ak_test", baseURL: "https://composio.test", logger });
-    expect(constructed[0]).toMatchObject({ baseURL: "https://composio.test", logger });
+    // A caller that still passes the removed baseURL option is ignored.
+    const options = { apiKey: "ak_test", baseURL: "https://composio.example", logger };
+    createComposioClient(options);
+    expect(constructed[0]).toMatchObject({ baseURL: "https://backend.composio.dev", logger });
   });
 
   it("refuses to start without an API key", () => {

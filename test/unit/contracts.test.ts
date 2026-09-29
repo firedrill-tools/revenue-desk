@@ -158,7 +158,6 @@ describe("environment contract", () => {
       "ANTHROPIC_API_KEY",
       "COMPOSIO_API_KEY",
       "HUBSPOT_ACCESS_TOKEN",
-      "HUBSPOT_MCP_TOKEN",
       "STRIPE_SECRET_KEY",
     ]);
   });

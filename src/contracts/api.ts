@@ -293,6 +293,7 @@ export type SessionInfo = {
   readonly version: string;
   readonly model: string;
   readonly effort: AgentEffort;
+  /** Today in the workspace time zone (YYYY-MM-DD). */
   readonly businessDate: string;
   readonly approvalTimeoutMs: number;
   /**

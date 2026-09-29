@@ -21,7 +21,7 @@ export function registerSessionRoutes(app: Hono, services: ApiServices): void {
       version: services.version,
       model: model.model,
       effort: model.effort,
-      businessDate: businessDate(env, settings, services.now()),
+      businessDate: businessDate(settings, services.now()),
       approvalTimeoutMs: env.runtime.approvalTimeoutMs,
       modelConfigured: env.model.apiKey !== null,
     };

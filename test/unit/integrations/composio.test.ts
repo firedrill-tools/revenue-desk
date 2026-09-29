@@ -61,13 +61,13 @@ function stubComposio(
   return { client, createSession, sessions };
 }
 
-function gmailConnection(baseUrl = "https://backend.composio.dev"): ComposioConnection<"gmail"> {
+function gmailConnection(): ComposioConnection<"gmail"> {
   return {
     integration: "gmail",
     kind: "composio",
     profile: "composio",
-    endpointLabel: new URL(baseUrl).host,
-    composio: { apiKey: secret(API_KEY), userId: USER_ID, baseUrl, toolkit: "gmail" },
+    endpointLabel: "backend.composio.dev",
+    composio: { apiKey: secret(API_KEY), userId: USER_ID, toolkit: "gmail" },
   };
 }
 
@@ -92,18 +92,7 @@ describe("resolveComposioConfig and the definitions' resolve", () => {
     });
   });
 
-  it("refuses unsafe base URLs and odd user ids", () => {
-    expect(
-      resolveComposioConfig(
-        testEnv({
-          composio: {
-            apiKey: secret(API_KEY),
-            userId: USER_ID,
-            baseUrl: "http://backend.composio.dev",
-          },
-        }),
-      ),
-    ).toMatchObject({ status: "invalid", problems: [{ variable: "COMPOSIO_BASE_URL" }] });
+  it("refuses odd user ids", () => {
     expect(
       resolveComposioConfig(testEnv({ composio: { apiKey: secret(API_KEY), userId: " u " } })),
     ).toMatchObject({
@@ -112,26 +101,16 @@ describe("resolveComposioConfig and the definitions' resolve", () => {
     });
   });
 
-  it("resolves Gmail and Calendar to their toolkits from one configuration", () => {
-    const env = testEnv({
-      composio: {
-        apiKey: secret(API_KEY),
-        userId: USER_ID,
-        baseUrl: "https://composio.internal.example/composio/",
-      },
-    });
-    expect(createGmailIntegration().resolve(env)).toMatchObject({
+  it("resolves Gmail and Calendar to their toolkits from one configuration, at Composio's host", () => {
+    const env = testEnv({ composio: { apiKey: secret(API_KEY), userId: USER_ID } });
+    expect(createGmailIntegration().resolve(env)).toEqual({
       status: "configured",
       connection: {
         integration: "gmail",
         kind: "composio",
         profile: "composio",
-        endpointLabel: "composio.internal.example",
-        composio: {
-          userId: USER_ID,
-          baseUrl: "https://composio.internal.example/composio",
-          toolkit: "gmail",
-        },
+        endpointLabel: "backend.composio.dev",
+        composio: { apiKey: expect.anything(), userId: USER_ID, toolkit: "gmail" },
       },
     });
     expect(createGoogleCalendarIntegration().resolve(env)).toMatchObject({
@@ -167,7 +146,7 @@ describe("ComposioConnector", () => {
   it("creates a session per (toolkits, access) and returns its MCP endpoint with allowlists", async () => {
     const stub = stubComposio();
     const connector = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { apiKey: secret(API_KEY), userId: USER_ID },
       { client: stub.client },
     );
     const upstream = await connector.upstream(["gmail", "googlecalendar"], "outbound");
@@ -200,27 +179,37 @@ describe("ComposioConnector", () => {
   it("refuses an SSE endpoint, which the gateway does not connect to", async () => {
     const stub = stubComposio({ mcp: { type: "sse" } });
     const connector = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { apiKey: secret(API_KEY), userId: USER_ID },
       { client: stub.client },
     );
     await expect(connector.upstream(["gmail"], "read")).rejects.toMatchObject({ code: "upstream" });
   });
 
-  it("refuses a plain-http session endpoint, on loopback too", async () => {
-    const loopbackMcp = "http://127.0.0.1:4450/tool_router/trs_1/mcp";
-    const production = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
-      { client: stubComposio({ mcp: { url: loopbackMcp } }).client },
-    );
-    await expect(production.upstream(["gmail"], "read")).rejects.toMatchObject({
-      code: "destination",
-    });
+  it("refuses a session endpoint that is not HTTPS on a public host, before connecting", async () => {
+    for (const url of [
+      "http://backend.composio.dev/tool_router/trs_1/mcp",
+      "https://127.0.0.1/tool_router/trs_1/mcp",
+      "https://localhost/tool_router/trs_1/mcp",
+      "https://mcp.localhost/tool_router/trs_1/mcp",
+      "https://10.1.2.3/tool_router/trs_1/mcp",
+      "https://192.168.0.10/tool_router/trs_1/mcp",
+      "https://[::1]/tool_router/trs_1/mcp",
+      "https://[fd00::1]/tool_router/trs_1/mcp",
+    ]) {
+      const connector = new ComposioConnector(
+        { apiKey: secret(API_KEY), userId: USER_ID },
+        { client: stubComposio({ mcp: { url } }).client },
+      );
+      await expect(connector.upstream(["gmail"], "read"), url).rejects.toMatchObject({
+        code: "destination",
+      });
+    }
   });
 
   it("reports per-toolkit status from a read-only session and probes map it", async () => {
     const stub = stubComposio();
     const connector = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { apiKey: secret(API_KEY), userId: USER_ID },
       { client: stub.client },
     );
     const signal = new AbortController().signal;
@@ -258,7 +247,7 @@ describe("ComposioConnector", () => {
   it("reports a failed check as error without the key", async () => {
     const stub = stubComposio({ toolkits: new Error(`boom ${API_KEY}`) });
     const connector = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { apiKey: secret(API_KEY), userId: USER_ID },
       { client: stub.client },
     );
     const result = await probeComposio(connector, "gmail", new AbortController().signal);
@@ -269,7 +258,7 @@ describe("ComposioConnector", () => {
       },
     };
     const broken = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { apiKey: secret(API_KEY), userId: USER_ID },
       { client: failing },
     );
     const failed = await probeComposio(broken, "gmail", new AbortController().signal);
@@ -294,7 +283,7 @@ describe("ComposioConnector", () => {
       },
     };
     const connector = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { apiKey: secret(API_KEY), userId: USER_ID },
       { client: refusing },
     );
     for (const toolkit of ["gmail", "quickbooks", "slack"] as const) {
@@ -311,7 +300,7 @@ describe("ComposioConnector", () => {
   it("starts a sign-in only through authorize, with the given callback", async () => {
     const stub = stubComposio();
     const connector = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { apiKey: secret(API_KEY), userId: USER_ID },
       { client: stub.client },
     );
     await expect(
@@ -346,7 +335,7 @@ describe("ComposioConnectors", () => {
     expect(stub.createSession).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps separate connectors for different users, keys or base URLs", () => {
+  it("keeps separate connectors for different users or keys", () => {
     const connectors = new ComposioConnectors({ client: stubComposio().client });
     const base = gmailConnection();
     const other = connectors.forConnection({
@@ -357,7 +346,7 @@ describe("ComposioConnectors", () => {
       ...base,
       composio: { ...base.composio, apiKey: secret("ak_other_key_000000") },
     });
-    const otherUrl = connectors.forConnection(gmailConnection("https://composio.internal.example"));
-    expect(new Set([connectors.forConnection(base), other, otherKey, otherUrl]).size).toBe(4);
+    expect(new Set([connectors.forConnection(base), other, otherKey]).size).toBe(3);
+    expect(connectors.forConnection(gmailConnection())).toBe(connectors.forConnection(base));
   });
 });

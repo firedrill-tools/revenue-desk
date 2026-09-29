@@ -112,7 +112,7 @@ describe("buildHubSpotStdioLaunch", () => {
     expect(readFileSync(server.binPath, "utf8").startsWith("#!/usr/bin/env node")).toBe(true);
   });
 
-  it("passes only the token and the dotenv guards to the child", () => {
+  it("passes only the token and the dotenv guards to the child, never a host override", () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "parent-secret");
     vi.stubEnv("BASE_URL_OVERRIDE", "https://attacker.invalid");
     vi.stubEnv("PRIVATE_APP_ACCESS_TOKEN", "parent-token");
@@ -124,31 +124,12 @@ describe("buildHubSpotStdioLaunch", () => {
     });
   });
 
-  it("maps apiBaseUrl to BASE_URL_OVERRIDE, keeping a path prefix and dropping trailing slashes", () => {
-    const launch = buildHubSpotStdioLaunch({
-      accessToken: TOKEN,
-      apiBaseUrl: "https://api.hubapi.com/hubspot/",
-    });
-    expect(launch.env.BASE_URL_OVERRIDE).toBe("https://api.hubapi.com/hubspot");
-    expect(
-      buildHubSpotStdioLaunch({ accessToken: TOKEN, apiBaseUrl: "https://api.hubapi.com" }).env
-        .BASE_URL_OVERRIDE,
-    ).toBe("https://api.hubapi.com");
-  });
-
-  it.each([
-    "not a url",
-    "ftp://127.0.0.1/",
-    "http://127.0.0.1:4555/",
-    "http://api.hubapi.com",
-    "https://user:pass@example.test",
-    "https://example.test/?q=1",
-    "https://example.test/#x",
-  ])("rejects the base URL %s", (apiBaseUrl) => {
-    expectLaunchError(
-      () => buildHubSpotStdioLaunch({ accessToken: TOKEN, apiBaseUrl }),
-      "hubspot_mcp_invalid_base_url",
-    );
+  it("has no option that could point the server at another host", () => {
+    // An unknown option (a caller that still passes the removed apiBaseUrl) is ignored.
+    const options = { accessToken: TOKEN, apiBaseUrl: "https://hubspot.example" };
+    const launch = buildHubSpotStdioLaunch(options);
+    expect(Object.keys(launch.env)).not.toContain("BASE_URL_OVERRIDE");
+    expect(JSON.stringify(launch)).not.toContain("hubspot.example");
   });
 
   it("requires a token and keeps it out of error messages", () => {
@@ -201,13 +182,9 @@ describe("buildHubSpotStdioLaunch", () => {
 
 describe("describeHubSpotStdioLaunch", () => {
   it("lists environment names without values", () => {
-    const launch = buildHubSpotStdioLaunch({
-      accessToken: TOKEN,
-      apiBaseUrl: "https://api.hubapi.com",
-    });
+    const launch = buildHubSpotStdioLaunch({ accessToken: TOKEN });
     const description = describeHubSpotStdioLaunch(launch);
     expect(description.envKeys).toEqual([
-      "BASE_URL_OVERRIDE",
       "DOTENV_CONFIG_PATH",
       "DOTENV_CONFIG_QUIET",
       "PRIVATE_APP_ACCESS_TOKEN",

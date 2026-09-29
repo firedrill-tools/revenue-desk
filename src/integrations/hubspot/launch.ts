@@ -8,23 +8,22 @@
  *   and the only argument is the package's absolute `bin` file. There is no
  *   `npx`, no shell, no PATH lookup and no network fetch at startup.
  * - The child gets an explicit, minimal environment: the token, plus two
- *   dotenv settings. 0.4.0 runs `import 'dotenv/config'`, which would
- *   otherwise read a `.env` from its working directory and could pick up
- *   Revenue Desk's own secrets or a `BASE_URL_OVERRIDE` that redirects the
- *   token to another host. `DOTENV_CONFIG_PATH` points dotenv at the null
- *   device and the working directory is the package directory.
+ *   dotenv settings, and never `BASE_URL_OVERRIDE`, so the server calls
+ *   HubSpot's own default host (`https://api.hubspot.com`). 0.4.0 runs
+ *   `import 'dotenv/config'`, which would otherwise read a `.env` from its
+ *   working directory and could pick up Revenue Desk's own secrets or a
+ *   `BASE_URL_OVERRIDE` that redirects the token to another host.
+ *   `DOTENV_CONFIG_PATH` points dotenv at the null device and the working
+ *   directory is the package directory.
  * - The MCP SDK's `StdioClientTransport` adds only its safe default variables
  *   (HOME, PATH, SHELL, TERM, USER, LOGNAME on POSIX) to `env`, so no other
  *   Revenue Desk secret reaches the child. Launch through that transport (the
  *   gateway's upstream client). The Agent SDK's stdio config has no `cwd`
  *   field, so do not hand this launch to the Claude CLI directly.
- * - `apiBaseUrl` maps to 0.4.0's `BASE_URL_OVERRIDE` (default
- *   `https://api.hubspot.com`), for example HubSpot's `api.hubapi.com` host.
- *   The server joins it with the request path by plain concatenation, so a
- *   path prefix is kept; it must be https. The server cannot add extra
- *   headers.
- * - Any other MCP server is reached over Streamable HTTP (`HUBSPOT_MCP_URL`),
- *   not by replacing this command line.
+ * - No option chooses another host or another MCP server: this is the only
+ *   way HubSpot is reached over MCP. `execPath` and `resolveFrom` exist for
+ *   tests (no configuration sets them) and still launch only a package named
+ *   `@hubspot/mcp-server` at 0.4.x.
  *
  * Nothing here reads `process.env`; configuration parsing belongs to the
  * config layer, which passes explicit options.
@@ -51,7 +50,6 @@ export type HubSpotLaunchErrorCode =
   | "hubspot_mcp_unsupported_version"
   | "hubspot_mcp_token_missing"
   | "hubspot_mcp_token_invalid"
-  | "hubspot_mcp_invalid_base_url"
   | "hubspot_mcp_invalid_override";
 
 export class HubSpotLaunchError extends Error {
@@ -133,8 +131,6 @@ export function resolveHubSpotMcpServer(
 export interface HubSpotStdioLaunchOptions {
   /** HubSpot private-app token or Service Key; sent to the child as PRIVATE_APP_ACCESS_TOKEN. */
   readonly accessToken: string;
-  /** Replaces https://api.hubspot.com inside the child (BASE_URL_OVERRIDE). */
-  readonly apiBaseUrl?: string;
   /** Node binary for the bundled server. Defaults to process.execPath. */
   readonly execPath?: string;
   readonly resolveFrom?: string;
@@ -224,38 +220,12 @@ function childEnvironment(options: HubSpotStdioLaunchOptions): Record<string, st
     );
   }
 
-  const env: Record<string, string> = {
+  // Exactly these three: no BASE_URL_OVERRIDE, so the server keeps HubSpot's host.
+  return {
     PRIVATE_APP_ACCESS_TOKEN: token,
     DOTENV_CONFIG_PATH: devNull,
     DOTENV_CONFIG_QUIET: "true",
   };
-  if (options.apiBaseUrl !== undefined) {
-    env.BASE_URL_OVERRIDE = normaliseBaseUrl(options.apiBaseUrl);
-  }
-  return env;
-}
-
-function normaliseBaseUrl(raw: string): string {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new HubSpotLaunchError("hubspot_mcp_invalid_base_url", "HubSpot API base URL is invalid");
-  }
-  if (url.protocol !== "https:") {
-    throw new HubSpotLaunchError(
-      "hubspot_mcp_invalid_base_url",
-      "HubSpot API base URL must use https",
-    );
-  }
-  if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
-    throw new HubSpotLaunchError(
-      "hubspot_mcp_invalid_base_url",
-      "HubSpot API base URL must not contain credentials, a query or a fragment",
-    );
-  }
-  // The server builds `${base}${path}` with paths that start with "/".
-  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
 }
 
 function resolveFromFile(resolveFrom: string | undefined): string {

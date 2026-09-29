@@ -19,56 +19,37 @@ import {
   scrub,
   sentence,
 } from "../../../src/integrations/shared/text.js";
-import { checkBaseUrl, isLoopbackHost, joinUrl } from "../../../src/integrations/shared/url.js";
+import {
+  checkVendorUrl,
+  isLoopbackHost,
+  isPrivateNetworkHost,
+  joinUrl,
+} from "../../../src/integrations/shared/url.js";
+import {
+  COMPOSIO_API_BASE_URL,
+  HUBSPOT_API_BASE_URL,
+  HUBSPOT_MCP_SERVER_API_HOST,
+  STRIPE_API_BASE_URL,
+} from "../../../src/integrations/shared/vendors.js";
 
-describe("base URLs", () => {
-  it("keeps a path prefix when joining", () => {
+describe("URLs", () => {
+  it("pins every vendor endpoint to the vendor's own HTTPS host", () => {
+    expect(COMPOSIO_API_BASE_URL).toBe("https://backend.composio.dev");
+    expect(STRIPE_API_BASE_URL).toBe("https://api.stripe.com");
+    expect(HUBSPOT_API_BASE_URL).toBe("https://api.hubapi.com");
+    expect(HUBSPOT_MCP_SERVER_API_HOST).toBe("api.hubspot.com");
+  });
+
+  it("joins a path, keeping any prefix, then the query", () => {
     expect(joinUrl("https://api.stripe.com", "/v1/charges")).toBe(
       "https://api.stripe.com/v1/charges",
     );
-    expect(
-      joinUrl("https://proxy.example/stripe/", "/v1/charges", { limit: 10, email: undefined }),
-    ).toBe("https://proxy.example/stripe/v1/charges?limit=10");
+    expect(joinUrl("https://api.stripe.com/", "/v1/charges", { limit: 10, email: undefined })).toBe(
+      "https://api.stripe.com/v1/charges?limit=10",
+    );
     expect(joinUrl("https://x.test/a/b", "c/d", new URLSearchParams({ q: "a b" }))).toBe(
       "https://x.test/a/b/c/d?q=a+b",
     );
-  });
-
-  it("requires https, and refuses credentials, queries and fragments", () => {
-    expect(checkBaseUrl("https://api.stripe.com/")).toEqual({
-      ok: true,
-      url: "https://api.stripe.com",
-      host: "api.stripe.com",
-    });
-    expect(checkBaseUrl("https://proxy.example:8443/prefix/")).toEqual({
-      ok: true,
-      url: "https://proxy.example:8443/prefix",
-      host: "proxy.example:8443",
-    });
-    for (const url of ["http://127.0.0.1:4555/prefix/", "http://localhost:1", "http://[::1]:2"]) {
-      expect(checkBaseUrl(url)).toEqual({ ok: false, message: "must use https" });
-    }
-    expect(checkBaseUrl("http://api.stripe.com")).toMatchObject({ ok: false });
-    expect(checkBaseUrl("ftp://api.stripe.com")).toMatchObject({ ok: false });
-    expect(checkBaseUrl("https://user:pw@api.stripe.com")).toMatchObject({ ok: false });
-    expect(checkBaseUrl("https://api.stripe.com?x=1")).toMatchObject({ ok: false });
-    expect(checkBaseUrl("https://api.stripe.com#x")).toMatchObject({ ok: false });
-    expect(checkBaseUrl("not a url")).toMatchObject({ ok: false });
-  });
-
-  it("accepts plain http on loopback only for a server on this machine, when asked", () => {
-    const local = { allowLoopbackHttp: true };
-    expect(checkBaseUrl("http://127.0.0.1:4555/mcp/", local)).toEqual({
-      ok: true,
-      url: "http://127.0.0.1:4555/mcp",
-      host: "127.0.0.1:4555",
-    });
-    expect(checkBaseUrl("http://localhost:1/mcp", local)).toMatchObject({ ok: true });
-    expect(checkBaseUrl("http://[::1]:2/mcp", local)).toMatchObject({ ok: true });
-    expect(checkBaseUrl("http://mcp.example/mcp", local)).toEqual({
-      ok: false,
-      message: "must use https (plain http is accepted only for a server on this machine)",
-    });
   });
 
   it("recognises loopback hosts only", () => {
@@ -78,6 +59,73 @@ describe("base URLs", () => {
     for (const host of ["api.stripe.com", "localhost.evil.test", "10.0.0.1", "128.0.0.1"]) {
       expect(isLoopbackHost(host)).toBe(false);
     }
+  });
+
+  it("recognises hosts on this machine or a private network, as the URL parser writes them", () => {
+    const hostname = (url: string) => new URL(url).hostname;
+    for (const url of [
+      "https://localhost/",
+      "https://LOCALHOST./",
+      "https://app.localhost/",
+      "https://127.0.0.1/",
+      "https://0x7f.1/",
+      "https://2130706433/",
+      "https://0.0.0.0/",
+      "https://10.20.30.40/",
+      "https://100.64.0.1/",
+      "https://169.254.169.254/",
+      "https://172.16.0.1/",
+      "https://172.31.255.255/",
+      "https://192.168.1.1/",
+      "https://198.18.0.1/",
+      "https://224.0.0.1/",
+      "https://[::]/",
+      "https://[::1]/",
+      "https://[::ffff:127.0.0.1]/",
+      "https://[::ffff:10.0.0.1]/",
+      "https://[64:ff9b::192.168.0.1]/",
+      "https://[fe80::1]/",
+      "https://[fc00::1]/",
+      "https://[fd12:3456::1]/",
+      "https://printer.local/",
+      "https://composio.internal/",
+      "https://intranet/",
+    ]) {
+      expect(isPrivateNetworkHost(hostname(url)), url).toBe(true);
+    }
+    for (const url of [
+      "https://backend.composio.dev/",
+      "https://connect.composio.dev/",
+      "https://api.stripe.com/",
+      "https://8.8.8.8/",
+      "https://172.32.0.1/",
+      "https://100.128.0.1/",
+      "https://192.169.0.1/",
+      "https://[2606:4700::1111]/",
+      "https://[::ffff:8.8.8.8]/",
+      "https://localhost.evil.test/",
+    ]) {
+      expect(isPrivateNetworkHost(hostname(url)), url).toBe(false);
+    }
+  });
+
+  it("accepts a vendor URL only when it is HTTPS on a public host, and never repeats it", () => {
+    expect(checkVendorUrl("https://backend.composio.dev/tool_router/trs_1/mcp")).toMatchObject({
+      ok: true,
+    });
+    expect(checkVendorUrl("http://backend.composio.dev/mcp")).toEqual({
+      ok: false,
+      reason: "is not HTTPS",
+    });
+    expect(checkVendorUrl("https://user:pw@backend.composio.dev/mcp")).toEqual({
+      ok: false,
+      reason: "contains credentials",
+    });
+    expect(checkVendorUrl("https://127.0.0.1:4450/mcp")).toEqual({
+      ok: false,
+      reason: "points at this machine or a private network",
+    });
+    expect(checkVendorUrl("not a url")).toEqual({ ok: false, reason: "is not a valid URL" });
   });
 });
 

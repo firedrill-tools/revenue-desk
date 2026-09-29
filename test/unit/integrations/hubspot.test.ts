@@ -6,7 +6,7 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import type { HubSpotConnection } from "../../../src/contracts/integration.js";
 import type { JsonObject } from "../../../src/contracts/json.js";
-import type { Upstream, UpstreamConfig } from "../../../src/gateway/mcp-proxy.js";
+import type { Upstream } from "../../../src/gateway/mcp-proxy.js";
 import { registerTool } from "../../../src/gateway/registry.js";
 import { invalidArgumentsMessage } from "../../../src/gateway/validate.js";
 import { classifyHubSpot } from "../../../src/integrations/hubspot/classify.js";
@@ -30,20 +30,12 @@ const fixture = JSON.parse(
   ),
 ) as { tools: Tool[] };
 
-type StdioTransport = Extract<HubSpotConnection["mcp"], { readonly transport: "stdio" }>;
-
-const stdioMcp: StdioTransport = {
-  transport: "stdio",
-  accessToken: secret(TOKEN),
-  apiBaseUrl: null,
-};
-
 const stdio: HubSpotConnection = {
   integration: "hubspot",
   kind: "mcp",
   profile: "hubspot-mcp-0.4",
   endpointLabel: "api.hubspot.com",
-  mcp: stdioMcp,
+  mcp: { transport: "stdio", accessToken: secret(TOKEN) },
 };
 
 describe("hubspot-mcp-0.4 profile", () => {
@@ -300,118 +292,51 @@ describe("HubSpot rules the forwarded schema does not state", () => {
 });
 
 describe("resolveHubSpot", () => {
-  it("is not configured without a token or an MCP URL", () => {
+  it("is not configured without a token", () => {
     expect(resolveHubSpot(testEnv())).toEqual({
       status: "not_configured",
       missing: ["HUBSPOT_ACCESS_TOKEN"],
     });
   });
 
-  it("resolves the stdio server with an optional https API base URL", () => {
-    expect(resolveHubSpot(testEnv({ hubspot: { accessToken: secret(TOKEN) } }))).toMatchObject({
+  it("always resolves the pinned stdio server with the token, at HubSpot's own host", () => {
+    expect(resolveHubSpot(testEnv({ hubspot: { accessToken: secret(TOKEN) } }))).toEqual({
       status: "configured",
       connection: {
+        integration: "hubspot",
         kind: "mcp",
+        profile: "hubspot-mcp-0.4",
         endpointLabel: "api.hubspot.com",
-        mcp: { transport: "stdio", apiBaseUrl: null },
+        mcp: { transport: "stdio", accessToken: expect.anything() },
       },
     });
-    const based = resolveHubSpot(
-      testEnv({ hubspot: { accessToken: secret(TOKEN), apiBaseUrl: "https://api.hubapi.com/" } }),
-    );
-    expect(based).toMatchObject({
-      status: "configured",
-      connection: {
-        endpointLabel: "api.hubapi.com",
-        mcp: { transport: "stdio", apiBaseUrl: "https://api.hubapi.com" },
-      },
-    });
-    // Plain http is refused, on loopback too: the API base URL is a HubSpot host.
-    for (const apiBaseUrl of ["http://hubspot.example", "http://127.0.0.1:4440/hs/"]) {
-      expect(
-        resolveHubSpot(testEnv({ hubspot: { accessToken: secret(TOKEN), apiBaseUrl } })),
-      ).toMatchObject({
-        status: "invalid",
-        problems: [{ variable: "HUBSPOT_API_BASE_URL" }],
-      });
-    }
   });
 
-  it("prefers HUBSPOT_MCP_URL, with or without a token", () => {
-    expect(
-      resolveHubSpot(
-        testEnv({
-          hubspot: {
-            accessToken: secret(TOKEN),
-            mcpUrl: "https://mcp.example.test/mcp",
-            mcpToken: secret("mcp-token"),
-          },
-        }),
-      ),
-    ).toMatchObject({
-      status: "configured",
-      connection: {
-        endpointLabel: "mcp.example.test",
-        mcp: { transport: "http", url: "https://mcp.example.test/mcp" },
-      },
-    });
-    expect(
-      resolveHubSpot(testEnv({ hubspot: { mcpUrl: "http://127.0.0.1:4441/mcp" } })),
-    ).toMatchObject({
-      status: "configured",
-      connection: { mcp: { transport: "http", token: null } },
-    });
-    expect(
-      resolveHubSpot(
-        testEnv({ hubspot: { mcpUrl: "http://mcp.example.test/mcp", mcpToken: secret("t") } }),
-      ),
-    ).toMatchObject({
+  it("refuses a token with surrounding whitespace, naming only the variable", () => {
+    const resolution = resolveHubSpot(testEnv({ hubspot: { accessToken: secret(` ${TOKEN}\n`) } }));
+    expect(resolution).toMatchObject({
       status: "invalid",
-      problems: [{ variable: "HUBSPOT_MCP_URL" }],
+      problems: [{ variable: "HUBSPOT_ACCESS_TOKEN" }],
     });
+    expect(JSON.stringify(resolution)).not.toContain(TOKEN);
   });
 });
 
 describe("HubSpot upstream configuration", () => {
-  it("launches the pinned server over stdio with an explicit environment", () => {
-    const config = hubspotUpstreamConfig({
-      ...stdio,
-      mcp: { ...stdioMcp, apiBaseUrl: "https://api.hubapi.com/hs" },
-    });
+  it("launches the pinned server over stdio with an explicit environment and no host override", () => {
+    const config = hubspotUpstreamConfig(stdio);
     expect(config.transport).toBe("stdio");
     if (config.transport !== "stdio") return;
     expect(config.command).toBe(process.execPath);
     expect(config.args).toHaveLength(1);
     expect(config.args?.[0]).toMatch(/@hubspot[/\\]mcp-server/);
+    // Exactly these: no BASE_URL_OVERRIDE, so the server calls HubSpot's own host.
     expect(config.env).toEqual({
       PRIVATE_APP_ACCESS_TOKEN: TOKEN,
       DOTENV_CONFIG_PATH: devNull,
       DOTENV_CONFIG_QUIET: "true",
-      BASE_URL_OVERRIDE: "https://api.hubapi.com/hs",
     });
     expect(config.cwd).toMatch(/mcp-server$/);
-  });
-
-  it("sends a Bearer header to an HTTP server when a token is set", () => {
-    const http: UpstreamConfig = hubspotUpstreamConfig({
-      ...stdio,
-      mcp: { transport: "http", url: "https://mcp.example.test/mcp", token: secret("mcp-token") },
-    });
-    expect(http).toEqual({
-      transport: "http",
-      url: "https://mcp.example.test/mcp",
-      headers: { authorization: "Bearer mcp-token" },
-    });
-    expect(
-      hubspotUpstreamConfig({
-        ...stdio,
-        mcp: { transport: "http", url: "https://m.test/mcp", token: null },
-      }),
-    ).toEqual({
-      transport: "http",
-      url: "https://m.test/mcp",
-      headers: {},
-    });
   });
 
   it("exposes the allowlist and upstream through the definition", () => {
@@ -524,10 +449,13 @@ describe("probeHubSpot with a stub upstream", () => {
     ).resolves.toMatchObject({ state: "error" });
 
     // Refused before anything is started, so nothing is contacted.
-    const badLaunch = { ...stdio, mcp: { ...stdioMcp, apiBaseUrl: "http://api.hubapi.com" } };
+    const badLaunch: HubSpotConnection = {
+      ...stdio,
+      mcp: { transport: "stdio", accessToken: secret(`${TOKEN}\nBASE_URL_OVERRIDE=x`) },
+    };
     await expect(probeHubSpot(badLaunch, new AbortController().signal)).resolves.toMatchObject({
       state: "error",
-      detail: "HubSpot API base URL must use https",
+      detail: "The HubSpot access token contains whitespace or control characters",
     });
   });
 

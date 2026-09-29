@@ -6,6 +6,10 @@
 // mutates it. .env.example lists exactly these names, in this order
 // (test/unit/contracts.test.ts checks it).
 //
+// No variable chooses where a service is reached: the vendor endpoints are
+// pinned in code (src/integrations/shared/vendors.ts), so configuration can
+// supply credentials but can never point Revenue Desk at another server.
+//
 // Shared by server, CLI and web: no Node-only globals, no implementation imports.
 
 import type { IntegrationId, PolicyOverrides } from "./integration.js";
@@ -65,11 +69,6 @@ export const ENV_VARS = {
     secret: false,
     description: 'JSON approval modes per action class, e.g. {"financial":"deny"}. Locks them.',
   },
-  AGENT_BUSINESS_DATE: {
-    group: "runtime",
-    secret: false,
-    description: "YYYY-MM-DD the agent treats as today. Default: today in the workspace time zone.",
-  },
   AGENT_APPROVAL_TIMEOUT_MS: {
     group: "runtime",
     secret: false,
@@ -91,33 +90,12 @@ export const ENV_VARS = {
     secret: false,
     description: "The Composio user whose connections are used. No default in code.",
   },
-  COMPOSIO_BASE_URL: {
-    group: "gmail",
-    secret: false,
-    description: "Composio API base URL. Default https://backend.composio.dev.",
-  },
   // --- HubSpot (MCP) -------------------------------------------------------------
   HUBSPOT_ACCESS_TOKEN: {
     group: "hubspot",
     secret: true,
-    description: "Private-app token for the bundled @hubspot/mcp-server over stdio.",
-  },
-  HUBSPOT_API_BASE_URL: {
-    group: "hubspot",
-    secret: false,
     description:
-      "HubSpot API base URL (https) for the stdio server (BASE_URL_OVERRIDE). Default: the server's.",
-  },
-  HUBSPOT_MCP_URL: {
-    group: "hubspot",
-    secret: false,
-    description:
-      "Any Streamable HTTP MCP server for HubSpot (https, or http on this machine); replaces the stdio server when set.",
-  },
-  HUBSPOT_MCP_TOKEN: {
-    group: "hubspot",
-    secret: true,
-    description: "Bearer token for HUBSPOT_MCP_URL.",
+      "Private-app token for HubSpot's official @hubspot/mcp-server 0.4.x, run over stdio.",
   },
   // --- Stripe (API) ---------------------------------------------------------------
   STRIPE_SECRET_KEY: {
@@ -129,11 +107,6 @@ export const ENV_VARS = {
     group: "stripe",
     secret: false,
     description: "Set to 1 to accept a live Stripe key.",
-  },
-  STRIPE_API_BASE_URL: {
-    group: "stripe",
-    secret: false,
-    description: "Default https://api.stripe.com. HTTPS only; a path prefix is kept.",
   },
   STRIPE_API_VERSION: {
     group: "stripe",
@@ -180,8 +153,6 @@ export const ENV_DEFAULTS = {
   PORT: 4320,
   AGENT_STATE_DIR: "./data",
   AGENT_APPROVAL_TIMEOUT_MS: 900_000,
-  COMPOSIO_BASE_URL: "https://backend.composio.dev",
-  STRIPE_API_BASE_URL: "https://api.stripe.com",
 } as const satisfies {
   readonly AGENT_EFFORT: AgentEffort;
   readonly THINKING_DISPLAY_UI: ThinkingDisplay;
@@ -252,8 +223,6 @@ export type AgentEnv = {
     readonly stateDir: string;
     /** From AGENT_POLICY; these classes are locked in the Settings screen. */
     readonly policyOverrides: PolicyOverrides;
-    /** YYYY-MM-DD, or null for today in the workspace time zone. */
-    readonly businessDate: string | null;
     readonly approvalTimeoutMs: number;
     readonly dotenvPath: string | null;
   };
@@ -262,18 +231,13 @@ export type AgentEnv = {
   readonly composio: {
     readonly apiKey: SecretValue | null;
     readonly userId: string | null;
-    readonly baseUrl: string;
   };
   readonly hubspot: {
     readonly accessToken: SecretValue | null;
-    readonly apiBaseUrl: string | null;
-    readonly mcpUrl: string | null;
-    readonly mcpToken: SecretValue | null;
   };
   readonly stripe: {
     readonly secretKey: SecretValue | null;
     readonly allowLive: boolean;
-    readonly apiBaseUrl: string;
     readonly apiVersion: string | null;
   };
 };

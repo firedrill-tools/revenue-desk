@@ -3,22 +3,20 @@ import type { HubSpotConnection } from "../../../src/contracts/integration.js";
 import type { JsonObject } from "../../../src/contracts/json.js";
 import { classifyHubSpot } from "../../../src/integrations/hubspot/classify.js";
 import { createHubSpotIntegration } from "../../../src/integrations/hubspot/definition.js";
-import {
-  createHubSpotApiTools,
-  HUBSPOT_DEFAULT_API_BASE_URL,
-  OWNERS_TOOL,
-} from "../../../src/integrations/hubspot/owners.js";
+import { createHubSpotApiTools, OWNERS_TOOL } from "../../../src/integrations/hubspot/owners.js";
 import { callContext, type Reply, SETTINGS, secret, stubFetch } from "./helpers.js";
+
+// The HTTP layer is a fetch stub local to each test: nothing leaves the process.
 
 const TOKEN = "pat-na1-owners-unit-token";
 
-const stdio = (apiBaseUrl: string | null): HubSpotConnection => ({
+const connection: HubSpotConnection = {
   integration: "hubspot",
   kind: "mcp",
   profile: "hubspot-mcp-0.4",
-  endpointLabel: "hubspot.test",
-  mcp: { transport: "stdio", accessToken: secret(TOKEN), apiBaseUrl },
-});
+  endpointLabel: "api.hubspot.com",
+  mcp: { transport: "stdio", accessToken: secret(TOKEN) },
+};
 
 const JORDAN = {
   id: "71001",
@@ -31,12 +29,9 @@ const JORDAN = {
   createdAt: "2025-10-01T14:00:00.000Z",
 };
 
-function setup(
-  reply: (index: number) => Reply,
-  apiBaseUrl: string | null = "http://127.0.0.1:4455/hs",
-) {
+function setup(reply: (index: number) => Reply) {
   const mock = stubFetch((_, index) => reply(index));
-  const [tool] = createHubSpotApiTools(stdio(apiBaseUrl), mock.http);
+  const [tool] = createHubSpotApiTools(connection, mock.http);
   if (tool === undefined) throw new Error("no owners tool");
   const run = (args: JsonObject) => tool.run(args, callContext());
   return { mock, tool, run };
@@ -60,8 +55,8 @@ describe("HubSpot owners lookup", () => {
     });
     const request = mock.requests[0];
     expect(request?.method).toBe("GET");
-    // The base URL's path prefix is kept, and the token goes only in the header.
-    expect(request?.url.pathname).toBe("/hs/crm/v3/owners/71001");
+    // HubSpot's REST API, and the token goes only in the header.
+    expect(request?.url.href).toBe("https://api.hubapi.com/crm/v3/owners/71001");
     expect(request?.headers.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
@@ -97,19 +92,13 @@ describe("HubSpot owners lookup", () => {
     });
   });
 
-  it("uses the stdio server's default host, and is not offered over an HTTP MCP server", async () => {
-    const { mock, run } = setup(() => ({ json: JORDAN }), null);
-    await run({ owner_id: "71001" });
-    expect(mock.requests[0]?.url.origin).toBe(HUBSPOT_DEFAULT_API_BASE_URL);
-    const http: HubSpotConnection = {
-      ...stdio(null),
-      mcp: { transport: "http", url: "https://mcp.hubspot.test/mcp", token: secret("t") },
-    };
-    expect(createHubSpotApiTools(http)).toEqual([]);
-    expect(createHubSpotIntegration().apiTools(http)).toEqual([]);
+  it("always calls HubSpot's own REST host, and is offered with every connection", async () => {
+    const { mock, run } = setup(() => ({ json: { results: [] } }));
+    await run({});
+    expect(mock.requests[0]?.url.origin).toBe("https://api.hubapi.com");
     expect(
       createHubSpotIntegration()
-        .apiTools(stdio(null))
+        .apiTools(connection)
         .map((tool) => tool.name),
     ).toEqual([OWNERS_TOOL]);
   });

@@ -1,5 +1,7 @@
 import { format } from "node:util";
 import { Composio, type ComposioLogger, type ToolRouterCreateSessionConfig } from "@composio/core";
+import { checkVendorUrl } from "../shared/url.js";
+import { COMPOSIO_API_BASE_URL } from "../shared/vendors.js";
 
 // ---------------------------------------------------------------------------
 // Composio session for Gmail, Google Calendar, QuickBooks and Slack.
@@ -18,7 +20,13 @@ import { Composio, type ComposioLogger, type ToolRouterCreateSessionConfig } fro
 // It never executes a Composio tool. Tool calls travel over the session's MCP
 // endpoint through the gateway, where the approval policy applies.
 //
-// The session MCP endpoint must be HTTPS.
+// The Composio API host is pinned (COMPOSIO_API_BASE_URL): the client is
+// always given it, so neither COMPOSIO_BASE_URL in the environment nor the
+// Composio CLI's user config file can redirect the SDK. As defence in depth,
+// the session MCP endpoint and every Connect sign-in link Composio returns
+// must be HTTPS on a public host: one on this machine (loopback,
+// *.localhost) or a private network is refused before anything connects to
+// it or shows it.
 //
 // Secrets: the API key and the session MCP headers (which carry the key) are
 // never logged. Use describeEndpoint() for anything that is printed or stored.
@@ -228,8 +236,6 @@ function writeStderr(args: unknown[]): void {
 
 export interface ComposioClientOptions {
   apiKey: string;
-  /** Optional API base URL; the SDK default is https://backend.composio.dev. */
-  baseURL?: string;
   /**
    * SDK log sink. The Composio logger is process-wide: the last configured
    * instance wins. Defaults to stderr so a headless run's stdout stays clean.
@@ -238,7 +244,9 @@ export interface ComposioClientOptions {
 }
 
 /**
- * The real Composio client. The npm version check is disabled (it would fetch
+ * The real Composio client, always at COMPOSIO_API_BASE_URL: the SDK would
+ * otherwise read COMPOSIO_BASE_URL from the environment or a base URL from
+ * its user config file. The npm version check is disabled (it would fetch
  * the registry and could print an upgrade banner through the logger) and
  * anonymous usage analytics are off.
  */
@@ -246,7 +254,7 @@ export function createComposioClient(options: ComposioClientOptions): ComposioCl
   if (!options.apiKey) throw new ComposioSessionError("config", "COMPOSIO_API_KEY is not set");
   const composio = new Composio({
     apiKey: options.apiKey,
-    ...(options.baseURL ? { baseURL: options.baseURL } : {}),
+    baseURL: COMPOSIO_API_BASE_URL,
     disableVersionCheck: true,
     allowTracking: false,
     logger: options.logger ?? stderrComposioLogger,
@@ -430,8 +438,6 @@ export interface ComposioSessionManagerOptions {
   apiKey: string;
   /** COMPOSIO_USER_ID. Required; there is no default. */
   userId: string;
-  /** COMPOSIO_BASE_URL. */
-  baseURL?: string;
   logger?: ComposioLogger;
   /**
    * The toolkits and access level the app uses. Methods use it unless a call
@@ -470,7 +476,6 @@ export class ComposioSessionManager {
       options.client ??
       createComposioClient({
         apiKey: options.apiKey,
-        ...(options.baseURL ? { baseURL: options.baseURL } : {}),
         ...(options.logger ? { logger: options.logger } : {}),
       });
   }
@@ -527,18 +532,19 @@ export class ComposioSessionManager {
     });
   }
 
-  /** The hosted MCP endpoint of the session. The headers carry the credential. */
+  /**
+   * The hosted MCP endpoint of the session. The headers carry the credential.
+   * Refused unless it is HTTPS on a public host (checkVendorUrl).
+   */
   async mcpEndpoint(selection: SessionSelection = this.selection): Promise<ComposioMcpEndpoint> {
     const session = await this.getSession(selection);
     const { url, type, headers } = session.mcp;
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new ComposioSessionError("destination", "Composio returned an invalid MCP URL");
-    }
-    if (parsed.protocol !== "https:") {
-      throw new ComposioSessionError("destination", "Composio returned a non-HTTPS MCP URL");
+    const checked = checkVendorUrl(url);
+    if (!checked.ok) {
+      throw new ComposioSessionError(
+        "destination",
+        `Composio returned a session MCP URL that ${checked.reason}; Revenue Desk does not connect to it`,
+      );
     }
     if (type !== "http" && type !== "sse") {
       throw new ComposioSessionError(
@@ -580,7 +586,8 @@ export class ComposioSessionManager {
    * Starts Composio's hosted sign-in for a toolkit and returns the URL the
    * user opens. Every call starts a new link flow, so call it only when the
    * user presses Connect. Composio sends the user back to `callbackUrl`.
-   * Uses the configured session, which must include the toolkit.
+   * Uses the configured session, which must include the toolkit. The link is
+   * refused unless it is HTTPS on a public host (checkVendorUrl).
    */
   async authorize(
     toolkit: ComposioToolkit,
@@ -607,6 +614,13 @@ export class ComposioSessionManager {
       throw new ComposioSessionError(
         "no_redirect",
         `Composio did not return a sign-in link for ${TOOLKIT_LABEL[toolkit]}`,
+      );
+    }
+    const link = checkVendorUrl(request.redirectUrl);
+    if (!link.ok) {
+      throw new ComposioSessionError(
+        "destination",
+        `Composio returned a sign-in link for ${TOOLKIT_LABEL[toolkit]} that ${link.reason}; Revenue Desk does not open it`,
       );
     }
     return { redirectUrl: request.redirectUrl, connectionRequestId: request.id };

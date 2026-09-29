@@ -134,7 +134,7 @@ describe("plannedConnections", () => {
           kind: "api",
           profile: "stripe-api",
           endpointLabel: "api.stripe.com",
-          api: { baseUrl: "https://api.stripe.com", secretKey, keyMode: "test", apiVersion: null },
+          api: { secretKey, keyMode: "test", apiVersion: null },
         },
       },
       {

@@ -17,7 +17,6 @@ import {
 function setup(reply: Reply | ((index: number) => Reply), timezone?: string) {
   const mock = stubFetch((_, index) => (typeof reply === "function" ? reply(index) : reply));
   const client = new StripeClient({
-    baseUrl: "https://api.stripe.test",
     secretKey: secret("sk_test_tools"),
     apiVersion: null,
     allowLive: false,

@@ -20,7 +20,7 @@ import { GmailDraftMemory } from "../../../src/integrations/gmail/run-memory.js"
 import {
   type ComposioTestSession,
   gmailConnection,
-  hubspotHttpConnection,
+  hubspotConnection,
   plansWith,
   stripeConnection,
   TEST_SETTINGS,
@@ -136,7 +136,6 @@ function memoryUpstreams() {
     composio,
     catalog: testCatalog({ composio }),
     selections,
-    crmUrl: "memory://crm/mcp",
   };
 }
 
@@ -159,14 +158,14 @@ async function open(
 
 describe("openRunGateway", () => {
   it("connects every kind, registers the offered tools and reports all six integrations", async () => {
-    const { crmUrl, catalog, connect } = memoryUpstreams();
+    const { catalog, connect } = memoryUpstreams();
     const gateway = await open({
       plans: plansWith([
         { integration: "stripe", status: "available", connection: stripeConnection() },
         {
           integration: "hubspot",
           status: "available",
-          connection: hubspotHttpConnection(crmUrl, CRM_TOKEN),
+          connection: hubspotConnection(CRM_TOKEN),
         },
         { integration: "gmail", status: "available", connection: gmailConnection() },
       ]),
@@ -234,13 +233,13 @@ describe("openRunGateway", () => {
   });
 
   it("routes each server's calls to its own integration", async () => {
-    const { crmUrl, catalog, connect, calls, headers } = memoryUpstreams();
+    const { catalog, connect, calls, headers } = memoryUpstreams();
     const gateway = await open({
       plans: plansWith([
         {
           integration: "hubspot",
           status: "available",
-          connection: hubspotHttpConnection(crmUrl, CRM_TOKEN),
+          connection: hubspotConnection(CRM_TOKEN),
         },
         { integration: "gmail", status: "available", connection: gmailConnection() },
       ]),
@@ -378,14 +377,14 @@ describe("openRunGateway", () => {
     const gateway = await open({
       plans: plansWith([
         { integration: "stripe", status: "available", connection: stripeConnection() },
-        {
-          integration: "hubspot",
-          status: "available",
-          connection: hubspotHttpConnection("http://127.0.0.1:9/mcp", CRM_TOKEN),
-        },
+        { integration: "hubspot", status: "available", connection: hubspotConnection(CRM_TOKEN) },
         { integration: "gmail", status: "available", connection: gmailConnection() },
       ]),
       catalog,
+      // The HubSpot upstream cannot be reached: its connection fails.
+      connectUpstream: async () => {
+        throw new Error("could not connect to the MCP server: connection refused");
+      },
       redact: (text) => text.replaceAll(`composio-key-${"c".repeat(20)}`, "[redacted]"),
       connectTimeoutMs: 2_000,
     });
@@ -441,13 +440,13 @@ describe("openRunGateway", () => {
   });
 
   it("closes its upstream connections once", async () => {
-    const { crmUrl, connect } = memoryUpstreams();
+    const { connect } = memoryUpstreams();
     const gateway = await open({
       plans: plansWith([
         {
           integration: "hubspot",
           status: "available",
-          connection: hubspotHttpConnection(crmUrl, CRM_TOKEN),
+          connection: hubspotConnection(CRM_TOKEN),
         },
       ]),
       connectUpstream: connect,

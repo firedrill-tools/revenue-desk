@@ -44,9 +44,8 @@ function registry(): ToolRegistry {
       integration: "stripe",
       kind: "api",
       profile: "stripe-api",
-      endpointLabel: "x",
+      endpointLabel: "api.stripe.com",
       api: {
-        baseUrl: "http://127.0.0.1:9",
         secretKey: { reveal: () => "k", toString: () => "k", toJSON: () => "k" },
         keyMode: "test",
         apiVersion: null,

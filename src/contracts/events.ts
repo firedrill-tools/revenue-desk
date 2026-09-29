@@ -378,7 +378,7 @@ type RunTurnCommon = {
   readonly settings: WorkspaceSettings;
   /** Effective modes after AGENT_POLICY, saved policies and CLI --policy. */
   readonly policy: PolicyModes;
-  /** YYYY-MM-DD the prompt states as today. */
+  /** YYYY-MM-DD the prompt states as today: today in the workspace time zone. */
   readonly businessDate: string;
   /** One entry per integration. */
   readonly connections: readonly ConnectionPlan[];

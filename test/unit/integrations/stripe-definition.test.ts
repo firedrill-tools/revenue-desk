@@ -28,25 +28,16 @@ describe("resolveStripe", () => {
     });
   });
 
-  it("resolves a test key with the host as the endpoint label", () => {
-    const resolution = resolveStripe(
-      stripeEnv("sk_test_abc", {
-        apiBaseUrl: "https://proxy.example/stripe/",
-        apiVersion: "2025-09-30.clover",
-      }),
-    );
+  it("resolves a test key, always at Stripe's own host", () => {
+    const resolution = resolveStripe(stripeEnv("sk_test_abc", { apiVersion: "2025-09-30.clover" }));
     expect(resolution.status).toBe("configured");
     if (resolution.status !== "configured") return;
-    expect(resolution.connection).toMatchObject({
+    expect(resolution.connection).toEqual({
       integration: "stripe",
       kind: "api",
       profile: "stripe-api",
-      endpointLabel: "proxy.example",
-      api: {
-        baseUrl: "https://proxy.example/stripe",
-        keyMode: "test",
-        apiVersion: "2025-09-30.clover",
-      },
+      endpointLabel: "api.stripe.com",
+      api: { secretKey: expect.anything(), keyMode: "test", apiVersion: "2025-09-30.clover" },
     });
     expect(JSON.stringify(resolution)).not.toContain("sk_test_abc");
     expect(resolveStripe(stripeEnv("rk_test_abc")).status).toBe("configured");
@@ -66,20 +57,8 @@ describe("resolveStripe", () => {
     });
   });
 
-  it("refuses publishable keys, bad base URLs and malformed versions", () => {
+  it("refuses publishable keys and malformed versions", () => {
     expect(resolveStripe(stripeEnv("pk_test_abc"))).toMatchObject({ status: "invalid" });
-    expect(
-      resolveStripe(stripeEnv("sk_test_abc", { apiBaseUrl: "http://api.stripe.com" })),
-    ).toMatchObject({
-      status: "invalid",
-      problems: [{ variable: "STRIPE_API_BASE_URL" }],
-    });
-    expect(
-      resolveStripe(stripeEnv("sk_test_abc", { apiBaseUrl: "http://127.0.0.1:4410" })),
-    ).toMatchObject({
-      status: "invalid",
-      problems: [{ variable: "STRIPE_API_BASE_URL" }],
-    });
     expect(resolveStripe(stripeEnv("sk_test_abc", { apiVersion: "2025 09" }))).toMatchObject({
       status: "invalid",
       problems: [{ variable: "STRIPE_API_VERSION" }],
@@ -405,9 +384,8 @@ describe("Stripe probe and definition", () => {
     integration: "stripe",
     kind: "api",
     profile: "stripe-api",
-    endpointLabel: "api.stripe.test",
+    endpointLabel: "api.stripe.com",
     api: {
-      baseUrl: "https://api.stripe.test",
       secretKey: secret("sk_test_probe"),
       keyMode: "test",
       apiVersion: null,
@@ -423,7 +401,7 @@ describe("Stripe probe and definition", () => {
         accountHint: null,
       },
     );
-    expect(mock.requests[0]?.url.pathname).toBe("/v1/balance");
+    expect(mock.requests[0]?.url.href).toBe("https://api.stripe.com/v1/balance");
     expect(mock.requests[0]?.method).toBe("GET");
   });
 

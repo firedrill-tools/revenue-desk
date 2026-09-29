@@ -1,15 +1,18 @@
 // Stripe configuration (docs/ARCHITECTURE.md §3): STRIPE_SECRET_KEY,
-// ALLOW_LIVE_STRIPE, STRIPE_API_BASE_URL, STRIPE_API_VERSION.
+// ALLOW_LIVE_STRIPE, STRIPE_API_VERSION. The API host is pinned
+// (src/integrations/shared/vendors.ts).
 
 import type { AgentEnv, ConfigProblem } from "../../contracts/env.js";
 import type { ConnectionResolution } from "../../contracts/integration.js";
-import { checkUrlVariable, hasSecret, hasValue, secretProblem } from "../shared/resolve.js";
+import { hasSecret, hasValue, secretProblem } from "../shared/resolve.js";
+import { hostOf } from "../shared/url.js";
+import { STRIPE_API_BASE_URL } from "../shared/vendors.js";
 
 const TEST_KEY = /^(?:sk|rk)_test_/;
 const LIVE_KEY = /^(?:sk|rk)_live_/;
 
 export function resolveStripe(env: AgentEnv): ConnectionResolution<"stripe"> {
-  const { secretKey, allowLive, apiBaseUrl, apiVersion } = env.stripe;
+  const { secretKey, allowLive, apiVersion } = env.stripe;
   if (!hasSecret(secretKey)) return { status: "not_configured", missing: ["STRIPE_SECRET_KEY"] };
 
   const problems: ConfigProblem[] = [];
@@ -33,9 +36,6 @@ export function resolveStripe(env: AgentEnv): ConnectionResolution<"stripe"> {
     });
   }
 
-  const url = checkUrlVariable("STRIPE_API_BASE_URL", apiBaseUrl);
-  if (!url.ok) problems.push(url.problem);
-
   const version = hasValue(apiVersion) ? apiVersion.trim() : null;
   if (version !== null && !/^[0-9A-Za-z._-]+$/.test(version)) {
     problems.push({
@@ -44,15 +44,15 @@ export function resolveStripe(env: AgentEnv): ConnectionResolution<"stripe"> {
     });
   }
 
-  if (problems.length > 0 || !url.ok) return { status: "invalid", problems };
+  if (problems.length > 0) return { status: "invalid", problems };
   return {
     status: "configured",
     connection: {
       integration: "stripe",
       kind: "api",
       profile: "stripe-api",
-      endpointLabel: url.value.host,
-      api: { baseUrl: url.value.url, secretKey, keyMode, apiVersion: version },
+      endpointLabel: hostOf(STRIPE_API_BASE_URL),
+      api: { secretKey, keyMode, apiVersion: version },
     },
   };
 }

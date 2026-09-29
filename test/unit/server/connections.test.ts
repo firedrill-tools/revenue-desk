@@ -42,12 +42,15 @@ const CONNECTED_SLACK: ComposioToolkitState = {
   connection: { isActive: true, connectedAccount: { id: "ca_slack_000222", status: "ACTIVE" } },
 };
 
-function composioClient(options: { readonly failAuthorize?: string } = {}) {
+function composioClient(
+  options: { readonly failAuthorize?: string; readonly linkOrigin?: string } = {},
+) {
   const authorize = vi.fn(async (toolkit: string, request?: { callbackUrl?: string }) => {
     if (options.failAuthorize !== undefined) throw new Error(options.failAuthorize);
+    const origin = options.linkOrigin ?? "https://connect.composio.test";
     return {
       id: "cr_1",
-      redirectUrl: `https://connect.composio.test/link/${toolkit}?next=${request?.callbackUrl ?? ""}`,
+      redirectUrl: `${origin}/link/${toolkit}?next=${request?.callbackUrl ?? ""}`,
     };
   });
   const toolkits = vi.fn(async () => ({
@@ -70,11 +73,7 @@ function composioEnv(): AgentEnv {
   const env = testEnv(tempStateDir());
   return {
     ...env,
-    composio: {
-      apiKey: secret(TEST_SECRET),
-      userId: "user_test",
-      baseUrl: "https://backend.composio.dev",
-    },
+    composio: { apiKey: secret(TEST_SECRET), userId: "user_test" },
   };
 }
 
@@ -245,5 +244,21 @@ describe("ConnectionService over the production integrations", () => {
     );
     expect(outcome).toMatchObject({ ok: false, code: "upstream_error" });
     expect(JSON.stringify(outcome)).not.toContain(TEST_SECRET);
+  });
+
+  it("never hands the browser a sign-in link on this machine or a private network", async () => {
+    for (const linkOrigin of ["https://127.0.0.1:4390", "https://localhost", "https://10.0.0.4"]) {
+      const stub = composioClient({ linkOrigin });
+      const outcome = await service(stub.client).connections.connect(
+        "gmail",
+        "http://127.0.0.1:4320/connections?connected=gmail",
+      );
+      expect(outcome, linkOrigin).toEqual({
+        ok: false,
+        code: "upstream_error",
+        message:
+          "Composio could not start the sign-in: Composio returned a sign-in link for Gmail that points at this machine or a private network; Revenue Desk does not open it",
+      });
+    }
   });
 });

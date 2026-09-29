@@ -1,10 +1,10 @@
 // Turns a resolved HubSpot connection into the gateway's upstream MCP
-// configuration. Secrets are revealed here, at the point of use, and go only
-// to the upstream: the Claude CLI child never sees them.
+// configuration. The token is revealed here, at the point of use, and goes
+// only to the upstream: the Claude CLI child never sees it.
 //
-// stdio: the pinned @hubspot/mcp-server through launch.ts (process.execPath
-// plus the resolved bin, an explicit child environment, dotenv pointed at the
-// null device). http: any Streamable HTTP MCP server with an optional Bearer.
+// Always the pinned @hubspot/mcp-server over stdio through launch.ts
+// (process.execPath plus the resolved bin, an explicit child environment
+// without BASE_URL_OVERRIDE, dotenv pointed at the null device).
 
 import type { HubSpotConnection } from "../../contracts/integration.js";
 import type { UpstreamConfig } from "../../gateway/mcp-proxy.js";
@@ -22,17 +22,8 @@ export function hubspotUpstreamConfig(
   connection: HubSpotConnection,
   overrides: HubSpotLaunchOverrides = {},
 ): UpstreamConfig {
-  const mcp = connection.mcp;
-  if (mcp.transport === "http") {
-    return {
-      transport: "http",
-      url: mcp.url,
-      headers: mcp.token === null ? {} : { authorization: `Bearer ${mcp.token.reveal()}` },
-    };
-  }
   const launch = buildHubSpotStdioLaunch({
-    accessToken: mcp.accessToken.reveal(),
-    ...(mcp.apiBaseUrl === null ? {} : { apiBaseUrl: mcp.apiBaseUrl }),
+    accessToken: connection.mcp.accessToken.reveal(),
     ...(overrides.execPath === undefined ? {} : { execPath: overrides.execPath }),
     ...(overrides.resolveFrom === undefined ? {} : { resolveFrom: overrides.resolveFrom }),
   });

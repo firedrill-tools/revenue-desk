@@ -31,22 +31,12 @@ describe("loadAgentEnv", () => {
       port: 4320,
       stateDir: "/work/data",
       policyOverrides: {},
-      businessDate: null,
       approvalTimeoutMs: 900_000,
       dotenvPath: null,
     });
-    expect(env.composio).toEqual({
-      apiKey: null,
-      userId: null,
-      baseUrl: "https://backend.composio.dev",
-    });
-    expect(env.stripe).toMatchObject({ apiBaseUrl: "https://api.stripe.com", allowLive: false });
-    expect(env.hubspot).toEqual({
-      accessToken: null,
-      apiBaseUrl: null,
-      mcpUrl: null,
-      mcpToken: null,
-    });
+    expect(env.composio).toEqual({ apiKey: null, userId: null });
+    expect(env.stripe).toEqual({ secretKey: null, allowLive: false, apiVersion: null });
+    expect(env.hubspot).toEqual({ accessToken: null });
     expect(env.passthrough).toEqual({
       HTTP_PROXY: null,
       HTTPS_PROXY: null,
@@ -66,7 +56,6 @@ describe("loadAgentEnv", () => {
       PORT: "5000",
       AGENT_STATE_DIR: "state",
       AGENT_POLICY: '{"financial":"deny","outbound":"auto"}',
-      AGENT_BUSINESS_DATE: "2026-02-28",
       AGENT_APPROVAL_TIMEOUT_MS: "60000",
       COMPOSIO_USER_ID: "  ",
       STRIPE_SECRET_KEY: "sk_test_abcdefgh",
@@ -86,7 +75,6 @@ describe("loadAgentEnv", () => {
       port: 5000,
       stateDir: "/work/state",
       policyOverrides: { financial: "deny", outbound: "auto" },
-      businessDate: "2026-02-28",
       approvalTimeoutMs: 60_000,
     });
     expect(env.composio.userId).toBeNull();
@@ -105,14 +93,12 @@ describe("loadAgentEnv", () => {
       AGENT_MAX_BUDGET_USD: "-1",
       PORT: "70000",
       AGENT_POLICY: '{"refunds":"auto"}',
-      AGENT_BUSINESS_DATE: "2026-02-30",
       AGENT_APPROVAL_TIMEOUT_MS: "abc",
       ALLOW_LIVE_STRIPE: "yes-please",
     });
     expect(found.map((problem) => problem.variable).sort()).toEqual(
       [
         "AGENT_APPROVAL_TIMEOUT_MS",
-        "AGENT_BUSINESS_DATE",
         "AGENT_EFFORT",
         "AGENT_MAX_BUDGET_USD",
         "AGENT_MAX_TURNS",
@@ -184,24 +170,34 @@ describe("configuredSecrets", () => {
   });
 });
 
-describe("variables that exist only for tests", () => {
-  it("are gone: the model endpoint, the sandbox flag and the HubSpot command override", () => {
-    for (const name of [
-      "ANTHROPIC_BASE_URL",
-      "AGENT_SANDBOX",
-      "HUBSPOT_MCP_COMMAND",
-      "HUBSPOT_MCP_ARGS",
-    ]) {
-      expect(ENV_VAR_NAMES).not.toContain(name);
-    }
-    // Setting them changes nothing: they are not read.
-    expect(
-      ok({
-        ANTHROPIC_BASE_URL: "http://127.0.0.1:9999",
-        AGENT_SANDBOX: "1",
-        HUBSPOT_MCP_COMMAND: "node",
-      }),
-    ).toEqual(ok({}));
+describe("variables that could point Revenue Desk somewhere other than the real services", () => {
+  // Endpoints, a replacement MCP server and a fixed date: none is configuration.
+  const REMOVED = {
+    ANTHROPIC_BASE_URL: "https://model.example",
+    AGENT_SANDBOX: "1",
+    HUBSPOT_MCP_COMMAND: "node",
+    HUBSPOT_MCP_ARGS: "server.js",
+    COMPOSIO_BASE_URL: "https://composio.example",
+    STRIPE_API_BASE_URL: "https://stripe.example",
+    HUBSPOT_API_BASE_URL: "https://hubspot.example",
+    HUBSPOT_MCP_URL: "https://mcp.example/mcp",
+    HUBSPOT_MCP_TOKEN: "mcp-token-value",
+    AGENT_BUSINESS_DATE: "2026-01-15",
+  };
+
+  it("are gone from the contract", () => {
+    for (const name of Object.keys(REMOVED)) expect(ENV_VAR_NAMES).not.toContain(name);
+  });
+
+  it("change nothing when set: they are not read", () => {
+    const configured = {
+      COMPOSIO_API_KEY: "ak_x",
+      COMPOSIO_USER_ID: "u",
+      HUBSPOT_ACCESS_TOKEN: "t",
+    };
+    const env = ok({ ...configured, ...REMOVED });
+    expect(env).toEqual(ok(configured));
+    expect(configuredSecrets(env)).not.toContain(REMOVED.HUBSPOT_MCP_TOKEN);
   });
 });
 

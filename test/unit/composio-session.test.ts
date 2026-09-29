@@ -350,23 +350,28 @@ describe("ComposioSessionManager", () => {
     await expect(manager(ws.client).mcpEndpoint()).rejects.toMatchObject({ code: "upstream" });
   });
 
-  it("refuses a plain-http session endpoint, on loopback too and whatever the base URL", async () => {
-    const loopbackMcp = "http://127.0.0.1:4450/tool_router/trs_stub/mcp";
-    const withBase = (baseURL: string | undefined, url: string) => {
+  it("refuses a session endpoint on this machine or a private network, HTTPS or not", async () => {
+    const endpoint = (url: string) => {
       const { client } = stubClient(() => stubSession("s", { mcp: { url } }));
-      return new ComposioSessionManager({
-        apiKey: API_KEY,
-        userId: USER_ID,
-        client,
-        ...(baseURL === undefined ? {} : { baseURL }),
-      }).mcpEndpoint();
+      return manager(client).mcpEndpoint();
     };
-    for (const baseURL of ["http://127.0.0.1:4450", "https://backend.composio.dev", undefined]) {
-      await expect(withBase(baseURL, loopbackMcp)).rejects.toMatchObject({ code: "destination" });
+    for (const url of [
+      "http://127.0.0.1:4450/tool_router/trs_stub/mcp",
+      "https://127.0.0.1:4450/tool_router/trs_stub/mcp",
+      "https://localhost/tool_router/trs_stub/mcp",
+      "https://composio.localhost/tool_router/trs_stub/mcp",
+      "https://0x7f.1/tool_router/trs_stub/mcp",
+      "https://169.254.169.254/latest/meta-data",
+      "https://172.20.0.2/tool_router/trs_stub/mcp",
+      "https://[::ffff:127.0.0.1]/tool_router/trs_stub/mcp",
+      "https://[fe80::1]/tool_router/trs_stub/mcp",
+      "https://mcp-server/tool_router/trs_stub/mcp",
+    ]) {
+      await expect(endpoint(url), url).rejects.toMatchObject({ code: "destination" });
     }
-    await expect(
-      withBase("http://127.0.0.1:4450", "http://backend.composio.test/mcp"),
-    ).rejects.toMatchObject({ code: "destination" });
+    const refused = await endpoint("https://10.0.0.8/mcp").catch((error: unknown) => error);
+    expect(String(refused)).toContain("points at this machine or a private network");
+    await expect(endpoint(MCP_URL)).resolves.toMatchObject({ url: MCP_URL });
   });
 });
 
@@ -548,6 +553,25 @@ describe("authorize", () => {
       /not in this session/,
     );
     expect(session.authorize).not.toHaveBeenCalled();
+  });
+
+  it("refuses a sign-in link that is not HTTPS on a public host", async () => {
+    for (const link of [
+      "http://connect.composio.test/link/abc",
+      "https://127.0.0.1:4390/link/abc",
+      "https://localhost/link/abc",
+      "https://192.168.1.20/link/abc",
+      "https://[::1]/link/abc",
+      "https://user:pw@connect.composio.test/link/abc",
+      "javascript:alert(1)",
+    ]) {
+      const session = stubSession("s0", { redirectUrl: link });
+      const { client } = stubClient(() => session);
+      await expect(
+        manager(client).authorize("gmail", "https://x.test/cb"),
+        link,
+      ).rejects.toMatchObject({ code: "destination" });
+    }
   });
 
   it("fails clearly when Composio returns no link", async () => {

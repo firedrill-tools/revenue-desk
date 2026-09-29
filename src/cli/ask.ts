@@ -196,7 +196,7 @@ class AskInvocation {
     );
     const model = modelSettings(command, settings, env);
     this.#model = model;
-    const businessDate = env.runtime.businessDate ?? this.#today(settings.timezone);
+    const businessDate = this.#today(settings.timezone);
 
     const plans = await this.#untilStopped(
       services.planConnections({ env, policy, signal: this.#stopper.signal }),

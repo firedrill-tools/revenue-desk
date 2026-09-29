@@ -194,7 +194,7 @@ describe("definitions and profiles", () => {
 
 describe("resolution and availability", () => {
   const env = testEnv({
-    stripe: { secretKey: secret(STRIPE_KEY), apiBaseUrl: "https://proxy.example" },
+    stripe: { secretKey: secret(STRIPE_KEY) },
     composio: { apiKey: secret("ak_registry_key"), userId: "u1" },
   });
 
@@ -267,7 +267,7 @@ describe("resolution and availability", () => {
 
 describe("checking connections", () => {
   const env = testEnv({
-    stripe: { secretKey: secret(STRIPE_KEY), apiBaseUrl: "https://proxy.example" },
+    stripe: { secretKey: secret(STRIPE_KEY) },
   });
   const now = () => new Date("2026-09-28T12:00:00Z");
 
@@ -286,12 +286,14 @@ describe("checking connections", () => {
       profile: "stripe-api",
       state: "connected",
       detail: "Stripe test-mode key accepted; balance is readable.",
-      endpointLabel: "proxy.example",
+      endpointLabel: "api.stripe.com",
       accountHint: null,
       missing: [],
       checkedAt: "2026-09-28T12:00:00.000Z",
     });
-    expect(mock.requests.map((request) => request.url.pathname)).toEqual(["/v1/balance"]);
+    expect(mock.requests.map((request) => request.url.href)).toEqual([
+      "https://api.stripe.com/v1/balance",
+    ]);
   });
 
   it("never contacts an unconfigured integration, and turns a throwing probe into an error", async () => {

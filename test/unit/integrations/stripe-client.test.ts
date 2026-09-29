@@ -12,7 +12,6 @@ function client(
   overrides: Partial<ConstructorParameters<typeof StripeClient>[0]> = {},
 ) {
   return new StripeClient({
-    baseUrl: "https://api.stripe.test/prefix",
     secretKey: secret(KEY),
     apiVersion: "2025-09-30.clover",
     allowLive: false,
@@ -57,7 +56,7 @@ describe("Stripe form encoding", () => {
 });
 
 describe("StripeClient", () => {
-  it("sends a read with Bearer auth, the API version and bracket query parameters under the prefix", async () => {
+  it("sends a read to api.stripe.com with Bearer auth, the API version and bracket query parameters", async () => {
     const mock = stubFetch(() => ({ json: { object: "list", data: [] } }));
     await client(mock).get(
       "/v1/charges",
@@ -66,7 +65,8 @@ describe("StripeClient", () => {
     );
     const [request] = mock.requests;
     expect(request?.method).toBe("GET");
-    expect(request?.url.pathname).toBe("/prefix/v1/charges");
+    expect(request?.url.origin).toBe("https://api.stripe.com");
+    expect(request?.url.pathname).toBe("/v1/charges");
     expect(paramsOf(request?.url.search ?? "")).toEqual({
       customer: "cus_1",
       "created[gte]": "5",

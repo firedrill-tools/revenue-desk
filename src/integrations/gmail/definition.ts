@@ -31,7 +31,6 @@ export function createGmailIntegration(
           composio: {
             apiKey: config.apiKey,
             userId: config.userId,
-            baseUrl: config.baseUrl,
             toolkit: "gmail",
           },
         },

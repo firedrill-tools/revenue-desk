@@ -916,6 +916,8 @@ describe("request validation", () => {
 describe("the agent core's input and its failures", () => {
   it("passes the settings, policy, plans and the previous SDK session to the core", async () => {
     const server = createTestServer({
+      // The business date is today in the workspace time zone (UTC by default).
+      now: () => new Date("2026-09-28T12:00:00.000Z"),
       script: refundScript,
       integrations: {
         configuration: { stripe: "configured", google_calendar: "configured" },

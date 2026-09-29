@@ -31,7 +31,6 @@ export function createGoogleCalendarIntegration(
           composio: {
             apiKey: config.apiKey,
             userId: config.userId,
-            baseUrl: config.baseUrl,
             toolkit: "googlecalendar",
           },
         },

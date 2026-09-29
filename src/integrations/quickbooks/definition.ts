@@ -34,7 +34,6 @@ export function createQuickBooksIntegration(
           composio: {
             apiKey: config.apiKey,
             userId: config.userId,
-            baseUrl: config.baseUrl,
             toolkit: "quickbooks",
           },
         },

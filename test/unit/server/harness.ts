@@ -104,7 +104,6 @@ export function testEnv(
       port: 0,
       stateDir,
       policyOverrides: {},
-      businessDate: "2026-09-28",
       approvalTimeoutMs: 900_000,
       dotenvPath: null,
       ...runtime,
@@ -115,14 +114,9 @@ export function testEnv(
       NO_PROXY: null,
       CLAUDE_CODE_MAX_RETRIES: null,
     },
-    composio: { apiKey: null, userId: null, baseUrl: "https://backend.composio.dev" },
-    hubspot: { accessToken: null, apiBaseUrl: null, mcpUrl: null, mcpToken: null },
-    stripe: {
-      secretKey: null,
-      allowLive: false,
-      apiBaseUrl: "https://api.stripe.com",
-      apiVersion: null,
-    },
+    composio: { apiKey: null, userId: null },
+    hubspot: { accessToken: null },
+    stripe: { secretKey: null, allowLive: false, apiVersion: null },
   };
 }
 
@@ -163,7 +157,6 @@ export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<
     composio: {
       apiKey: secret(TEST_SECRET),
       userId: "user_test",
-      baseUrl: "https://backend.composio.dev",
       toolkit: "gmail",
     },
   },
@@ -175,7 +168,6 @@ export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<
     composio: {
       apiKey: secret(TEST_SECRET),
       userId: "user_test",
-      baseUrl: "https://backend.composio.dev",
       toolkit: "googlecalendar",
     },
   },
@@ -183,8 +175,8 @@ export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<
     integration: "hubspot",
     kind: "mcp",
     profile: "hubspot-mcp-0.4",
-    endpointLabel: "127.0.0.1",
-    mcp: { transport: "http", url: "http://127.0.0.1:9/mcp", token: null },
+    endpointLabel: "api.hubspot.com",
+    mcp: { transport: "stdio", accessToken: secret(TEST_SECRET) },
   },
   stripe: {
     integration: "stripe",
@@ -192,7 +184,6 @@ export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<
     profile: "stripe-api",
     endpointLabel: "api.stripe.com",
     api: {
-      baseUrl: "https://api.stripe.com",
       secretKey: secret(TEST_SECRET),
       keyMode: "test",
       apiVersion: null,
@@ -206,7 +197,6 @@ export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<
     composio: {
       apiKey: secret(TEST_SECRET),
       userId: "user_test",
-      baseUrl: "https://backend.composio.dev",
       toolkit: "quickbooks",
     },
   },
@@ -218,7 +208,6 @@ export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<
     composio: {
       apiKey: secret(TEST_SECRET),
       userId: "user_test",
-      baseUrl: "https://backend.composio.dev",
       toolkit: "slack",
     },
   },
@@ -601,6 +590,8 @@ export type TestServerOptions = {
   /** Run ownership seams. Default TEST_OWNERSHIP: LIVE_OWNER runs, GONE_OWNER does not. */
   readonly ownership?: ServerDependencies["ownership"];
   readonly sseHeartbeatMs?: number;
+  /** The server's clock. Default: the real one. */
+  readonly now?: () => Date;
 };
 
 export type TestServer = {
@@ -645,6 +636,7 @@ export function createTestServer(options: TestServerOptions = {}): TestServer {
     ...(options.stopGraceMs === undefined ? {} : { stopGraceMs: options.stopGraceMs }),
     ownership: options.ownership ?? TEST_OWNERSHIP,
     ...(options.sseHeartbeatMs === undefined ? {} : { sseHeartbeatMs: options.sseHeartbeatMs }),
+    ...(options.now === undefined ? {} : { now: options.now }),
   });
   prepareDatabase(services);
   const app = createApp({ version: "0.0.0-test", api: services });

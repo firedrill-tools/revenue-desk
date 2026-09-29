@@ -1,4 +1,5 @@
-// A typed fetch client for the Stripe REST API (https://api.stripe.com/v1).
+// A typed fetch client for the Stripe REST API, always at the pinned
+// https://api.stripe.com (src/integrations/shared/vendors.ts).
 //
 // - Bearer secret key; live keys (sk_live_/rk_live_) are refused unless the
 //   connection was resolved with ALLOW_LIVE_STRIPE=1.
@@ -17,6 +18,7 @@ import { type HttpDeps, type HttpMethod, sendHttp, TransportError } from "../sha
 import { asObject, obj, str } from "../shared/json.js";
 import { scrub } from "../shared/text.js";
 import { joinUrl } from "../shared/url.js";
+import { STRIPE_API_BASE_URL } from "../shared/vendors.js";
 import { encodeForm, type FormParams } from "./form.js";
 
 export const STRIPE_PROVIDER = "stripe";
@@ -28,7 +30,6 @@ export function isLiveStripeKey(key: string): boolean {
 }
 
 export type StripeClientOptions = {
-  readonly baseUrl: string;
   readonly secretKey: SecretValue;
   /** Stripe-Version header; null uses the account default. */
   readonly apiVersion: string | null;
@@ -60,7 +61,6 @@ export function stripeError(
 }
 
 export class StripeClient {
-  readonly #baseUrl: string;
   readonly #secretKey: SecretValue;
   readonly #apiVersion: string | null;
   readonly #http: HttpDeps;
@@ -73,7 +73,6 @@ export class StripeClient {
         { code: "live_key_refused" },
       );
     }
-    this.#baseUrl = options.baseUrl;
     this.#secretKey = options.secretKey;
     this.#apiVersion = options.apiVersion;
     this.#http = options.http ?? {};
@@ -109,7 +108,7 @@ export class StripeClient {
     }
     const encoded = encodeForm(params);
     const inQuery = method !== "POST";
-    const base = joinUrl(this.#baseUrl, path);
+    const base = joinUrl(STRIPE_API_BASE_URL, path);
     const url = inQuery && encoded !== "" ? `${base}?${encoded}` : base;
     const secret = this.#secretKey.reveal();
     const headers: Record<string, string> = {

@@ -318,27 +318,20 @@ export type ComposioConnection<I extends ComposioIntegrationId = ComposioIntegra
       readonly apiKey: SecretValue;
       /** COMPOSIO_USER_ID; there is no default in code. */
       readonly userId: string;
-      readonly baseUrl: string;
       readonly toolkit: (typeof COMPOSIO_TOOLKIT_OF)[I];
     };
   };
 
-/** Where the HubSpot MCP server runs. The gateway turns this into an upstream client. */
-export type HubSpotMcpTransport =
-  | {
-      /** Any Streamable HTTP MCP server (HUBSPOT_MCP_URL). */
-      readonly transport: "http";
-      readonly url: string;
-      /** Sent as `Authorization: Bearer <token>` when present. */
-      readonly token: SecretValue | null;
-    }
-  | {
-      /** The pinned @hubspot/mcp-server over stdio (src/integrations/hubspot/launch.ts). */
-      readonly transport: "stdio";
-      readonly accessToken: SecretValue;
-      /** BASE_URL_OVERRIDE for the child; null keeps the server's default. */
-      readonly apiBaseUrl: string | null;
-    };
+/**
+ * How the HubSpot MCP server runs: always HubSpot's official, pinned
+ * @hubspot/mcp-server 0.4.x over stdio with HUBSPOT_ACCESS_TOKEN
+ * (src/integrations/hubspot/launch.ts), calling HubSpot's own default host.
+ * There is no other transport and no way to point it elsewhere.
+ */
+export type HubSpotMcpTransport = {
+  readonly transport: "stdio";
+  readonly accessToken: SecretValue;
+};
 
 export type HubSpotConnection = ConnectionBase<"hubspot"> & {
   readonly mcp: HubSpotMcpTransport;
@@ -346,7 +339,7 @@ export type HubSpotConnection = ConnectionBase<"hubspot"> & {
 
 export type StripeConnection = ConnectionBase<"stripe"> & {
   readonly api: {
-    readonly baseUrl: string;
+    /** Always sent to https://api.stripe.com (src/integrations/shared/vendors.ts). */
     readonly secretKey: SecretValue;
     /** From the key prefix; live keys resolve only with ALLOW_LIVE_STRIPE=1. */
     readonly keyMode: "test" | "live";
@@ -373,7 +366,7 @@ export type ConnectionResolution<I extends IntegrationId = IntegrationId> =
   | { readonly status: "configured"; readonly connection: ResolvedConnectionOf<I> }
   /** Required variables are unset; `missing` holds names only. */
   | { readonly status: "not_configured"; readonly missing: readonly EnvVarName[] }
-  /** Values are present but refused (a live Stripe key, a malformed URL, ...). */
+  /** Values are present but refused (a live Stripe key, a malformed token, ...). */
   | { readonly status: "invalid"; readonly problems: readonly ConfigProblem[] };
 
 // ---------------------------------------------------------------------------

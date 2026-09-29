@@ -6,10 +6,9 @@
 // a closed-won deal. This one read-only tool calls HubSpot's REST API
 // (GET /crm/v3/owners) in process, beside the forwarded MCP tools.
 //
-// It needs the REST credential, which Revenue Desk holds only for the stdio
-// server (HUBSPOT_ACCESS_TOKEN, sent to HUBSPOT_API_BASE_URL like the stdio
-// server's own requests). A Streamable HTTP MCP server (HUBSPOT_MCP_URL) has
-// only its MCP token, so the tool is not offered there.
+// It uses the same credential as the MCP server (HUBSPOT_ACCESS_TOKEN), sent
+// as a Bearer token to HubSpot's REST API at the pinned
+// https://api.hubapi.com (src/integrations/shared/vendors.ts).
 
 import { z } from "zod";
 import type { SecretValue } from "../../contracts/env.js";
@@ -22,11 +21,9 @@ import { arr, asObject, bool, compact, isObject, obj, objects, str } from "../sh
 import { identifier } from "../shared/schema.js";
 import { scrub } from "../shared/text.js";
 import { joinUrl } from "../shared/url.js";
+import { HUBSPOT_API_BASE_URL } from "../shared/vendors.js";
 
 export const HUBSPOT_PROVIDER = "hubspot";
-
-/** Where the stdio server sends requests when HUBSPOT_API_BASE_URL is unset (launch.ts). */
-export const HUBSPOT_DEFAULT_API_BASE_URL = "https://api.hubspot.com";
 
 export const OWNERS_TOOL = "hubspot-list-owners";
 
@@ -79,7 +76,6 @@ function hubspotError(status: number, body: JsonValue | undefined, secret: strin
 }
 
 async function getJson(
-  baseUrl: string,
   token: SecretValue,
   path: string,
   query: Readonly<Record<string, string | undefined>>,
@@ -89,7 +85,7 @@ async function getJson(
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, value);
   const search = params.toString();
-  const url = `${joinUrl(baseUrl, path)}${search === "" ? "" : `?${search}`}`;
+  const url = `${joinUrl(HUBSPOT_API_BASE_URL, path)}${search === "" ? "" : `?${search}`}`;
   const secret = token.reveal();
   let response: Awaited<ReturnType<typeof sendHttp>>;
   try {
@@ -120,18 +116,12 @@ async function getJson(
   return body;
 }
 
-/**
- * HubSpot's in-process API tools for a connection: the owners lookup when
- * Revenue Desk holds the REST token (stdio), none for an HTTP MCP server.
- */
+/** HubSpot's in-process API tools for a connection: the owners lookup. */
 export function createHubSpotApiTools(
   connection: HubSpotConnection,
   http: HttpDeps = {},
 ): readonly ApiTool[] {
-  const mcp = connection.mcp;
-  if (mcp.transport !== "stdio") return [];
-  const baseUrl = mcp.apiBaseUrl ?? HUBSPOT_DEFAULT_API_BASE_URL;
-  const token = mcp.accessToken;
+  const token = connection.mcp.accessToken;
   return [
     apiTool({
       name: OWNERS_TOOL,
@@ -144,7 +134,6 @@ export function createHubSpotApiTools(
       async run(args, call) {
         if (args.owner_id !== undefined) {
           const owner = await getJson(
-            baseUrl,
             token,
             `/crm/v3/owners/${encodeURIComponent(args.owner_id)}`,
             {},
@@ -154,7 +143,6 @@ export function createHubSpotApiTools(
           return { owners: [ownerView(owner)], next_after: null };
         }
         const body = await getJson(
-          baseUrl,
           token,
           "/crm/v3/owners",
           { email: args.email, limit: String(args.limit ?? 100), after: args.after },

@@ -9,7 +9,8 @@
 //
 // Problems name the variable and the rule, never the value. Secrets become
 // SecretValue at once. Blank values count as unset. Nothing here mutates the
-// environment or contacts anything.
+// environment or contacts anything. No variable names a service endpoint:
+// the vendor hosts are pinned in src/integrations/shared/vendors.ts.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -42,7 +43,6 @@ export type LoadAgentEnvOptions = {
 };
 
 const THINKING_DISPLAYS: readonly ThinkingDisplay[] = ["summarized", "omitted"];
-const BUSINESS_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MAX_PORT = 65_535;
 
 class Reader {
@@ -106,17 +106,6 @@ class Reader {
   }
 }
 
-function validCalendarDate(value: string): boolean {
-  const match = BUSINESS_DATE.exec(value);
-  if (match === null) return false;
-  const [, year, month, day] = match.map(Number);
-  if (year === undefined || month === undefined || day === undefined) return false;
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  );
-}
-
 function readPolicy(reader: Reader): PolicyOverrides {
   const raw = reader.text("AGENT_POLICY");
   if (raw === null) return {};
@@ -146,10 +135,6 @@ export function loadAgentEnv(
 
   const effort: AgentEffort =
     reader.oneOf("AGENT_EFFORT", EFFORT_LEVELS) ?? ENV_DEFAULTS.AGENT_EFFORT;
-  const businessDate = reader.text("AGENT_BUSINESS_DATE");
-  if (businessDate !== null && !validCalendarDate(businessDate)) {
-    reader.problem("AGENT_BUSINESS_DATE", "must be a calendar date written YYYY-MM-DD.");
-  }
 
   const env: AgentEnv = {
     model: {
@@ -167,7 +152,6 @@ export function loadAgentEnv(
       port: reader.integer("PORT", ENV_DEFAULTS.PORT, 1, MAX_PORT),
       stateDir: resolve(cwd, reader.text("AGENT_STATE_DIR") ?? ENV_DEFAULTS.AGENT_STATE_DIR),
       policyOverrides: readPolicy(reader),
-      businessDate: businessDate !== null && validCalendarDate(businessDate) ? businessDate : null,
       approvalTimeoutMs: reader.integer(
         "AGENT_APPROVAL_TIMEOUT_MS",
         ENV_DEFAULTS.AGENT_APPROVAL_TIMEOUT_MS,
@@ -185,18 +169,13 @@ export function loadAgentEnv(
     composio: {
       apiKey: reader.secret("COMPOSIO_API_KEY"),
       userId: reader.text("COMPOSIO_USER_ID"),
-      baseUrl: reader.text("COMPOSIO_BASE_URL") ?? ENV_DEFAULTS.COMPOSIO_BASE_URL,
     },
     hubspot: {
       accessToken: reader.secret("HUBSPOT_ACCESS_TOKEN"),
-      apiBaseUrl: reader.text("HUBSPOT_API_BASE_URL"),
-      mcpUrl: reader.text("HUBSPOT_MCP_URL"),
-      mcpToken: reader.secret("HUBSPOT_MCP_TOKEN"),
     },
     stripe: {
       secretKey: reader.secret("STRIPE_SECRET_KEY"),
       allowLive: reader.flag("ALLOW_LIVE_STRIPE"),
-      apiBaseUrl: reader.text("STRIPE_API_BASE_URL") ?? ENV_DEFAULTS.STRIPE_API_BASE_URL,
       apiVersion: reader.text("STRIPE_API_VERSION"),
     },
   };
@@ -248,7 +227,6 @@ export function configuredSecrets(env: AgentEnv): string[] {
     env.model.apiKey,
     env.composio.apiKey,
     env.hubspot.accessToken,
-    env.hubspot.mcpToken,
     env.stripe.secretKey,
   ];
   return secrets.flatMap((secret) => (secret === null ? [] : [secret.reveal()]));

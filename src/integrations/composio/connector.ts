@@ -1,8 +1,9 @@
 // Wires the Composio session manager (session.ts) into the Gmail, Google
 // Calendar, QuickBooks and Slack integrations.
 //
-// - One connector per Composio configuration (base URL, user, key), shared by
-//   the four integrations, so their probes reuse one session.
+// - One connector per Composio configuration (user and key), shared by the
+//   four integrations, so their probes reuse one session. The API host is
+//   pinned (src/integrations/shared/vendors.ts).
 // - upstream(): the session MCP endpoint for a run, per (toolkits, access),
 //   where access comes from the run's policy (composioAccessFor). Sessions are
 //   cached for 30 minutes by the manager.
@@ -35,7 +36,6 @@ import {
 export type ComposioSettings = {
   readonly apiKey: SecretValue;
   readonly userId: string;
-  readonly baseUrl: string;
 };
 
 export type ComposioConnectorDeps = {
@@ -63,7 +63,6 @@ export class ComposioConnector {
     this.#manager = new ComposioSessionManager({
       apiKey: settings.apiKey.reveal(),
       userId: settings.userId,
-      baseURL: settings.baseUrl,
       // Status checks and Connect links use the narrowest session.
       selection: { toolkits: COMPOSIO_TOOLKITS, access: "read" },
       ...(deps.client === undefined ? {} : { client: deps.client }),
@@ -133,12 +132,12 @@ export class ComposioConnectors {
   }
 
   forConnection(connection: ComposioConnection): ComposioConnector {
-    const { apiKey, userId, baseUrl } = connection.composio;
+    const { apiKey, userId } = connection.composio;
     const keyHash = createHash("sha256").update(apiKey.reveal()).digest("hex");
-    const cacheKey = `${baseUrl}\n${userId}\n${keyHash}`;
+    const cacheKey = `${userId}\n${keyHash}`;
     let connector = this.#connectors.get(cacheKey);
     if (connector === undefined) {
-      connector = new ComposioConnector({ apiKey, userId, baseUrl }, this.#deps);
+      connector = new ComposioConnector({ apiKey, userId }, this.#deps);
       this.#connectors.set(cacheKey, connector);
     }
     return connector;

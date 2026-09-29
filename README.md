@@ -48,13 +48,24 @@ process: the Claude CLI child process receives none of them.
 | Google Calendar | Composio | list events, find free slots, find an event; create and update events | The same Composio session and OAuth handling as Gmail. |
 | QuickBooks Online | Composio | company info; query and read customers; query and read invoices (overdue included); query payments; query products and services; the AR aging report; create a customer; create an invoice; record a payment | Composio holds the Intuit OAuth grant (Composio-managed OAuth, which connects a real or trial QuickBooks Online company; an Intuit sandbox company is not supported yet, see [Setup](#setup)). Composio's QuickBooks toolkit has no tool that emails or voids an invoice, so an invoice is emailed from Gmail. Amounts are decimals in the company currency. |
 | Slack | Composio | find and list channels, read a channel's history or a thread, find users; post a message (Markdown), add a reaction | Composio holds the Slack OAuth grant (Composio-managed OAuth, user scopes: posts appear as the Slack user who connected). |
-| HubSpot | MCP | account details; list, search and batch-read objects; associations and properties; batch-create and batch-update objects (notes and tasks are created with their associations in one call); list owners, to name who a record is assigned to | HubSpot publishes an official MCP server, `@hubspot/mcp-server` 0.4.0, which Revenue Desk runs over stdio. Any Streamable HTTP MCP server can replace it. 10 of its 21 tools are offered. The owners lookup is Revenue Desk's own read-only tool against HubSpot's REST API with the same token, because the MCP server has none; it is offered with the stdio server only, so HubSpot has 11 tools over stdio and 10 with `HUBSPOT_MCP_URL`. |
+| HubSpot | MCP | account details; list, search and batch-read objects; associations and properties; batch-create and batch-update objects (notes and tasks are created with their associations in one call); list owners, to name who a record is assigned to | HubSpot publishes an official MCP server, `@hubspot/mcp-server` 0.4.0, which Revenue Desk always runs over stdio with `HUBSPOT_ACCESS_TOKEN`; nothing can replace it. 10 of its 21 tools are offered. The owners lookup is Revenue Desk's own read-only tool against HubSpot's REST API with the same token, because the MCP server has none, so HubSpot has 11 tools. |
 | Stripe | API | find customers by exact email or by name (Stripe's customer search), get a customer; list charges, payment intents, invoices, subscriptions and refunds; get an invoice; get the balance; create a refund; cancel a subscription | Direct REST: test-mode keys, idempotency keys on writes and documented error envelopes. |
 
 An integration without configuration is shown as not configured, and a
 Composio integration nobody has connected shows as needing sign-in; neither
 is offered to the agent. There is no fallback to sample data or to another
 model.
+
+Where each service is reached is fixed in the code
+(`src/integrations/shared/vendors.ts`), not configured: Composio at
+`https://backend.composio.dev`, Stripe at `https://api.stripe.com`, HubSpot's
+MCP server at its own default `https://api.hubspot.com` (it is never given a
+host override), and the HubSpot owners lookup at `https://api.hubapi.com`.
+Configuration supplies credentials only, so Revenue Desk cannot be pointed at
+another server. As a second guard, a Composio session endpoint or sign-in
+link that is not HTTPS on a public host (one on this machine, `*.localhost`
+or a private network) is refused before anything connects to it or opens
+it.
 
 Some rules are checked before a call reaches the system, because the tool's
 schema cannot state them; the call is rejected and the model is told what to
@@ -131,14 +142,13 @@ Times the Stripe tools return are written in the workspace time zone
    - **Stripe.** `STRIPE_SECRET_KEY`, a test-mode `sk_test_` or restricted
      `rk_test_` key. Live keys are refused (see
      [Approvals and safety](#approvals-and-safety)).
-   - **HubSpot.** Either `HUBSPOT_ACCESS_TOKEN`, a private-app token with CRM
-     read and write access for contacts, companies, deals, notes and tasks,
-     plus `crm.objects.owners.read` for the owners lookup (the bundled MCP
-     server runs over stdio with it, and the owners lookup calls
-     `HUBSPOT_API_BASE_URL`, default `https://api.hubspot.com`, with the same
-     token), or `HUBSPOT_MCP_URL` for any Streamable HTTP MCP server, with
-     `HUBSPOT_MCP_TOKEN` when it needs a bearer token (no owners lookup
-     then). HubSpot ends creation of legacy private apps on 2026-10-26.
+   - **HubSpot.** `HUBSPOT_ACCESS_TOKEN`, a private-app token with CRM read
+     and write access for contacts, companies, deals, notes and tasks, plus
+     `crm.objects.owners.read` for the owners lookup. HubSpot's official MCP
+     server (`@hubspot/mcp-server` 0.4.x, installed with the other
+     dependencies) runs over stdio with it, and the owners lookup calls
+     HubSpot's REST API with the same token. HubSpot ends creation of legacy
+     private apps on 2026-10-26.
 
 4. In the app, open **Settings** and fill in the company profile, the
    internal email domains (recipients and attendees outside them are
@@ -147,7 +157,8 @@ Times the Stripe tools return are written in the workspace time zone
    calendar that is not listed counts as external), the Slack notices
    channel and the channels the agent may post to without asking, and the
    time zone. The time zone sets the business date ("today", with its
-   weekday) and the zone of the times the Stripe tools return.
+   weekday; always the current date there, with no override) and the zone of
+   the times the Stripe tools return.
 
 Without `ANTHROPIC_API_KEY` the app says so and offers no job to start. The
 server checks every configured connection read-only in the background when
@@ -404,9 +415,9 @@ in the opt-in live suites.
 
 | Command | What it covers | Tests (2026-09-29) |
 |---|---|---|
-| `pnpm test` | Vitest, no network and no model: configuration and redaction; contracts and the database schema; the policy engine and the approval gate; the classifiers and the approval cards they build; input rules and schema validation (every captured HubSpot and Composio schema compiles); Stripe form encoding and error normalisation; the event-to-stream mapping; security guards; database repositories, run ownership and recovery on a real SQLite file; the web client's libraries; the CLI's arguments, settings and output. Where a unit needs a caller or an answer, its test gives it the smallest one in place: an in-process stub of the agent core or of an integration definition, a `fetch` that answers what the test says, or a minimal MCP server in memory. None is shared between tests or copies a vendor's service. It also starts the real `@hubspot/mcp-server` over stdio (with the network blocked), the real Vite dev server, and the CLI's run start against a real database. | 900 in 79 files |
+| `pnpm test` | Vitest, no network and no model: configuration and redaction (the pinned vendor hosts, removed variables ignored, the private-network check on Composio's endpoints and sign-in links, and the real Composio SDK reaching only Composio's host); contracts and the database schema; the policy engine and the approval gate; the classifiers and the approval cards they build; input rules and schema validation (every captured HubSpot and Composio schema compiles); Stripe form encoding and error normalisation; the event-to-stream mapping; security guards; database repositories, run ownership and recovery on a real SQLite file; the web client's libraries; the CLI's arguments, settings and output. Where a unit needs a caller or an answer, its test gives it the smallest one in place: an in-process stub of the agent core or of an integration definition, a `fetch` that answers what the test says, or a minimal MCP server in memory. None is shared between tests or copies a vendor's service, and no test points Revenue Desk's configuration at a local server (there is no host to configure). It also starts the real `@hubspot/mcp-server` over stdio (with the network blocked), the real Vite dev server, and the CLI's run start against a real database. | 905 in 81 files |
 | `pnpm test:cli` | The built CLI (`dist/cli/main.js`) as a separate process, for everything it decides before a model call: the shebang, help and version; usage errors (exit 2, nothing on stdout); configuration errors (exit 3, one `--json` summary, no database written); `DOTENV_PATH`; an unknown conversation and one whose run belongs to another live process; SIGTERM, SIGINT and `--timeout-ms` before a run starts, including a SIGINT while the CLI is still loading; no key in any output. Run `pnpm build` first. | 18 |
-| `pnpm test:e2e` | Playwright against the built app with the real configuration (`DOTENV_PATH`, default `.env`) and a fresh database in the system temp directory, in the installed Google Chrome on desktop and phone viewports. The new chat; every screen in light and dark; phone touch targets; reduced motion; the conversation rail; Runs; that the browser loads nothing from another host; Connections showing exactly the states the server checked, with Connect and Check where they apply (Check is clicked; Connect is not, because it starts a real sign-in); Settings saved and read back, with an empty company name flagged only once the profile is edited; and a second, unconfigured server that says it cannot run and offers no job. Every screen is checked with axe, and on the phone for sideways scrolling. No test starts a job. Run `pnpm build` first; port 4320 must be free. | 29, plus 1 skipped (touch targets run on the phone only) |
+| `pnpm test:e2e` | Playwright against the built app with the real configuration (`DOTENV_PATH`, default `.env`) and a fresh database in the system temp directory, in the installed Google Chrome on desktop and phone viewports. The new chat; every screen in light and dark; phone touch targets; reduced motion; the conversation rail; Runs; that the browser loads nothing from another host; Connections showing exactly the states the server checked, with Connect and Check where they apply (Check is clicked; Connect is not, because it starts a real sign-in); Settings saved and read back, with an empty company name flagged only once the profile is edited; and a second, unconfigured server that says it cannot run and offers no job. Every screen is checked with axe, and on the phone for sideways scrolling. No test starts a job. Run `pnpm build` first. The app starts on port 4320, which must be free, or on `E2E_PORT` when set (for example beside a Revenue Desk already on 4320). | 29, plus 1 skipped (touch targets run on the phone only) |
 | `pnpm typecheck`, `pnpm lint` | TypeScript and Biome. | |
 | `pnpm verify` | Typecheck, lint, `pnpm test`, the build, `pnpm test:cli` and `pnpm test:e2e`. | |
 | `LIVE_E2E=1 pnpm test:live` | The real model and the real accounts, read-only: see [Live tests](#live-tests). | 16 |
@@ -432,6 +443,17 @@ they call the real Anthropic API, cost money and use real accounts.
   example "Slack needs sign-in (needs_auth): Slack is not connected. Click
   Connect in Connections to sign in." or "HubSpot is not configured: set
   HUBSPOT_ACCESS_TOKEN in …/.env."
+- **`LIVE_REQUIRE` turns those skips into failures.** Set it to a
+  comma-separated list of integration ids (`gmail`, `google_calendar`,
+  `hubspot`, `stripe`, `quickbooks`, `slack`) or to `all`. A listed
+  integration whose test cannot run (not configured, not connected, or in
+  the write suite no test-safe target, such as an unset
+  `LIVE_SLACK_TEST_CHANNEL` or a HubSpot account that is not a test
+  account) fails with the reason instead of skipping, for example
+  `LIVE_E2E=1 LIVE_REQUIRE=gmail,stripe pnpm test:live`. Unset, nothing is
+  required and a partial setup still runs. An id that is not an integration
+  fails the suite before anything runs. It applies to `pnpm test:live`,
+  `pnpm test:live:ui` (Gmail) and `pnpm test:live:writes`.
 - **Real data stays out of the output.** Tests print states, counts, tool
   names and cost only. Set `LIVE_OUT_DIR` to a directory outside the
   repository to keep each run's state directory, summary and stderr (and the
@@ -479,7 +501,7 @@ where the API allows:
   afterwards.
 - **Slack**: one post to the channel named in `LIVE_SLACK_TEST_CHANNEL`, the
   workspace's only allowlisted channel; deleted afterwards. Skipped when the
-  variable is not set.
+  variable is not set (a failure with `slack` in `LIVE_REQUIRE`).
 - **HubSpot**: only when HubSpot reports the account as a developer test
   account or a sandbox; a task, deleted afterwards.
 - **QuickBooks**: only when every active QuickBooks account of the Composio
@@ -510,24 +532,25 @@ Configuration comes only from environment variables, read once at start
 | `PORT` | Runtime |  | API server port, always bound to 127.0.0.1. Default 4320. |
 | `AGENT_STATE_DIR` | Runtime |  | Database, work directory and Claude config. Default ./data (git-ignored). |
 | `AGENT_POLICY` | Runtime |  | JSON approval modes per action class, e.g. {"financial":"deny"}. Locks them. |
-| `AGENT_BUSINESS_DATE` | Runtime |  | YYYY-MM-DD the agent treats as today. Default: today in the workspace time zone. |
 | `AGENT_APPROVAL_TIMEOUT_MS` | Runtime |  | How long a pending approval waits before it is denied. Default 900000. |
 | `DOTENV_PATH` | Runtime |  | An env file outside the repository to load at start. |
 | `COMPOSIO_API_KEY` | Composio (Gmail, Google Calendar, QuickBooks, Slack) | yes | Composio project key. Gmail, Google Calendar, QuickBooks and Slack need it. |
 | `COMPOSIO_USER_ID` | Composio (Gmail, Google Calendar, QuickBooks, Slack) |  | The Composio user whose connections are used. No default in code. |
-| `COMPOSIO_BASE_URL` | Composio (Gmail, Google Calendar, QuickBooks, Slack) |  | Composio API base URL. Default https://backend.composio.dev. |
-| `HUBSPOT_ACCESS_TOKEN` | HubSpot | yes | Private-app token for the bundled @hubspot/mcp-server over stdio. |
-| `HUBSPOT_API_BASE_URL` | HubSpot |  | HubSpot API base URL (https) for the stdio server (BASE_URL_OVERRIDE). Default: the server's. |
-| `HUBSPOT_MCP_URL` | HubSpot |  | Any Streamable HTTP MCP server for HubSpot (https, or http on this machine); replaces the stdio server when set. |
-| `HUBSPOT_MCP_TOKEN` | HubSpot | yes | Bearer token for HUBSPOT_MCP_URL. |
+| `HUBSPOT_ACCESS_TOKEN` | HubSpot | yes | Private-app token for HubSpot's official @hubspot/mcp-server 0.4.x, run over stdio. |
 | `STRIPE_SECRET_KEY` | Stripe | yes | sk_test_/rk_test_ key. Live keys are refused unless ALLOW_LIVE_STRIPE=1. |
 | `ALLOW_LIVE_STRIPE` | Stripe |  | Set to 1 to accept a live Stripe key. |
-| `STRIPE_API_BASE_URL` | Stripe |  | Default https://api.stripe.com. HTTPS only; a path prefix is kept. |
 | `STRIPE_API_VERSION` | Stripe |  | Stripe-Version header. Default: the account's version. |
 <!-- env-table:end -->
 
 `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and `CLAUDE_CODE_MAX_RETRIES` are
 passed to the Claude CLI child process when set, and are otherwise unused.
+
+No variable chooses a service's host (see [How it connects](#how-it-connects)).
+Variables that earlier builds read are ignored if still set:
+`COMPOSIO_BASE_URL`, `STRIPE_API_BASE_URL`, `HUBSPOT_API_BASE_URL`,
+`HUBSPOT_MCP_URL`, `HUBSPOT_MCP_TOKEN` and `AGENT_BUSINESS_DATE`. The
+Composio SDK's own `COMPOSIO_BASE_URL` and user config file are overridden
+too: Revenue Desk always gives it Composio's host.
 
 ## Troubleshooting
 
@@ -540,7 +563,8 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | Gmail, Google Calendar, QuickBooks or Slack needs sign-in or has expired | Click **Connect** in Connections, finish the Composio sign-in, then **Check**. Until then its tools are not offered and the agent says so. |
 | QuickBooks shows another company's data, or none | Composio uses the QuickBooks company chosen when you connected. Connect again and pick the company you mean. Composio's own Intuit app reaches real and trial companies, not an Intuit sandbox company. |
 | Gmail, Google Calendar, QuickBooks and Slack all say "Composio rejected the API key" | `COMPOSIO_API_KEY` is wrong or was revoked. Put a current Composio project key in the file `DOTENV_PATH` names and restart Revenue Desk. |
-| HubSpot is unavailable at the start of a run | The stdio MCP server could not start or rejected the token, or `HUBSPOT_MCP_URL` is unreachable. Check `HUBSPOT_ACCESS_TOKEN`, or the URL and `HUBSPOT_MCP_TOKEN`, then **Check** in Connections. |
+| HubSpot is unavailable at the start of a run | HubSpot's MCP server could not start (run `pnpm install`; only `@hubspot/mcp-server` 0.4.x is launched) or HubSpot rejected the token. Check `HUBSPOT_ACCESS_TOKEN`, then **Check** in Connections. |
+| Connect or a run says Composio returned a sign-in link or session MCP URL that "points at this machine or a private network" (or "is not HTTPS") | Revenue Desk refused it and opened or connected to nothing. Composio's own answers are HTTPS on public hosts, so something on the network answered for `backend.composio.dev` (a filtering proxy, or DNS that resolves it elsewhere). Fix the network, then **Check** or **Connect** again. |
 | A run fails with `model_error` | The model id is wrong or unavailable to your key, or the API failed. Revenue Desk never switches models; set `AGENT_MODEL` or `--model`. |
 | A run fails with `max_turns` or `budget_exceeded` | Raise `AGENT_MAX_TURNS` or `AGENT_MAX_BUDGET_USD`, or `--max-turns` and `--max-budget-usd` for one CLI run. |
 | An action was "blocked by policy" in the CLI | Its class is `ask` and the CLI cannot ask. Run it in the app, or allow the class for one run with `--policy`. |
@@ -549,11 +573,12 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | A run failed with `server_restart` | The process running it exited mid-run (a crash, a restart, a CLI killed with SIGKILL). Revenue Desk failed it so the conversation is free again; its pending approvals expired. Ask again. |
 | "Revenue Desk is shutting down and starts no new run" (503) | The server received SIGINT or SIGTERM. Start it again. |
 | A call was rejected before it ran (`is missing "hs_timestamp"`, `is empty`, `mentions …, which is not a Slack user id`, `/Amount is needed`) | Revenue Desk checked a rule the system enforces or a formatting rule, and nothing reached the system. The agent is told what to fix, so it can repeat the call corrected. |
-| HubSpot owners show as ids | The owners lookup needs the stdio server (`HUBSPOT_ACCESS_TOKEN`) and the token's `crm.objects.owners.read` scope; with `HUBSPOT_MCP_URL` it is not offered. |
-| Dates or aging are off by a day | The business date is today in the Settings time zone. Set the time zone, or `AGENT_BUSINESS_DATE` for a fixed date. |
+| HubSpot owners show as ids | The owners lookup needs the token's `crm.objects.owners.read` scope. Add it to the private app and **Check** again. |
+| Dates or aging are off by a day | The business date is always today in the Settings time zone; there is no fixed-date override. Set the time zone in **Settings**. |
 | "address already in use" on 4320 or 4321 | Another process holds the port. Stop it, or set `PORT` (the Vite proxy expects 4320). |
 | Every run fails before the model answers | One cause: optional dependencies were skipped, and the Claude Agent SDK's native binary comes from an optional per-platform package. Run `pnpm install` again without `--no-optional`. |
-| `pnpm test:e2e` cannot find a browser, or port 4320 is in use | The suite uses the installed Google Chrome; stop any Revenue Desk server on 4320 first (it never reuses one), and run `pnpm build` before the suite. |
-| A live test is skipped | Its system is not connected or not configured; the skip names it and what to do (Connect in Connections, or the variable to set). |
+| `pnpm test:e2e` cannot find a browser, or port 4320 is in use | The suite uses the installed Google Chrome, and never reuses a server already on its port: stop the Revenue Desk server on 4320, or run the suite on another port with `E2E_PORT=4330 pnpm test:e2e`. Run `pnpm build` before the suite. |
+| A live test is skipped | Its system is not connected or not configured; the skip names it and what to do (Connect in Connections, or the variable to set). To make such a test fail instead, list the integration in `LIVE_REQUIRE`. |
+| A live test fails with "… is required by LIVE_REQUIRE but cannot be tested" | `LIVE_REQUIRE` lists that integration and its test could not run; the rest of the message says why and what to do. Connect or configure it, or remove it from `LIVE_REQUIRE`. |
 
 This repository is private and local-only. It has no licence file yet.
