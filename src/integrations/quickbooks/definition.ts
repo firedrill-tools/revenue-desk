@@ -1,80 +1,53 @@
-// The QuickBooks Online integration: API kind, profile quickbooks-api.
+// The QuickBooks Online integration: Composio kind, toolkit quickbooks.
+// Composio holds the Intuit sign-in (Connect in Connections); Revenue Desk
+// holds no QuickBooks token.
 
-import {
-  INTEGRATIONS,
-  type ProbeResult,
-  type QuickBooksConnection,
-} from "../../contracts/integration.js";
-import type { ApiIntegration, ApiIntegrationDeps } from "../shared/definition.js";
-import { type CredentialRules, probeFailure } from "../shared/errors.js";
-import type { HttpDeps } from "../shared/http.js";
-import { obj, str } from "../shared/json.js";
-import { maskIdentifier, sentence } from "../shared/text.js";
+import { INTEGRATIONS } from "../../contracts/integration.js";
+import { ComposioConnectors, probeComposio } from "../composio/connector.js";
+import type { ComposioIntegration } from "../composio/integration.js";
+import { resolveComposioConfig } from "../composio/resolve.js";
+import { allowedTools } from "../composio/session.js";
 import { classifyQuickBooks } from "./classify.js";
-import { QuickBooksClient } from "./client.js";
+import { checkQuickBooksInput } from "./input-rules.js";
 import { QUICKBOOKS_PROFILE } from "./profile.js";
-import { resolveQuickBooks } from "./resolve.js";
 import { QuickBooksRunMemory } from "./run-memory.js";
-import { createQuickBooksTools } from "./tools.js";
-
-export function quickBooksClientFor(
-  connection: QuickBooksConnection,
-  http?: HttpDeps,
-): QuickBooksClient {
-  return new QuickBooksClient({
-    baseUrl: connection.api.baseUrl,
-    accessToken: connection.api.accessToken,
-    realmId: connection.api.realmId,
-    minorVersion: connection.api.minorVersion,
-    ...(http === undefined ? {} : { http }),
-  });
-}
-
-/**
- * Read-only check: GET companyinfo. QuickBooks access tokens expire hourly,
- * so a 401 is reported as expired.
- */
-export async function probeQuickBooks(
-  connection: QuickBooksConnection,
-  signal: AbortSignal,
-  http?: HttpDeps,
-): Promise<ProbeResult> {
-  const client = quickBooksClientFor(connection, http);
-  try {
-    const body = await client.get(`companyinfo/${encodeURIComponent(client.realmId)}`, signal);
-    const name = str(obj(body, "CompanyInfo"), "CompanyName");
-    return {
-      state: "connected",
-      detail:
-        name === undefined ? "QuickBooks company is readable." : sentence(`Connected to ${name}`),
-      accountHint: maskIdentifier(connection.api.realmId),
-    };
-  } catch (error) {
-    return probeFailure(INTEGRATIONS.quickbooks.label, error, QUICKBOOKS_CREDENTIAL_RULES);
-  }
-}
-
-/** QuickBooks access tokens expire hourly: a 401 is an expired token; a 403, a refused one. */
-export const QUICKBOOKS_CREDENTIAL_RULES: CredentialRules = {
-  variable: "QBO_ACCESS_TOKEN",
-  credential: "the access token (it expires hourly)",
-  expired: (failure) => failure.status === 401,
-};
 
 export function createQuickBooksIntegration(
-  deps: ApiIntegrationDeps = {},
-): ApiIntegration<"quickbooks"> {
+  connectors: ComposioConnectors = new ComposioConnectors(),
+): ComposioIntegration<"quickbooks"> {
   return {
     id: "quickbooks",
     label: INTEGRATIONS.quickbooks.label,
-    kind: "api",
+    kind: "composio",
     profile: QUICKBOOKS_PROFILE,
-    resolve: resolveQuickBooks,
-    classify: classifyQuickBooks,
-    probe: (connection, signal) => probeQuickBooks(connection, signal, deps.http),
-    tools: (connection, options) =>
-      createQuickBooksTools(quickBooksClientFor(connection, deps.http), options),
+    toolkit: "quickbooks",
+    resolve(env) {
+      const config = resolveComposioConfig(env);
+      if (config.status !== "configured") return config;
+      return {
+        status: "configured",
+        connection: {
+          integration: "quickbooks",
+          kind: "composio",
+          profile: "composio",
+          endpointLabel: config.host,
+          composio: {
+            apiKey: config.apiKey,
+            userId: config.userId,
+            baseUrl: config.baseUrl,
+            toolkit: "quickbooks",
+          },
+        },
+      };
+    },
+    classify: (tool, input, settings) => classifyQuickBooks(tool, input, settings),
+    probe: (connection, signal) =>
+      probeComposio(connectors.forConnection(connection), "quickbooks", signal),
+    allowlist: (access) => allowedTools("quickbooks", access),
+    connector: (connection) => connectors.forConnection(connection),
     // Approval cards name the customers and invoices this run read, not only their ids.
     runMemory: (settings) => new QuickBooksRunMemory(settings),
+    // Invoice lines need amounts; a payment never charges a card.
+    checkInput: checkQuickBooksInput,
   };
 }

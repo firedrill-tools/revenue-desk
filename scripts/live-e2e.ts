@@ -11,7 +11,9 @@
  * - The model key comes from --key-file (default: the repository's .env,
  *   which git ignores); only ANTHROPIC_API_KEY is read from it, and it goes
  *   into this process's environment, which is where the sandbox takes the
- *   real model's key from. Every integration is a local fake.
+ *   real model's key from. Every integration the sandbox runs is a local
+ *   fake; QuickBooks and Slack (Composio toolkits with no local fake) are
+ *   not connected there, so the jobs run without them.
  * - The production build runs (pnpm build first) on a free port with its
  *   state in <out>/state, so the transcripts and the database stay together.
  * - Each approval is decided by the job's rules, as a demanding
@@ -304,13 +306,13 @@ function succeeded(seen: readonly SeenCall[], tool: string): SeenCall[] {
   );
 }
 
-/** Ids QuickBooks returned for records whose output mentions `needle`. */
+/** Ids QuickBooks returned (its `Id` fields) for records whose output mentions `needle`. */
 function quickBooksIds(calls: readonly SeenCall[], needle: RegExp | null): string[] {
   const ids: string[] = [];
   for (const call of calls) {
     const output = text(call.output);
     if (needle !== null && !needle.test(output)) continue;
-    for (const match of output.matchAll(/\\?"id\\?":\s*\\?"(\d+)\\?"/g)) {
+    for (const match of output.matchAll(/\\?"[Ii]d\\?":\s*\\?"(\d+)\\?"/g)) {
       if (match[1] !== undefined && !ids.includes(match[1])) ids.push(match[1]);
     }
   }
@@ -389,7 +391,7 @@ export const LIVE_JOBS: readonly LiveJob[] = [
     ],
     decide(ask, seen) {
       const name = shortName(ask.tool);
-      if (name === "post_message") return slackPost(ask, "billing");
+      if (name === "SLACK_SEND_MESSAGE") return slackPost(ask, "billing");
       if (name === "GMAIL_SEND_DRAFT" || name === "GMAIL_REPLY_TO_THREAD")
         return replyToDana(ask, seen);
       if (name !== "create_refund") return unexpected(ask);
@@ -437,7 +439,7 @@ export const LIVE_JOBS: readonly LiveJob[] = [
       }
       if (name === "GMAIL_SEND_DRAFT" || name === "GMAIL_REPLY_TO_THREAD")
         return deny("I asked for drafts only. I'll review and send them myself.");
-      if (name === "record_payment")
+      if (name === "QUICKBOOKS_CREATE_PAYMENT")
         return deny(
           "Don't record payments during a collections pass. Flag it and Sam will reconcile it in QuickBooks.",
         );
@@ -448,24 +450,21 @@ export const LIVE_JOBS: readonly LiveJob[] = [
     id: "j4",
     title: "J4 closed-won handoff",
     turns: [
-      "Solstice Energy closed-won with Jordan this week. Get them set up in QuickBooks, raise the invoice, send it to their billing contact, and post in #sales-ops when it's done.",
+      "Solstice Energy closed-won with Jordan this week. Get them set up in QuickBooks, raise the invoice, email it to their billing contact, and post in #sales-ops when it's done.",
     ],
     decide(ask, seen) {
       const name = shortName(ask.tool);
-      if (name === "post_message") return slackPost(ask, "sales-ops");
-      if (name === "create_invoice") {
-        const lines = Array.isArray(ask.input.lines) ? ask.input.lines : [];
-        const total = lines.reduce<number>((sum, line) => {
-          if (line === null || typeof line !== "object" || Array.isArray(line)) return sum;
-          const quantity = typeof line.quantity === "number" ? line.quantity : 0;
-          const unit = typeof line.unit_price_minor === "number" ? line.unit_price_minor : 0;
-          return sum + quantity * unit;
-        }, 0);
+      if (name === "SLACK_SEND_MESSAGE") return slackPost(ask, "sales-ops");
+      if (name === "QUICKBOOKS_CREATE_INVOICE") {
+        const total = invoiceTotalMinor(ask.input);
         const customer = stringField(ask.input, "customer_id") ?? "";
         const solstice = [
-          ...quickBooksIds(succeeded(seen, "create_customer"), null),
+          ...quickBooksIds(succeeded(seen, "QUICKBOOKS_CREATE_CUSTOMER"), null),
           ...quickBooksIds(
-            [...succeeded(seen, "find_customers"), ...succeeded(seen, "get_customer")],
+            [
+              ...succeeded(seen, "QUICKBOOKS_QUERY_CUSTOMERS"),
+              ...succeeded(seen, "QUICKBOOKS_READ_CUSTOMER"),
+            ],
             /Solstice/,
           ),
         ];
@@ -479,16 +478,17 @@ export const LIVE_JOBS: readonly LiveJob[] = [
           );
         return approve("Right customer, $18,000.00 matching the closed-won deal.");
       }
-      if (name === "send_invoice") {
-        const invoice = stringField(ask.input, "invoice_id") ?? "";
-        const created = quickBooksIds(succeeded(seen, "create_invoice"), null);
-        const to = stringField(ask.input, "send_to");
-        if (!created.includes(invoice))
+      if (name === "GMAIL_SEND_DRAFT" || name === "GMAIL_REPLY_TO_THREAD") {
+        const email = outgoingEmail(ask, seen);
+        if (email === null)
+          return deny("I can't see what this sends. Put it in a draft first so I can read it.");
+        const external = email.recipients.filter(isExternal);
+        if (external.length !== 1 || external[0] !== "marco@solstice.test")
           return deny(
-            `Invoice ${invoice} is not the one you just created (${created.join(", ") || "none"}).`,
+            `Wrong recipients (${external.join(", ") || "none"}): the invoice goes to Marco only.`,
           );
-        if (to !== undefined && to.toLowerCase() !== "marco@solstice.test")
-          return deny(`Send it to Marco (marco@solstice.test), not ${to}.`);
+        if (succeeded(seen, "QUICKBOOKS_CREATE_INVOICE").length === 0)
+          return deny("There is no invoice yet: create it in QuickBooks before emailing it.");
         return approve("The invoice just created, to Solstice's billing contact.");
       }
       return unexpected(ask);
@@ -501,7 +501,9 @@ export const LIVE_JOBS: readonly LiveJob[] = [
       "Can you put together last week's revenue digest (Sep 21–28): new and won deals, card payments and refunds, and where AR stands? Post it in #revenue.",
     ],
     decide(ask) {
-      return shortName(ask.tool) === "post_message" ? slackPost(ask, "revenue") : unexpected(ask);
+      return shortName(ask.tool) === "SLACK_SEND_MESSAGE"
+        ? slackPost(ask, "revenue")
+        : unexpected(ask);
     },
   },
 ];
@@ -509,8 +511,6 @@ export const LIVE_JOBS: readonly LiveJob[] = [
 export interface CliRun {
   readonly id: string;
   readonly prompt: string;
-  /** Remove the QuickBooks configuration from this run's environment. */
-  readonly withoutQuickBooks: boolean;
 }
 
 export const CLI_RUNS: readonly CliRun[] = [
@@ -518,28 +518,28 @@ export const CLI_RUNS: readonly CliRun[] = [
     id: "c1",
     prompt:
       "Which invoices are more than 30 days past due right now, and was any of them actually paid through Stripe?",
-    withoutQuickBooks: false,
   },
   {
     id: "c2",
     prompt:
       "Meridian Labs paid invoice 1051 by card on Sep 10 but QuickBooks still shows it open. Record that payment in QuickBooks.",
-    withoutQuickBooks: false,
   },
   {
     id: "c3",
     prompt:
       "What's our open AR by aging bucket as of today? Call out anything more than 60 days overdue.",
-    withoutQuickBooks: true,
   },
 ];
 
-const QUICKBOOKS_VARS = [
-  "QBO_ACCESS_TOKEN",
-  "QBO_REALM_ID",
-  "QBO_API_BASE_URL",
-  "QBO_MINOR_VERSION",
-];
+/** A QuickBooks invoice input's total: its lines' decimal Amounts, in cents. */
+export function invoiceTotalMinor(input: JsonObject): number {
+  const lines = Array.isArray(input.lines) ? input.lines : [];
+  return lines.reduce<number>((sum, line) => {
+    if (line === null || typeof line !== "object" || Array.isArray(line)) return sum;
+    const amount = typeof line.Amount === "number" ? line.Amount : Number(line.Amount);
+    return Number.isFinite(amount) ? sum + Math.round(amount * 100) : sum;
+  }, 0);
+}
 
 // ---------------------------------------------------------------------------
 // Card checks: does the approval card say what the call will do?
@@ -569,23 +569,11 @@ export function checkCard(ask: ApprovalAsk): string[] {
   if (name === "create_refund") {
     if (typeof input.amount === "number") expectAmount(input.amount);
     expectRecord(stringField(input, "charge") ?? stringField(input, "payment_intent"));
-  } else if (name === "record_payment") {
-    if (typeof input.amount_minor === "number") expectAmount(input.amount_minor);
-    expectRecord(stringField(input, "invoice_id"));
-  } else if (name === "create_invoice" && Array.isArray(input.lines)) {
-    const total = input.lines.reduce<number>((sum, line) => {
-      if (line === null || typeof line !== "object" || Array.isArray(line)) return sum;
-      return (
-        sum +
-        (typeof line.quantity === "number" ? line.quantity : 0) *
-          (typeof line.unit_price_minor === "number" ? line.unit_price_minor : 0)
-      );
-    }, 0);
-    expectAmount(total);
-  } else if (name === "send_invoice") {
-    expectRecord(stringField(input, "invoice_id"));
-    if ((descriptor.recipients ?? []).length === 0)
-      problems.push("the card does not name the recipient (only 'the invoice's billing email')");
+  } else if (name === "QUICKBOOKS_CREATE_PAYMENT") {
+    if (typeof input.total_amt === "number") expectAmount(Math.round(input.total_amt * 100));
+    expectRecord(stringField(input, "customer_id"));
+  } else if (name === "QUICKBOOKS_CREATE_INVOICE" && Array.isArray(input.lines)) {
+    expectAmount(invoiceTotalMinor(input));
   } else if (name === "GMAIL_SEND_DRAFT") {
     if ((descriptor.recipients ?? []).length === 0)
       problems.push("the card does not name the recipients (only the draft id)");
@@ -816,7 +804,6 @@ function runCli(
   capUsd: number,
 ): Promise<{ code: number | null; stdout: string; stderr: string; wallMs: number }> {
   const env: Record<string, string> = { ...environment };
-  if (run.withoutQuickBooks) for (const name of QUICKBOOKS_VARS) delete env[name];
   const started = Date.now();
   const child = spawn(
     process.execPath,
@@ -986,7 +973,6 @@ async function main(): Promise<void> {
         turns.push(turn);
         save(`${run.id}.json`, {
           run: run.id,
-          withoutQuickBooks: run.withoutQuickBooks,
           exitCode: result.code,
           summary,
           stderr: result.stderr,

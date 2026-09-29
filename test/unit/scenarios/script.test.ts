@@ -252,24 +252,18 @@ describe("scenario facts agree with the business fixtures", () => {
     const customer = fixtures.company.customers.find((entry) => entry.key === "harbor-pine");
     expect(customer).toMatchObject({
       stripeCustomer: HARBOR_PINE.stripeCustomer,
-      quickbooksCustomer: HARBOR_PINE.quickbooksCustomer,
       hubspotCompany: HARBOR_PINE.hubspotCompany,
       hubspotContact: HARBOR_PINE.hubspotContact,
     });
   });
 
   it("collections: invoice numbers, threads and the unrecorded Meridian charge", () => {
-    const numbers = fixtures.quickbooks.invoices.map((entry) => entry.DocNumber);
-    for (const number of [COPPERLEAF.invoice, TIDEWATER.invoice, MERIDIAN.invoice, BLUEFIN.invoice])
-      expect(numbers).toContain(number);
     expect(
       fixtures.stripe.charges.find((entry) => entry.id === MERIDIAN.unrecordedCharge)?.metadata,
     ).toEqual({ qbo_invoice: MERIDIAN.invoice });
-    expect(
-      fixtures.quickbooks.payments.some(
-        (entry) => entry.PaymentRefNum === MERIDIAN.unrecordedCharge,
-      ),
-    ).toBe(false);
+    const story = JSON.stringify(fixtures.company.customers);
+    for (const number of [COPPERLEAF.invoice, TIDEWATER.invoice, MERIDIAN.invoice, BLUEFIN.invoice])
+      expect(story).toContain(number);
     expect(
       fixtures.gmail.messages.find((entry) => entry.threadId === TIDEWATER.gmailThread),
     ).toBeDefined();
@@ -278,7 +272,7 @@ describe("scenario facts agree with the business fixtures", () => {
     ).toContain(COPPERLEAF.contactEmail);
   });
 
-  it("Solstice: the deal, the contact and the ids the fakes will assign", () => {
+  it("Solstice: the deal and the contact", () => {
     const deal = fixtures.hubspot.objects.deals.find((entry) => entry.id === SOLSTICE.hubspotDeal);
     expect(deal?.properties).toMatchObject({
       dealstage: "closedwon",
@@ -288,14 +282,6 @@ describe("scenario facts agree with the business fixtures", () => {
       fixtures.hubspot.objects.contacts.find((entry) => entry.id === SOLSTICE.hubspotContact)
         ?.properties.email,
     ).toBe(SOLSTICE.contactEmail);
-    expect(fixtures.quickbooks.customers.some((entry) => entry.DisplayName === SOLSTICE.name)).toBe(
-      false,
-    );
-    const maxCustomer = Math.max(...fixtures.quickbooks.customers.map((entry) => Number(entry.Id)));
-    const maxInvoice = Math.max(...fixtures.quickbooks.invoices.map((entry) => Number(entry.Id)));
-    expect(String(maxCustomer + 1)).toBe(SOLSTICE.expectedCustomerId);
-    expect(String(maxInvoice + 1)).toBe(SOLSTICE.expectedInvoiceId);
-    expect(String(fixtures.quickbooks.nextDocNumber)).toBe(SOLSTICE.expectedDocNumber);
   });
 
   it("owners and the digest's numbers follow from the fixtures", () => {
@@ -312,18 +298,6 @@ describe("scenario facts agree with the business fixtures", () => {
       .reduce((sum, entry) => sum + entry.amount, 0);
     expect(paid).toBe(112_900);
     expect(J5_DIGEST).toContain("$1,129.00");
-    const open = fixtures.quickbooks.invoices
-      .map((invoice) => {
-        const total = invoice.Line.reduce((sum, line) => sum + line.Amount, 0);
-        const paidAmount = fixtures.quickbooks.payments
-          .flatMap((payment) => payment.Line)
-          .filter((line) => line.LinkedTxn.some((linked) => linked.TxnId === invoice.Id))
-          .reduce((sum, line) => sum + line.Amount, 0);
-        return total - paidAmount;
-      })
-      .reduce((sum, balance) => sum + balance, 0);
-    expect(open).toBe(9028);
-    expect(J5_DIGEST).toContain("$9,028.00");
   });
 
   it("derives idempotency keys as hex sha256 of runId:toolUseId", () => {

@@ -1,89 +1,52 @@
-// The Slack integration: API kind, profile slack-api.
+// The Slack integration: Composio kind, toolkit slack. Composio holds the
+// Slack sign-in (Connect in Connections); Revenue Desk holds no Slack token.
 
-import {
-  INTEGRATIONS,
-  type ProbeResult,
-  type SlackConnection,
-} from "../../contracts/integration.js";
-import type { ApiIntegration, ApiIntegrationDeps } from "../shared/definition.js";
-import { type CredentialRules, probeFailure } from "../shared/errors.js";
-import type { HttpDeps } from "../shared/http.js";
-import { str } from "../shared/json.js";
-import { maskIdentifier, sentence } from "../shared/text.js";
+import { INTEGRATIONS } from "../../contracts/integration.js";
+import { ComposioConnectors, probeComposio } from "../composio/connector.js";
+import type { ComposioIntegration } from "../composio/integration.js";
+import { resolveComposioConfig } from "../composio/resolve.js";
+import { allowedTools } from "../composio/session.js";
 import { classifySlack } from "./classify.js";
-import { SlackClient } from "./client.js";
 import { checkSlackInput } from "./input-rules.js";
 import { SLACK_PROFILE } from "./profile.js";
-import { resolveSlack } from "./resolve.js";
-import { createSlackTools } from "./tools.js";
+import { SlackRunMemory } from "./run-memory.js";
 
-const REJECTED = new Set(["invalid_auth", "not_authed", "account_inactive", "token_revoked"]);
-
-export function slackClientFor(connection: SlackConnection, http?: HttpDeps): SlackClient {
-  return new SlackClient({
-    baseUrl: connection.api.baseUrl,
-    botToken: connection.api.botToken,
-    ...(http === undefined ? {} : { http }),
-  });
-}
-
-/** Read-only check: auth.test names the workspace and the bot user. */
-export async function probeSlack(
-  connection: SlackConnection,
-  signal: AbortSignal,
-  http?: HttpDeps,
-): Promise<ProbeResult> {
-  try {
-    const body = await slackClientFor(connection, http).read("auth.test", {}, signal);
-    const team = str(body, "team");
-    const user = str(body, "user");
-    const teamId = str(body, "team_id");
-    const who = [
-      team === undefined ? undefined : `Connected to ${team}`,
-      user === undefined ? undefined : `as ${user}`,
-    ]
-      .filter((part) => part !== undefined)
-      .join(" ");
-    return {
-      state: "connected",
-      detail: who === "" ? "Slack accepted the bot token." : sentence(who),
-      accountHint: teamId === undefined ? null : maskIdentifier(teamId),
-    };
-  } catch (error) {
-    return probeFailure(INTEGRATIONS.slack.label, error, {
-      ...SLACK_CALL_CREDENTIAL_RULES,
-      rejected: (failure) =>
-        failure.status === 401 ||
-        failure.status === 403 ||
-        (failure.code !== null && (REJECTED.has(failure.code) || failure.code === "missing_scope")),
-    });
-  }
-}
-
-/**
- * A call that says the bot token itself is dead. A missing scope on one
- * method (reactions, private channels) is not: the other tools still work.
- */
-export const SLACK_CALL_CREDENTIAL_RULES: CredentialRules = {
-  variable: "SLACK_BOT_TOKEN",
-  credential: "the bot token",
-  expired: (failure) => failure.code === "token_expired",
-  rejected: (failure) =>
-    failure.status === 401 || (failure.code !== null && REJECTED.has(failure.code)),
-};
-
-export function createSlackIntegration(deps: ApiIntegrationDeps = {}): ApiIntegration<"slack"> {
+export function createSlackIntegration(
+  connectors: ComposioConnectors = new ComposioConnectors(),
+): ComposioIntegration<"slack"> {
   return {
     id: "slack",
     label: INTEGRATIONS.slack.label,
-    kind: "api",
+    kind: "composio",
     profile: SLACK_PROFILE,
-    resolve: resolveSlack,
-    classify: classifySlack,
-    probe: (connection, signal) => probeSlack(connection, signal, deps.http),
-    tools: (connection, options) =>
-      createSlackTools(slackClientFor(connection, deps.http), options),
-    // Mentions must be Slack user ids; a plain @name or another system's id notifies nobody.
+    toolkit: "slack",
+    resolve(env) {
+      const config = resolveComposioConfig(env);
+      if (config.status !== "configured") return config;
+      return {
+        status: "configured",
+        connection: {
+          integration: "slack",
+          kind: "composio",
+          profile: "composio",
+          endpointLabel: config.host,
+          composio: {
+            apiKey: config.apiKey,
+            userId: config.userId,
+            baseUrl: config.baseUrl,
+            toolkit: "slack",
+          },
+        },
+      };
+    },
+    classify: (tool, input, settings) => classifySlack(tool, input, settings),
+    probe: (connection, signal) =>
+      probeComposio(connectors.forConnection(connection), "slack", signal),
+    allowlist: (access) => allowedTools("slack", access),
+    connector: (connection) => connectors.forConnection(connection),
+    // Whether a channel id is an allowlisted channel only Slack's own results say.
+    runMemory: (settings) => new SlackRunMemory(settings),
+    // Markdown text only, and mentions that notify the person meant.
     checkInput: checkSlackInput,
   };
 }

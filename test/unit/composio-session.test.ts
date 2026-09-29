@@ -86,9 +86,9 @@ describe("allowlists and session config", () => {
     }
   });
 
-  it("defaults to both toolkits with reads and drafts only", () => {
+  it("defaults to all four toolkits with reads and internal writes only", () => {
     expect(buildSessionConfig()).toEqual({
-      toolkits: ["gmail", "googlecalendar"],
+      toolkits: ["gmail", "googlecalendar", "quickbooks", "slack"],
       tools: {
         gmail: {
           enable: [
@@ -105,6 +105,29 @@ describe("allowlists and session config", () => {
             "GOOGLECALENDAR_EVENTS_LIST",
             "GOOGLECALENDAR_FIND_FREE_SLOTS",
             "GOOGLECALENDAR_FIND_EVENT",
+          ],
+        },
+        quickbooks: {
+          enable: [
+            "QUICKBOOKS_GET_COMPANY_INFO",
+            "QUICKBOOKS_QUERY_CUSTOMERS",
+            "QUICKBOOKS_READ_CUSTOMER",
+            "QUICKBOOKS_QUERY_INVOICES",
+            "QUICKBOOKS_READ_INVOICE",
+            "QUICKBOOKS_QUERY_PAYMENTS",
+            "QUICKBOOKS_QUERY_ITEMS",
+            "QUICKBOOKS_GET_AGED_RECEIVABLES_REPORT",
+            "QUICKBOOKS_CREATE_CUSTOMER",
+          ],
+        },
+        slack: {
+          enable: [
+            "SLACK_FIND_CHANNELS",
+            "SLACK_LIST_ALL_CHANNELS",
+            "SLACK_FETCH_CONVERSATION_HISTORY",
+            "SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION",
+            "SLACK_FIND_USERS",
+            "SLACK_ADD_REACTION_TO_AN_ITEM",
           ],
         },
       },
@@ -124,7 +147,7 @@ describe("allowlists and session config", () => {
       Array.isArray(entry) ? entry : "enable" in entry ? entry.enable : [],
     );
     expect(enabled.some((slug) => slug.startsWith("COMPOSIO_"))).toBe(false);
-    expect(enabled).toHaveLength(13);
+    expect(enabled).toHaveLength(31);
   });
 
   it("offers outbound tools only when asked", () => {
@@ -137,15 +160,34 @@ describe("allowlists and session config", () => {
     expect(allowedTools("gmail")).not.toContain("GMAIL_SEND_DRAFT");
     expect(allowedTools("gmail", "outbound")).toContain("GMAIL_SEND_DRAFT");
     expect(allowedTools("googlecalendar")).not.toContain("GOOGLECALENDAR_CREATE_EVENT");
+    // QuickBooks invoices and payments, and Slack posts, are outbound-level: they move
+    // money or reach other people. A QuickBooks customer and a Slack reaction are internal.
+    expect(allowedTools("quickbooks", "read")).not.toContain("QUICKBOOKS_CREATE_CUSTOMER");
+    expect(allowedTools("quickbooks", "draft")).toContain("QUICKBOOKS_CREATE_CUSTOMER");
+    expect(allowedTools("quickbooks", "draft")).not.toContain("QUICKBOOKS_CREATE_INVOICE");
+    expect(allowedTools("quickbooks", "outbound")).toEqual(
+      expect.arrayContaining(["QUICKBOOKS_CREATE_INVOICE", "QUICKBOOKS_CREATE_PAYMENT"]),
+    );
+    expect(allowedTools("slack", "draft")).toContain("SLACK_ADD_REACTION_TO_AN_ITEM");
+    expect(allowedTools("slack", "draft")).not.toContain("SLACK_SEND_MESSAGE");
+    expect(allowedTools("slack", "outbound")).toContain("SLACK_SEND_MESSAGE");
+    // Neither toolkit's catalog can email or void an invoice, and the deprecated post is out.
+    for (const access of ["read", "draft", "outbound"] as const) {
+      const offered = [...allowedTools("quickbooks", access), ...allowedTools("slack", access)];
+      expect(offered.some((slug) => /SEND_INVOICE|VOID|DELETE|CHAT_POST_MESSAGE/.test(slug))).toBe(
+        false,
+      );
+    }
   });
 
   it("keeps a canonical toolkit order and rejects bad selections", () => {
-    expect(buildSessionConfig({ toolkits: ["googlecalendar", "gmail", "gmail"] }).toolkits).toEqual(
-      ["gmail", "googlecalendar"],
-    );
+    expect(
+      buildSessionConfig({ toolkits: ["slack", "googlecalendar", "gmail", "quickbooks", "gmail"] })
+        .toolkits,
+    ).toEqual(["gmail", "googlecalendar", "quickbooks", "slack"]);
     expect(buildSessionConfig({ toolkits: ["googlecalendar"] }).tools).not.toHaveProperty("gmail");
     expect(() => buildSessionConfig({ toolkits: [] })).toThrow(ComposioSessionError);
-    expect(() => buildSessionConfig({ toolkits: ["slack" as never] })).toThrow(/Unsupported/);
+    expect(() => buildSessionConfig({ toolkits: ["hubspot" as never] })).toThrow(/Unsupported/);
     expect(() => buildSessionConfig({ access: "admin" as never })).toThrow(/access level/);
     expect(() => buildSessionConfig({ access: "toString" as never })).toThrow(/access level/);
   });
@@ -354,6 +396,48 @@ describe("connection status", () => {
     });
   });
 
+  it("names each toolkit and whose sign-in Composio holds for it", () => {
+    expect(toConnectionStatus("quickbooks", { slug: "quickbooks", isNoAuth: false })).toEqual({
+      toolkit: "quickbooks",
+      state: "needs_auth",
+      accountStatus: null,
+      accountHint: null,
+      detail: "QuickBooks Online is not connected. Click Connect in Connections to sign in.",
+    });
+    expect(
+      toConnectionStatus("quickbooks", {
+        slug: "quickbooks",
+        isNoAuth: false,
+        connection: {
+          isActive: false,
+          connectedAccount: { id: "ca_QBOEXPIRED1", status: "EXPIRED" },
+        },
+      }).detail,
+    ).toBe(
+      "QuickBooks Online's Intuit sign-in expired. Click Connect in Connections to sign in again.",
+    );
+    expect(
+      toConnectionStatus("slack", {
+        slug: "slack",
+        isNoAuth: false,
+        connection: {
+          isActive: false,
+          connectedAccount: { id: "ca_SLACKINIT1", status: "INITIATED" },
+        },
+      }).detail,
+    ).toBe("Slack's Slack sign-in is initiated. Click Connect in Connections to finish it.");
+    expect(
+      toConnectionStatus("slack", {
+        slug: "slack",
+        isNoAuth: false,
+        connection: { isActive: true, connectedAccount: { id: "ca_SLACKOK123", status: "ACTIVE" } },
+      }),
+    ).toMatchObject({ state: "connected", detail: "Slack connected", accountHint: "ca_…123" });
+    expect(toConnectionStatus("googlecalendar", undefined).detail).toBe(
+      "Google Calendar was not reported by Composio for this session",
+    );
+  });
+
   it("does not treat an active flag with a non-active account as connected", () => {
     expect(
       toConnectionStatus("gmail", {
@@ -391,11 +475,11 @@ describe("connection status", () => {
     const status = await manager(client).connectionStatus();
     expect(status.gmail.state).toBe("connected");
     expect(status.googlecalendar.state).toBe("expired");
-    expect(session.toolkits).toHaveBeenNthCalledWith(1, { toolkits: ["gmail", "googlecalendar"] });
-    expect(session.toolkits).toHaveBeenNthCalledWith(2, {
-      toolkits: ["gmail", "googlecalendar"],
-      cursor: "next",
-    });
+    expect(status.quickbooks.state).toBe("needs_auth");
+    expect(status.slack.state).toBe("needs_auth");
+    const all = ["gmail", "googlecalendar", "quickbooks", "slack"];
+    expect(session.toolkits).toHaveBeenNthCalledWith(1, { toolkits: all });
+    expect(session.toolkits).toHaveBeenNthCalledWith(2, { toolkits: all, cursor: "next" });
     expect(session.authorize).not.toHaveBeenCalled();
   });
 });
@@ -427,7 +511,7 @@ describe("authorize", () => {
     await expect(sessions.authorize("gmail", "not a url")).rejects.toMatchObject({
       code: "config",
     });
-    await expect(sessions.authorize("slack" as never, "https://x.test/cb")).rejects.toThrow(
+    await expect(sessions.authorize("hubspot" as never, "https://x.test/cb")).rejects.toThrow(
       /Unsupported/,
     );
     const gmailOnly = new ComposioSessionManager({

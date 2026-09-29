@@ -1,15 +1,11 @@
-// The API tools as the gateway offers them: every zod shape becomes a
+// The API tools (Stripe's) as the gateway offers them: every zod shape becomes a
 // draft-07 schema the gateway's validator compiles, with a description for
 // every argument; realistic calls pass and malformed ones are rejected before
 // any approval; and a call through the gateway's own API tool wrapper reaches
 // the provider with the gateway's idempotency key.
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type {
-  QuickBooksConnection,
-  SlackConnection,
-  StripeConnection,
-} from "../../../src/contracts/integration.js";
+import type { StripeConnection } from "../../../src/contracts/integration.js";
 import type { JsonObject } from "../../../src/contracts/json.js";
 import {
   type ApiToolDefinition,
@@ -38,39 +34,12 @@ const stripe: StripeConnection = {
     apiVersion: null,
   },
 };
-const quickbooks: QuickBooksConnection = {
-  integration: "quickbooks",
-  kind: "api",
-  profile: "quickbooks-api",
-  endpointLabel: "qbo.test",
-  api: {
-    baseUrl: "https://qbo.test",
-    accessToken: secret("qbo"),
-    realmId: "9130000001",
-    minorVersion: null,
-  },
-};
-const slack: SlackConnection = {
-  integration: "slack",
-  kind: "api",
-  profile: "slack-api",
-  endpointLabel: "slack.test",
-  api: { baseUrl: "https://slack.test", botToken: secret("xoxb-schemas") },
-};
 
 function allTools(set: Integrations): Map<string, ApiTool> {
   const options = { currency: "USD" };
-  const entries: Array<[string, ApiTool]> = [
-    ...set.stripe
-      .tools(stripe, options)
-      .map((tool): [string, ApiTool] => [`mcp__stripe__${tool.name}`, tool]),
-    ...set.quickbooks
-      .tools(quickbooks, options)
-      .map((tool): [string, ApiTool] => [`mcp__quickbooks__${tool.name}`, tool]),
-    ...set.slack
-      .tools(slack, options)
-      .map((tool): [string, ApiTool] => [`mcp__slack__${tool.name}`, tool]),
-  ];
+  const entries: Array<[string, ApiTool]> = set.stripe
+    .tools(stripe, options)
+    .map((tool): [string, ApiTool] => [`mcp__stripe__${tool.name}`, tool]);
   return new Map(entries);
 }
 
@@ -100,40 +69,6 @@ const VALID: Readonly<Record<string, JsonObject>> = {
     prorate: true,
     comment: "Closing",
   },
-  mcp__quickbooks__get_company_info: {},
-  mcp__quickbooks__find_customers: { name: "Harbor", email: "dana@harborpine.test" },
-  mcp__quickbooks__get_customer: { customer_id: "58" },
-  mcp__quickbooks__list_invoices: { status: "open", due_before: "2026-08-01", as_of: "2026-09-28" },
-  mcp__quickbooks__get_invoice: { invoice_id: "143" },
-  mcp__quickbooks__list_payments: { customer_id: "58", received_from: "2026-09-01" },
-  mcp__quickbooks__create_customer: {
-    display_name: "Orchard Row Bakery",
-    email: "ap@orchardrow.test",
-    billing_address: { line1: "1 Main St", city: "Salem" },
-  },
-  mcp__quickbooks__create_invoice: {
-    customer_id: "58",
-    lines: [{ description: "Growth plan", unit_price_minor: 49000 }],
-    due_date: "2026-10-28",
-  },
-  mcp__quickbooks__send_invoice: { invoice_id: "157", send_to: "ap@orchardrow.test" },
-  mcp__quickbooks__record_payment: {
-    customer_id: "58",
-    amount_minor: 49000,
-    invoice_id: "149",
-    reference: "ch_KAhp_0922a",
-  },
-  mcp__quickbooks__void_invoice: { invoice_id: "157", sync_token: "0" },
-  mcp__slack__list_channels: { name_contains: "billing" },
-  mcp__slack__read_channel: { channel: "C0BILLING01", after: "2026-09-21" },
-  mcp__slack__read_thread: { channel: "C0BILLING01", thread_ts: "1790449920.000100" },
-  mcp__slack__find_user: { query: "maya" },
-  mcp__slack__post_message: { channel: "#billing", text: "Refunded the duplicate charge." },
-  mcp__slack__add_reaction: {
-    channel: "C0BILLING01",
-    timestamp: "1790449920.000100",
-    name: "white_check_mark",
-  },
 };
 
 /** Calls the gateway must reject before approval. */
@@ -145,13 +80,6 @@ const INVALID: ReadonlyArray<readonly [string, JsonObject]> = [
   ["mcp__stripe__create_refund", { charge: "ch_1", amount: 100, currency: "usd" }],
   ["mcp__stripe__list_charges", { limit: 1000 }],
   ["mcp__stripe__list_charges", { created_after: "last week" }],
-  ["mcp__quickbooks__create_invoice", { customer_id: "58", lines: [] }],
-  ["mcp__quickbooks__create_invoice", { customer_id: "Acme", lines: [{ unit_price_minor: 1 }] }],
-  ["mcp__quickbooks__list_invoices", { status: "overdue" }],
-  ["mcp__quickbooks__send_invoice", { invoice_id: "157", send_to: "not an email" }],
-  ["mcp__slack__post_message", { channel: "#billing", text: "" }],
-  ["mcp__slack__post_message", { channel: "#billing", text: "x".repeat(4001) }],
-  ["mcp__slack__read_thread", { channel: "C0BILLING01", thread_ts: "yesterday" }],
 ];
 
 describe("API tool schemas as offered by the gateway", () => {

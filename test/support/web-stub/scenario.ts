@@ -194,7 +194,7 @@ export async function refundScenario(ctx: ScriptContext): Promise<void> {
       code: "connection_unavailable",
       integration: "quickbooks",
       message:
-        "QuickBooks Online is not configured, so this run cannot see invoices or payments recorded there.",
+        "QuickBooks Online is not connected, so this run cannot see invoices or payments recorded there.",
     },
   });
 
@@ -512,15 +512,20 @@ export async function refundScenario(ctx: ScriptContext): Promise<void> {
     },
     {
       toolCallId: stubId("toolu"),
-      toolName: "mcp__slack__post_message",
+      toolName: "mcp__slack__SLACK_SEND_MESSAGE",
       title: "Post to #billing in Slack",
-      metadata: metadata("slack", "api", "slack.chat.post_message", "internal_write"),
-      upstream: "chat.postMessage",
+      metadata: metadata("slack", "composio", "slack.chat.post_message", "internal_write"),
+      upstream: "SLACK_SEND_MESSAGE",
       input: {
         channel: "#billing",
-        text: "Refunded $49.00 to Harbor & Pine Outfitters (duplicate of ch_3Q8hPine0001). Refund re_3Q8hPine0007.",
+        markdown_text:
+          "Refunded $49.00 to Harbor & Pine Outfitters (duplicate of ch_3Q8hPine0001). Refund re_3Q8hPine0007.",
       },
-      output: { ok: true, channel: "C07BILLING", ts: "1790604312.000200" },
+      output: {
+        successful: true,
+        data: { ok: true, channel: "C07BILLING", ts: "1790604312.000200" },
+        error: null,
+      },
       durationMs: 480,
     },
   ];

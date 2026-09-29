@@ -28,19 +28,14 @@ export const CONNECTION_KINDS = ["composio", "mcp", "api"] as const;
 export type ConnectionKind = (typeof CONNECTION_KINDS)[number];
 
 /** Composio toolkit slugs; equal to COMPOSIO_TOOLKITS in src/integrations/composio/session.ts. */
-export type ComposioToolkitSlug = "gmail" | "googlecalendar";
+export type ComposioToolkitSlug = "gmail" | "googlecalendar" | "quickbooks" | "slack";
 
 /**
  * The tool profile of each integration. There is exactly one per integration.
  * A profile id names a fixed tool surface; a new upstream surface (for example
  * a HubSpot MCP server 0.5) gets a new profile id rather than a silent change.
  */
-export type ProfileId =
-  | "composio"
-  | "hubspot-mcp-0.4"
-  | "stripe-api"
-  | "quickbooks-api"
-  | "slack-api";
+export type ProfileId = "composio" | "hubspot-mcp-0.4" | "stripe-api";
 
 /** Static facts about an integration. */
 export type IntegrationInfo = {
@@ -51,7 +46,11 @@ export type IntegrationInfo = {
   readonly profile: ProfileId;
 };
 
-/** Decided connection mapping: 2 Composio, 1 MCP, 3 API. */
+/**
+ * Decided connection mapping (Kiran, 2026-09-29): Composio for every system
+ * it supports (Gmail, Google Calendar, QuickBooks, Slack), MCP for HubSpot
+ * and the REST API for Stripe. 4 Composio, 1 MCP, 1 API.
+ */
 export const INTEGRATIONS = {
   gmail: { id: "gmail", label: "Gmail", kind: "composio", profile: "composio" },
   google_calendar: {
@@ -65,10 +64,10 @@ export const INTEGRATIONS = {
   quickbooks: {
     id: "quickbooks",
     label: "QuickBooks Online",
-    kind: "api",
-    profile: "quickbooks-api",
+    kind: "composio",
+    profile: "composio",
   },
-  slack: { id: "slack", label: "Slack", kind: "api", profile: "slack-api" },
+  slack: { id: "slack", label: "Slack", kind: "composio", profile: "composio" },
 } as const satisfies { readonly [I in IntegrationId]: IntegrationInfo & { readonly id: I } };
 
 export type IntegrationKindOf<I extends IntegrationId> = (typeof INTEGRATIONS)[I]["kind"];
@@ -86,6 +85,8 @@ export type ApiIntegrationId = {
 export const COMPOSIO_TOOLKIT_OF = {
   gmail: "gmail",
   google_calendar: "googlecalendar",
+  quickbooks: "quickbooks",
+  slack: "slack",
 } as const satisfies Record<ComposioIntegrationId, ComposioToolkitSlug>;
 
 // ---------------------------------------------------------------------------
@@ -294,17 +295,20 @@ type ConnectionBase<I extends IntegrationId> = {
 
 /**
  * How far a Composio session reaches (src/integrations/composio/session.ts):
- * read; draft (the user's own mailbox: drafts and labels); outbound (send,
- * reply, calendar events that can carry attendees).
+ * read; draft (internal writes: the user's own mailbox, a QuickBooks
+ * customer, a Slack reaction); outbound (tools that can reach other people
+ * or move money: sending and replying, calendar events, Slack posts,
+ * QuickBooks invoices and payments).
  */
 export type ComposioAccess = "read" | "draft" | "outbound";
 
 /**
  * The session exposure for a run: tools the policy would always deny are not
- * offered. Outbound tools are offered (and then gated) unless outbound is deny.
+ * offered. Outbound-level tools are offered (and then gated call by call)
+ * unless both outbound and financial are deny.
  */
 export function composioAccessFor(policy: PolicyModes): ComposioAccess {
-  if (policy.outbound !== "deny") return "outbound";
+  if (policy.outbound !== "deny" || policy.financial !== "deny") return "outbound";
   return policy.internal_write === "deny" ? "read" : "draft";
 }
 
@@ -353,30 +357,13 @@ export type StripeConnection = ConnectionBase<"stripe"> & {
   };
 };
 
-export type QuickBooksConnection = ConnectionBase<"quickbooks"> & {
-  readonly api: {
-    readonly baseUrl: string;
-    readonly accessToken: SecretValue;
-    readonly realmId: string;
-    /** `minorversion` query parameter; null omits it. */
-    readonly minorVersion: string | null;
-  };
-};
-
-export type SlackConnection = ConnectionBase<"slack"> & {
-  readonly api: {
-    readonly baseUrl: string;
-    readonly botToken: SecretValue;
-  };
-};
-
 export type ResolvedConnection =
   | ComposioConnection<"gmail">
   | ComposioConnection<"google_calendar">
+  | ComposioConnection<"quickbooks">
+  | ComposioConnection<"slack">
   | HubSpotConnection
-  | StripeConnection
-  | QuickBooksConnection
-  | SlackConnection;
+  | StripeConnection;
 
 export type ResolvedConnectionOf<I extends IntegrationId> = Extract<
   ResolvedConnection,
@@ -441,7 +428,7 @@ export type ApiCallContext = {
   readonly runId: string;
   /** From `_meta[TOOL_USE_ID_META_KEY]`. A write without it fails closed. */
   readonly toolUseId: string;
-  /** Hex sha256 of `${runId}:${toolUseId}`: Stripe Idempotency-Key, QuickBooks requestid. */
+  /** Hex sha256 of `${runId}:${toolUseId}`: the Stripe Idempotency-Key. */
   readonly idempotencyKey: string;
   readonly signal: AbortSignal | undefined;
 };

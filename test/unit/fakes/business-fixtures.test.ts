@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { BUSINESS_FIXTURES_DIR, loadBusinessFixtures } from "../../support/fakes/fixtures.js";
 
 const fixtures = loadBusinessFixtures();
-const { company, stripe, quickbooks, hubspot, gmail, calendar, slack } = fixtures;
+const { company, stripe, hubspot, gmail, calendar } = fixtures;
 
 describe("business fixtures: one fictional company", () => {
   it("uses only .test domains for every address and link", () => {
@@ -33,15 +33,6 @@ describe("business fixtures: one fictional company", () => {
         ).toMatchObject({
           name: customer.name,
           email: customer.contact.email,
-        });
-      }
-      if (customer.quickbooksCustomer !== null) {
-        expect(
-          quickbooks.customers.find((entry) => entry.Id === customer.quickbooksCustomer),
-          customer.key,
-        ).toMatchObject({
-          DisplayName: customer.name,
-          PrimaryEmailAddr: { Address: customer.contact.email },
         });
       }
       if (customer.hubspotCompany !== null) {
@@ -72,8 +63,6 @@ describe("business fixtures: one fictional company", () => {
       expect(charge.created, charge.id).toBeLessThanOrEqual(asOf);
     for (const message of gmail.messages)
       expect(Date.parse(message.date) / 1000, message.id).toBeLessThanOrEqual(asOf);
-    for (const invoice of quickbooks.invoices)
-      expect(invoice.TxnDate <= company.businessDate, invoice.DocNumber).toBe(true);
   });
 });
 
@@ -128,67 +117,7 @@ describe("business fixtures: Stripe", () => {
   });
 });
 
-describe("business fixtures: QuickBooks", () => {
-  it("links invoices and payments to customers, items and terms that exist", () => {
-    const customers = new Map(quickbooks.customers.map((customer) => [customer.Id, customer]));
-    const items = new Map(quickbooks.items.map((item) => [item.Id, item]));
-    const terms = new Set(quickbooks.terms.map((term) => term.Id));
-    const invoices = new Map(quickbooks.invoices.map((invoice) => [invoice.Id, invoice]));
-    for (const invoice of quickbooks.invoices) {
-      expect(customers.get(invoice.CustomerRef.value)?.DisplayName, invoice.DocNumber).toBe(
-        invoice.CustomerRef.name,
-      );
-      expect(terms.has(invoice.SalesTermRef.value), invoice.DocNumber).toBe(true);
-      for (const line of invoice.Line) {
-        expect(items.get(line.ItemRef.value)?.Name, invoice.DocNumber).toBe(line.ItemRef.name);
-        expect(line.Qty * line.UnitPrice, invoice.DocNumber).toBe(line.Amount);
-      }
-    }
-    for (const payment of quickbooks.payments) {
-      for (const line of payment.Line) {
-        for (const linked of line.LinkedTxn) {
-          expect(invoices.get(linked.TxnId)?.CustomerRef.value, payment.Id).toBe(
-            payment.CustomerRef.value,
-          );
-        }
-      }
-    }
-    const numbers = quickbooks.invoices.map((invoice) => Number(invoice.DocNumber));
-    expect(Math.max(...numbers)).toBeLessThan(quickbooks.nextDocNumber);
-  });
-
-  it("holds the J3 story: four overdue invoices, one 60+ days, one paid in Stripe but not recorded", () => {
-    const balance = (invoice: (typeof quickbooks.invoices)[number]) =>
-      invoice.Line.reduce((sum, line) => sum + line.Amount, 0) -
-      quickbooks.payments
-        .flatMap((payment) => payment.Line)
-        .filter((line) => line.LinkedTxn.some((linked) => linked.TxnId === invoice.Id))
-        .reduce((sum, line) => sum + line.Amount, 0);
-    const overdue = quickbooks.invoices.filter(
-      (invoice) => invoice.DueDate < company.businessDate && balance(invoice) > 0,
-    );
-    expect(overdue.map((invoice) => invoice.DocNumber).sort()).toEqual([
-      "1043",
-      "1048",
-      "1051",
-      "1055",
-    ]);
-    const days = (date: string) =>
-      (Date.parse(company.businessDate) - Date.parse(date)) / 86_400_000;
-    expect(
-      overdue.filter((invoice) => days(invoice.DueDate) >= 60).map((invoice) => invoice.DocNumber),
-    ).toEqual(["1043"]);
-    const meridian = stripe.charges.find((charge) => charge.metadata?.qbo_invoice === "1051");
-    expect(meridian?.amount).toBe(198_000);
-    expect(quickbooks.payments.some((payment) => payment.PaymentRefNum === meridian?.id)).toBe(
-      false,
-    );
-    const bluefin = stripe.charges.find((charge) => charge.metadata?.qbo_invoice === "1055");
-    expect(quickbooks.payments.some((payment) => payment.PaymentRefNum === bluefin?.id)).toBe(true);
-  });
-});
-
-describe("business fixtures: HubSpot, Gmail, Calendar and Slack", () => {
+describe("business fixtures: HubSpot, Gmail and Calendar", () => {
   it("associates only objects and owners that exist", () => {
     const ids = new Map(
       Object.entries(hubspot.objects).map(([type, records]) => [
@@ -238,22 +167,10 @@ describe("business fixtures: HubSpot, Gmail, Calendar and Slack", () => {
         expect(labels.has(label), `${message.id} ${label}`).toBe(true);
   });
 
-  it("schedules calendar events inside the week and refers to known Slack channels and users", () => {
+  it("schedules calendar events inside the week", () => {
     for (const event of calendar.events) {
       expect(event.start < event.end, event.id).toBe(true);
       expect(event.start >= "2026-09-28" && event.start < "2026-10-03", event.id).toBe(true);
-    }
-    const channels = new Set(slack.channels.map((channel) => channel.id));
-    const users = new Set(slack.users.map((user) => user.id));
-    for (const message of slack.messages) {
-      expect(channels.has(message.channel), message.ts).toBe(true);
-      expect(users.has(message.user), message.ts).toBe(true);
-    }
-    for (const allowed of company.workspaceSettings.allowedSlackChannels) {
-      expect(
-        slack.channels.find((channel) => `#${channel.name}` === allowed)?.botIsMember,
-        allowed,
-      ).toBe(true);
     }
   });
 });

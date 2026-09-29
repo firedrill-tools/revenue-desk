@@ -41,7 +41,7 @@ export const ACTION_CLASS_LABELS = {
 export const ACTION_CLASS_DESCRIPTIONS = {
   read: "Look up emails, records, charges and invoices.",
   internal_write:
-    "Drafts, labels, HubSpot notes and tasks, and Slack posts to allowlisted channels.",
+    "Drafts, labels, HubSpot notes and tasks, QuickBooks customers, and Slack posts to allowlisted channels.",
   outbound: "Send email, invite external attendees, post to other Slack channels.",
   financial: "Refunds, invoices, recorded payments and subscription cancellations.",
   destructive: "Anything that deletes or voids data.",

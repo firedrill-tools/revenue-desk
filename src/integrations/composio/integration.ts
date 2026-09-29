@@ -1,5 +1,5 @@
-// What the Composio integrations (Gmail, Google Calendar) offer the gateway
-// beyond the frozen IntegrationDefinition.
+// What the Composio integrations (Gmail, Google Calendar, QuickBooks, Slack)
+// offer the gateway beyond the frozen IntegrationDefinition.
 
 import type {
   ClassifierSettings,
@@ -9,7 +9,9 @@ import type {
   IntegrationDefinition,
   ResolvedConnectionOf,
 } from "../../contracts/integration.js";
+import type { JsonObject } from "../../contracts/json.js";
 import type { RunMemory } from "../../gateway/catalog.js";
+import type { SchemaIssue } from "../../gateway/validate.js";
 import type { ComposioConnector } from "./connector.js";
 
 export interface ComposioIntegration<I extends ComposioIntegrationId>
@@ -22,4 +24,6 @@ export interface ComposioIntegration<I extends ComposioIntegrationId>
   connector(connection: ResolvedConnectionOf<I>): ComposioConnector;
   /** What a run learns from this integration's calls (e.g. the drafts it created). */
   runMemory?(settings: ClassifierSettings): RunMemory;
+  /** Rules the upstream schema cannot state, checked before any policy (InputCheckSource). */
+  checkInput?(tool: string, input: JsonObject): readonly SchemaIssue[];
 }

@@ -56,8 +56,9 @@ export type SandboxArgs =
 export const USAGE = [
   "Usage: pnpm dev:sandbox [--model scripted|real] [--hubspot stdio|http] [--state-dir <dir>] [--no-web] [--built]",
   "",
-  "A labelled local demo against local fakes of Gmail, Google Calendar, HubSpot, Stripe,",
-  "QuickBooks Online and Slack, loaded with a fictional company. No real service is contacted.",
+  "A labelled local demo against local fakes of Gmail, Google Calendar, HubSpot and Stripe,",
+  "loaded with a fictional company. QuickBooks Online and Slack (Composio) have no local fake",
+  "and show as not connected. No real service is contacted.",
   "  --model     scripted (default without ANTHROPIC_API_KEY) or real (default when",
   "              ANTHROPIC_API_KEY is set in the environment; it is never read from a file)",
   "  --hubspot   stdio (default: the pinned @hubspot/mcp-server) or http (the fake's MCP endpoint)",
@@ -136,8 +137,9 @@ export function sandboxBanner(details: {
     ` Model:       ${details.model === "real" ? "the real Anthropic API (ANTHROPIC_API_KEY from the environment)" : "scripted J1–J5 (no model calls, no network)"}`,
     " Integrations (all local fakes on 127.0.0.1):",
     "   Gmail, Google Calendar  Composio API and session MCP fake",
+    "   QuickBooks, Slack       listed by the Composio fake, not connected (no local fake)",
     `   HubSpot                 ${details.hubspot === "stdio" ? "the pinned @hubspot/mcp-server over stdio, against a local CRM" : "local Streamable HTTP MCP endpoint"}`,
-    "   Stripe, QuickBooks Online, Slack   local REST fakes",
+    "   Stripe                  local REST fake",
     ` State:       ${details.stateDir}${details.keepsState ? "" : " (removed on exit)"}`,
   ];
   if (details.workspace === "unsupported") {

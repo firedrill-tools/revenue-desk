@@ -69,25 +69,26 @@ const SECTION_2: {
     ["cancel_subscription", "stripe.subscriptions.cancel", "financial"],
   ],
   quickbooks: [
-    ["get_company_info", "quickbooks.company_info.get", "read"],
-    ["find_customers", "quickbooks.customers.query", "read"],
-    ["get_customer", "quickbooks.customers.get", "read"],
-    ["list_invoices", "quickbooks.invoices.query", "read"],
-    ["get_invoice", "quickbooks.invoices.get", "read"],
-    ["list_payments", "quickbooks.payments.query", "read"],
-    ["create_customer", "quickbooks.customers.create", "internal_write"],
-    ["create_invoice", "quickbooks.invoices.create", "financial"],
-    ["send_invoice", "quickbooks.invoices.send", "financial"],
-    ["record_payment", "quickbooks.payments.create", "financial"],
-    ["void_invoice", "quickbooks.invoices.void", "financial"],
+    ["QUICKBOOKS_GET_COMPANY_INFO", "quickbooks.company_info.get", "read"],
+    ["QUICKBOOKS_QUERY_CUSTOMERS", "quickbooks.customers.query", "read"],
+    ["QUICKBOOKS_READ_CUSTOMER", "quickbooks.customers.get", "read"],
+    ["QUICKBOOKS_QUERY_INVOICES", "quickbooks.invoices.query", "read"],
+    ["QUICKBOOKS_READ_INVOICE", "quickbooks.invoices.get", "read"],
+    ["QUICKBOOKS_QUERY_PAYMENTS", "quickbooks.payments.query", "read"],
+    ["QUICKBOOKS_QUERY_ITEMS", "quickbooks.items.query", "read"],
+    ["QUICKBOOKS_GET_AGED_RECEIVABLES_REPORT", "quickbooks.reports.aged_receivables", "read"],
+    ["QUICKBOOKS_CREATE_CUSTOMER", "quickbooks.customers.create", "internal_write"],
+    ["QUICKBOOKS_CREATE_INVOICE", "quickbooks.invoices.create", "financial"],
+    ["QUICKBOOKS_CREATE_PAYMENT", "quickbooks.payments.create", "financial"],
   ],
   slack: [
-    ["list_channels", "slack.conversations.list", "read"],
-    ["read_channel", "slack.conversations.history", "read"],
-    ["read_thread", "slack.conversations.replies", "read"],
-    ["find_user", "slack.users.lookup", "read"],
-    ["post_message", "slack.chat.post_message", "outbound"],
-    ["add_reaction", "slack.reactions.add", "internal_write"],
+    ["SLACK_FIND_CHANNELS", "slack.conversations.find", "read"],
+    ["SLACK_LIST_ALL_CHANNELS", "slack.conversations.list", "read"],
+    ["SLACK_FETCH_CONVERSATION_HISTORY", "slack.conversations.history", "read"],
+    ["SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION", "slack.conversations.replies", "read"],
+    ["SLACK_FIND_USERS", "slack.users.find", "read"],
+    ["SLACK_ADD_REACTION_TO_AN_ITEM", "slack.reactions.add", "internal_write"],
+    ["SLACK_SEND_MESSAGE", "slack.chat.post_message", "outbound"],
   ],
 };
 
@@ -137,6 +138,20 @@ describe("definitions and profiles", () => {
     expect(describeTool("mcp__google_calendar__GOOGLECALENDAR_CREATE_EVENT")).toMatchObject({
       connectionKind: "composio",
     });
+    expect(describeTool("mcp__quickbooks__QUICKBOOKS_CREATE_INVOICE")).toMatchObject({
+      integration: "quickbooks",
+      connectionKind: "composio",
+      upstream: "QUICKBOOKS_CREATE_INVOICE",
+      baseClass: "financial",
+    });
+    expect(describeTool("mcp__slack__SLACK_SEND_MESSAGE")).toMatchObject({
+      integration: "slack",
+      connectionKind: "composio",
+      upstream: "SLACK_SEND_MESSAGE",
+    });
+    // The retired REST tools are no longer anywhere in a profile.
+    expect(describeTool("mcp__quickbooks__send_invoice")).toBeNull();
+    expect(describeTool("mcp__slack__post_message")).toBeNull();
     expect(describeTool("mcp__hubspot__hubspot-batch-create-associations")).toBeNull();
     expect(describeTool("mcp__stripe__toString")).toBeNull();
     expect(describeTool("mcp__other__x")).toBeNull();
@@ -149,11 +164,24 @@ describe("definitions and profiles", () => {
   it("classify calls through the owning integration", () => {
     const set = createIntegrations();
     expect(
-      classifyCall(set, "mcp__slack__post_message", { channel: "#general", text: "hi" }, SETTINGS),
+      classifyCall(
+        set,
+        "mcp__slack__SLACK_SEND_MESSAGE",
+        { channel: "#general", markdown_text: "hi" },
+        SETTINGS,
+      ),
     ).toMatchObject({
-      descriptor: { integration: "slack", name: "post_message" },
+      descriptor: { integration: "slack", name: "SLACK_SEND_MESSAGE" },
       classification: { actionClass: "outbound" },
     });
+    expect(
+      classifyCall(
+        set,
+        "mcp__slack__SLACK_SEND_MESSAGE",
+        { channel: "billing", markdown_text: "Refunded." },
+        SETTINGS,
+      ),
+    ).toMatchObject({ classification: { actionClass: "internal_write" } });
     expect(
       classifyCall(set, "mcp__stripe__create_refund", { charge: "ch_1" }, SETTINGS),
     ).toMatchObject({
@@ -167,50 +195,73 @@ describe("definitions and profiles", () => {
 describe("resolution and availability", () => {
   const env = testEnv({
     stripe: { secretKey: secret(STRIPE_KEY), apiBaseUrl: "http://127.0.0.1:4410" },
-    slack: { botToken: secret("xoxp-not-a-bot") },
     composio: { apiKey: secret("ak_registry_key"), userId: "u1" },
   });
 
-  it("resolves all six from the snapshot", () => {
+  it("resolves all six from the snapshot; one Composio configuration serves four", () => {
     const resolutions = resolveAll(createIntegrations(), env);
     expect(Object.keys(resolutions)).toEqual([...INTEGRATION_IDS]);
     expect(resolutions.stripe.status).toBe("configured");
     expect(resolutions.gmail.status).toBe("configured");
     expect(resolutions.google_calendar.status).toBe("configured");
-    expect(resolutions.slack.status).toBe("invalid");
+    expect(resolutions.quickbooks).toMatchObject({
+      status: "configured",
+      connection: {
+        integration: "quickbooks",
+        kind: "composio",
+        profile: "composio",
+        endpointLabel: "backend.composio.dev",
+        composio: { userId: "u1", toolkit: "quickbooks" },
+      },
+    });
+    expect(resolutions.slack).toMatchObject({
+      status: "configured",
+      connection: { kind: "composio", composio: { toolkit: "slack" } },
+    });
     expect(resolutions.hubspot).toEqual({
       status: "not_configured",
       missing: ["HUBSPOT_ACCESS_TOKEN"],
     });
     expect(
       available(createIntegrations(), env).map((connection) => connection.integration),
-    ).toEqual(["gmail", "google_calendar", "stripe"]);
+    ).toEqual(["gmail", "google_calendar", "stripe", "quickbooks", "slack"]);
+    expect(resolveAll(createIntegrations(), testEnv()).quickbooks).toEqual({
+      status: "not_configured",
+      missing: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
+    });
   });
 
   it("describes unconfigured and refused integrations by variable name only", () => {
     expect(
       statusFromResolution("quickbooks", {
         status: "not_configured",
-        missing: ["QBO_ACCESS_TOKEN", "QBO_REALM_ID"],
+        missing: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
       }),
     ).toEqual({
       integration: "quickbooks",
-      kind: "api",
-      profile: "quickbooks-api",
+      kind: "composio",
+      profile: "composio",
       state: "not_configured",
-      detail: "Not configured. Set QBO_ACCESS_TOKEN and QBO_REALM_ID.",
+      detail: "Not configured. Set COMPOSIO_API_KEY and COMPOSIO_USER_ID.",
       endpointLabel: null,
       accountHint: null,
-      missing: ["QBO_ACCESS_TOKEN", "QBO_REALM_ID"],
+      missing: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
       checkedAt: null,
     });
-    const refused = statusFromResolution("slack", resolveAll(createIntegrations(), env).slack);
+    const refusedEnv = testEnv({
+      composio: { apiKey: secret("ak_registry_key_value"), userId: " u1" },
+    });
+    const refused = statusFromResolution(
+      "slack",
+      resolveAll(createIntegrations(), refusedEnv).slack,
+    );
     expect(refused).toMatchObject({
+      kind: "composio",
       state: "invalid",
-      detail: "SLACK_BOT_TOKEN must be a bot token (xoxb-…).",
+      detail: "COMPOSIO_USER_ID contains whitespace or control characters.",
       missing: [],
     });
-    expect(JSON.stringify(refused)).not.toContain("xoxp-not-a-bot");
+    expect(JSON.stringify(refused)).not.toContain("ak_registry_key_value");
   });
 });
 
@@ -294,7 +345,6 @@ describe("connectionSnapshot", () => {
   const env = testEnv({
     composio: { apiKey: secret("ak_registry_key"), userId: "u1" },
     stripe: { secretKey: secret(STRIPE_KEY) },
-    slack: { botToken: secret("xoxb-ok"), apiBaseUrl: "http://slack.example" },
   });
 
   it("plans one entry per integration and snapshots the run's connections", () => {
@@ -302,6 +352,10 @@ describe("connectionSnapshot", () => {
       gmail: { state: "connected", detail: "Gmail connected" },
       google_calendar: { state: "needs_auth", detail: "Google Calendar is not connected" },
       stripe: { state: "error", detail: "Stripe check failed: timeout" },
+      quickbooks: {
+        state: "needs_auth",
+        detail: "QuickBooks Online is not connected. Click Connect in Connections to sign in.",
+      },
     });
     expect(plans.map((plan) => [plan.integration, plan.status])).toEqual([
       ["gmail", "available"],
@@ -309,7 +363,7 @@ describe("connectionSnapshot", () => {
       ["hubspot", "unavailable"],
       ["stripe", "available"],
       ["quickbooks", "unavailable"],
-      ["slack", "unavailable"],
+      ["slack", "available"],
     ]);
     expect(plans[1]).toEqual({
       integration: "google_calendar",
@@ -317,7 +371,10 @@ describe("connectionSnapshot", () => {
       state: "needs_auth",
       detail: "Google Calendar is not connected",
     });
-    expect(plans[5]).toMatchObject({ status: "unavailable", state: "invalid" });
+    expect(plans[5]).toMatchObject({
+      status: "available",
+      connection: { integration: "slack", kind: "composio" },
+    });
     expect(connections).toEqual([
       {
         integration: "gmail",
@@ -357,22 +414,21 @@ describe("connectionSnapshot", () => {
       },
       {
         integration: "quickbooks",
-        kind: "api",
-        profile: "quickbooks-api",
+        kind: "composio",
+        profile: "composio",
         availability: "unavailable",
-        state: "not_configured",
-        detail: "Not configured. Set QBO_ACCESS_TOKEN and QBO_REALM_ID.",
-        endpointLabel: null,
+        state: "needs_auth",
+        detail: "QuickBooks Online is not connected. Click Connect in Connections to sign in.",
+        endpointLabel: "backend.composio.dev",
       },
       {
         integration: "slack",
-        kind: "api",
-        profile: "slack-api",
-        availability: "unavailable",
-        state: "invalid",
-        detail:
-          "SLACK_API_BASE_URL must use https (plain http is accepted only for loopback hosts).",
-        endpointLabel: null,
+        kind: "composio",
+        profile: "composio",
+        availability: "ready",
+        state: "unknown",
+        detail: null,
+        endpointLabel: "backend.composio.dev",
       },
     ]);
   });

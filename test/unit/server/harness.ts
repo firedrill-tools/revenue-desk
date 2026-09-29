@@ -121,13 +121,6 @@ export function testEnv(
       apiBaseUrl: "https://api.stripe.com",
       apiVersion: null,
     },
-    quickbooks: {
-      accessToken: null,
-      realmId: null,
-      apiBaseUrl: "https://sandbox-quickbooks.api.intuit.com",
-      minorVersion: null,
-    },
-    slack: { botToken: null, apiBaseUrl: "https://slack.com" },
   };
 }
 
@@ -205,22 +198,27 @@ export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<
   },
   quickbooks: {
     integration: "quickbooks",
-    kind: "api",
-    profile: "quickbooks-api",
-    endpointLabel: "sandbox-quickbooks.api.intuit.com",
-    api: {
-      baseUrl: "https://sandbox-quickbooks.api.intuit.com",
-      accessToken: secret(TEST_SECRET),
-      realmId: "9130",
-      minorVersion: null,
+    kind: "composio",
+    profile: "composio",
+    endpointLabel: "backend.composio.dev",
+    composio: {
+      apiKey: secret(TEST_SECRET),
+      userId: "user_test",
+      baseUrl: "https://backend.composio.dev",
+      toolkit: "quickbooks",
     },
   },
   slack: {
     integration: "slack",
-    kind: "api",
-    profile: "slack-api",
-    endpointLabel: "slack.com",
-    api: { baseUrl: "https://slack.com", botToken: secret(TEST_SECRET) },
+    kind: "composio",
+    profile: "composio",
+    endpointLabel: "backend.composio.dev",
+    composio: {
+      apiKey: secret(TEST_SECRET),
+      userId: "user_test",
+      baseUrl: "https://backend.composio.dev",
+      toolkit: "slack",
+    },
   },
 };
 
@@ -229,8 +227,8 @@ export const MISSING_VARS = {
   google_calendar: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
   hubspot: ["HUBSPOT_ACCESS_TOKEN"],
   stripe: ["STRIPE_SECRET_KEY"],
-  quickbooks: ["QBO_ACCESS_TOKEN", "QBO_REALM_ID"],
-  slack: ["SLACK_BOT_TOKEN"],
+  quickbooks: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
+  slack: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
 } as const satisfies { readonly [I in IntegrationId]: readonly string[] };
 
 export type FakeIntegrations = {
@@ -285,7 +283,7 @@ export function fakeIntegrations(options: FakeIntegrationOptions = {}): FakeInte
   return {
     definitions: INTEGRATION_IDS.map((id) => {
       const fake = definition(id) as IntegrationDefinition;
-      // Gmail and Calendar connect through their connector, as ComposioIntegration does.
+      // Composio integrations connect through their connector, as ComposioIntegration does.
       return INTEGRATIONS[id].kind === "composio" ? Object.assign(fake, { connector }) : fake;
     }),
     probeCalls,

@@ -267,6 +267,26 @@ export class StripeFake {
             new StripeError(500, "api_error", "An unknown error occurred").envelope(),
           ),
       }),
+    /** 401 for matching requests: the key was rolled or revoked after the boot check. */
+    revokedKey: (
+      path: string | RegExp,
+      options: { readonly method?: string; readonly times?: number } = {},
+    ): FaultHandle =>
+      this.http.injectFault({
+        name: "stripe-401-key-revoked",
+        path,
+        ...(options.method === undefined ? {} : { method: options.method }),
+        ...(options.times === undefined ? {} : { times: options.times }),
+        respond: () =>
+          this.reply(
+            401,
+            new StripeError(
+              401,
+              "invalid_request_error",
+              "Expired API Key provided: sk_test_***0000. Roll the key in your Dashboard.",
+            ).envelope(),
+          ),
+      }),
     /** Drops the connection without a reply (a network error). */
     drop: (
       path: string | RegExp,

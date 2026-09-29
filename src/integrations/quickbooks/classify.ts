@@ -1,14 +1,23 @@
-// Classifies QuickBooks tool calls (docs/ARCHITECTURE.md §2, §7). Reads are
-// read; creating a customer is internal_write; invoices and payments are
-// financial and carry the amount, customer and recipients.
+// Classifies QuickBooks calls (Composio, docs/ARCHITECTURE.md §2, §7). Reads
+// are read; creating a customer is internal_write, unless it books an
+// opening balance, which is financial; invoices and payments are financial
+// and carry the amount and the customer.
 //
-// The writes name records by QuickBooks id ("customer 63", "invoice 151"),
-// which a person approving does not know: they know "Meridian Labs" and
-// invoice number 1051. With what the run's earlier QuickBooks calls returned
-// (QuickBooksRunMemory in run-memory.ts, `known` here), the card names the
-// customer, the invoice number, its amount and, for sending, the billing
-// email it goes to. Names come only from QuickBooks' own results, never from
-// the model; a record the run has not seen keeps its id and says so.
+// The writes name records by QuickBooks id ("customer 63", invoice id
+// "151"), which a person approving does not know: they know "Meridian Labs"
+// and invoice number 1051. With what the run's earlier QuickBooks calls
+// returned (QuickBooksRunMemory in run-memory.ts, `known` here), the card
+// names the customer, the invoice number and its open balance. Names come
+// only from QuickBooks' own results, never from the model's input (the
+// payment tool's `customer_name` is ignored); a record the run has not seen
+// keeps its id and says so.
+//
+// Amounts in QuickBooks tools are decimals in the company currency; cards
+// show them formatted, and Money carries them in minor units.
+//
+// Denied (null): a payment that would charge a card through QuickBooks
+// Payments, and an invoice whose lines give no amounts (the input rules in
+// input-rules.ts reject both first, with a message).
 
 import type {
   ApprovalFact,
@@ -17,37 +26,21 @@ import type {
   Money,
 } from "../../contracts/integration.js";
 import type { JsonObject } from "../../contracts/json.js";
-import { formatMoney, money } from "../shared/money.js";
+import { arr, field, isObject, obj, objects, str } from "../shared/json.js";
+import { decimalToMinor, formatMoney, money } from "../shared/money.js";
 import { fromSpec, specOf } from "../shared/profile.js";
-import { countOf, preview } from "../shared/text.js";
+import { countOf, listOf, preview } from "../shared/text.js";
 import { QUICKBOOKS_PROFILE } from "./profile.js";
 import {
-  createCustomerInput,
-  createInvoiceInput,
-  invoiceTotalMinor,
-  recordPaymentInput,
-  sendInvoiceInput,
-  voidInvoiceInput,
-} from "./schemas.js";
+  type AppliedPayment,
+  appliedFrom,
+  decimal,
+  type KnownCustomer,
+  type KnownInvoice,
+  qboId,
+} from "./records.js";
 
-/** A customer as an earlier QuickBooks result in this run described it. */
-export type KnownCustomer = {
-  readonly id: string;
-  readonly displayName: string | null;
-  readonly email: string | null;
-};
-
-/** An invoice as an earlier QuickBooks result in this run described it. */
-export type KnownInvoice = {
-  readonly id: string;
-  readonly docNumber: string | null;
-  readonly customerId: string | null;
-  readonly customerName: string | null;
-  readonly billEmail: string | null;
-  readonly totalMinor: number | null;
-  readonly balanceMinor: number | null;
-  readonly currency: string | null;
-};
+export type { KnownCustomer, KnownInvoice } from "./records.js";
 
 /** A payment this run recorded against an invoice, or sent without QuickBooks' answer. */
 export type RunPayment = {
@@ -73,11 +66,8 @@ const NOTHING_KNOWN: QuickBooksKnown = {
 };
 
 function customerName(id: string, known: QuickBooksKnown): string | null {
-  const customer = known.customer(id);
-  if (customer?.displayName !== null && customer?.displayName !== undefined) {
-    return preview(customer.displayName, 80);
-  }
-  return null;
+  const name = known.customer(id)?.displayName;
+  return name === null || name === undefined ? null : preview(name, 80);
 }
 
 /** "Meridian Labs" when the run saw the customer, otherwise "QuickBooks customer 63". */
@@ -88,7 +78,13 @@ function customerLabel(id: string, known: QuickBooksKnown): string {
 /** The Customer fact: "Meridian Labs (QuickBooks customer 63)", or the id alone. */
 function customerFact(id: string, known: QuickBooksKnown): ApprovalFact {
   const name = customerName(id, known);
-  return { label: "Customer", value: name === null ? id : `${name} (QuickBooks customer ${id})` };
+  return {
+    label: "Customer",
+    value:
+      name === null
+        ? `QuickBooks customer ${id} (not read in this run)`
+        : `${name} (QuickBooks customer ${id})`,
+  };
 }
 
 /** "invoice 1051" when the run saw its number, otherwise "QuickBooks invoice 151". */
@@ -101,50 +97,116 @@ function invoiceMoney(invoice: KnownInvoice, minor: number | null, fallback: str
   return minor === null ? null : money(minor, invoice.currency ?? fallback);
 }
 
-/** Facts about an invoice the run saw: number, customer, total and open balance. */
-function invoiceFacts(id: string, known: QuickBooksKnown, currency: string): ApprovalFact[] {
-  const invoice = known.invoice(id);
-  if (invoice === undefined) {
-    return [{ label: "Invoice", value: `QuickBooks id ${id} (not read in this run)` }];
-  }
-  const facts: ApprovalFact[] = [
-    {
-      label: "Invoice",
-      value:
-        invoice.docNumber === null
-          ? `QuickBooks id ${id}`
-          : `${invoice.docNumber} (QuickBooks id ${id})`,
-    },
-  ];
-  if (invoice.customerId !== null) {
-    const name = customerName(invoice.customerId, known) ?? invoice.customerName;
-    facts.push({
-      label: "Customer",
-      value:
-        name === null
-          ? invoice.customerId
-          : `${preview(name, 80)} (QuickBooks customer ${invoice.customerId})`,
-    });
-  }
-  const total = invoiceMoney(invoice, invoice.totalMinor, currency);
-  if (total !== null) facts.push({ label: "Invoice total", value: formatMoney(total) });
-  const balance = invoiceMoney(invoice, invoice.balanceMinor, currency);
-  if (balance !== null) facts.push({ label: "Open balance", value: formatMoney(balance) });
-  return facts;
+/** An email field QuickBooks takes as `{Address}` (or a bare string). */
+function address(input: JsonObject, key: string): string | undefined {
+  const value = field(input, key);
+  if (typeof value === "string") return value.trim() === "" ? undefined : value.trim();
+  return str(obj(input, key), "Address");
 }
 
-function createCustomer(input: JsonObject): Classification | null {
-  const parsed = createCustomerInput.safeParse(input);
-  if (!parsed.success) return null;
-  const { display_name: name, email } = parsed.data;
-  const facts: ApprovalFact[] = [{ label: "Customer", value: name }];
-  if (email !== undefined) facts.push({ label: "Billing email", value: email });
+function currencyOf(code: string | undefined, settings: ClassifierSettings): string {
+  return (code ?? settings.currency).toUpperCase();
+}
+
+// --- Customers ---------------------------------------------------------------
+
+function nameOf(input: JsonObject): string | undefined {
+  const person = ["title", "given_name", "middle_name", "family_name", "suffix"]
+    .map((key) => str(input, key))
+    .filter((part) => part !== undefined);
+  return (
+    str(input, "display_name") ??
+    str(input, "CompanyName") ??
+    (person.length > 0 ? person.join(" ") : undefined)
+  );
+}
+
+function createCustomer(input: JsonObject, settings: ClassifierSettings): Classification {
+  const name = nameOf(input);
+  const facts: ApprovalFact[] = [{ label: "Customer", value: name ?? "(no name given)" }];
+  const company = str(input, "CompanyName");
+  if (company !== undefined && company !== name) facts.push({ label: "Company", value: company });
+  const email = address(input, "PrimaryEmailAddr");
+  if (email !== undefined) facts.push({ label: "Email", value: email });
+  const label =
+    name === undefined ? "a QuickBooks customer" : `QuickBooks customer "${preview(name, 80)}"`;
+  const opening = decimal(field(input, "Balance"));
+  if (opening !== undefined && opening !== 0) {
+    // An opening balance books receivables the customer owes: money, not a contact record.
+    const currency = currencyOf(str(obj(input, "CurrencyRef"), "value"), settings);
+    const amount = money(decimalToMinor(opening, currency), currency);
+    facts.push({ label: "Opening balance", value: formatMoney(amount) });
+    const date = str(input, "OpenBalanceDate");
+    if (date !== undefined) facts.push({ label: "As of", value: date });
+    return {
+      actionClass: "financial",
+      operation: "quickbooks.customers.create",
+      title: "Create customer in QuickBooks",
+      details: {
+        consequence: `Create ${label} with an opening balance of ${formatMoney(amount)}`,
+        facts,
+        amount,
+      },
+    };
+  }
   return {
     actionClass: "internal_write",
     operation: "quickbooks.customers.create",
     title: "Create customer in QuickBooks",
-    details: { consequence: `Create QuickBooks customer "${preview(name, 80)}"`, facts },
+    details: { consequence: `Create ${label}`, facts },
   };
+}
+
+// --- Invoices ----------------------------------------------------------------
+
+type InvoiceLine = {
+  readonly label: string;
+  readonly value: string;
+  /** Signed contribution to the total: discounts subtract, subtotals add nothing. */
+  readonly totalMinor: number;
+};
+
+function invoiceLines(
+  input: JsonObject,
+  currency: string,
+): { readonly lines: InvoiceLine[]; readonly totalMinor: number } | null {
+  const raw = arr(input, "lines");
+  if (raw === undefined || raw.length === 0) return null;
+  const lines: InvoiceLine[] = [];
+  let totalMinor = 0;
+  for (const [index, entry] of raw.entries()) {
+    if (!isObject(entry)) return null;
+    const amount = decimal(field(entry, "Amount"));
+    if (amount === undefined || amount < 0) return null;
+    const amountMinor = decimalToMinor(amount, currency);
+    const type = str(entry, "DetailType");
+    const detail = obj(entry, "SalesItemLineDetail");
+    const item = str(obj(detail, "ItemRef"), "name");
+    const description = str(entry, "Description");
+    const label = preview(description ?? item ?? `Line ${index + 1}`, 60);
+    if (type === "SubTotalLineDetail") continue;
+    if (type === "DiscountLineDetail") {
+      totalMinor -= amountMinor;
+      lines.push({
+        label,
+        value: `Discount −${formatMoney(money(amountMinor, currency))}`,
+        totalMinor: -amountMinor,
+      });
+      continue;
+    }
+    totalMinor += amountMinor;
+    const quantity = decimal(field(detail, "Qty"));
+    const unit = decimal(field(detail, "UnitPrice"));
+    lines.push({
+      label,
+      value:
+        quantity !== undefined && unit !== undefined
+          ? `${quantity} x ${formatMoney(money(decimalToMinor(unit, currency), currency))}`
+          : formatMoney(money(amountMinor, currency)),
+      totalMinor: amountMinor,
+    });
+  }
+  return { lines, totalMinor };
 }
 
 function createInvoice(
@@ -152,27 +214,34 @@ function createInvoice(
   settings: ClassifierSettings,
   known: QuickBooksKnown,
 ): Classification | null {
-  const parsed = createInvoiceInput.safeParse(input);
-  if (!parsed.success) return null;
-  const { customer_id: customer, lines, due_date: due, bill_email: billEmail } = parsed.data;
-  const amount = money(invoiceTotalMinor(lines), settings.currency);
+  const customer = qboId(field(input, "customer_id"));
+  if (customer === undefined) return null;
+  const currency = currencyOf(str(obj(input, "currency_ref"), "value"), settings);
+  const parsed = invoiceLines(input, currency);
+  if (parsed === null) return null;
+  const amount = money(parsed.totalMinor, currency);
   const total = formatMoney(amount);
   const facts: ApprovalFact[] = [
     customerFact(customer, known),
-    { label: "Total", value: total },
-    { label: "Lines", value: countOf(lines.length, "line") },
+    { label: "Total before tax", value: total },
+    { label: "Lines", value: countOf(parsed.lines.length, "line") },
   ];
-  lines.slice(0, 5).forEach((line, index) => {
-    const unit = formatMoney(money(line.unit_price_minor, settings.currency));
-    const label =
-      line.description === undefined ? `Line ${index + 1}` : preview(line.description, 60);
-    facts.push({ label, value: `${line.quantity} x ${unit}` });
-  });
+  for (const line of parsed.lines.slice(0, 5)) facts.push({ label: line.label, value: line.value });
+  const due = str(input, "due_date");
   if (due !== undefined) facts.push({ label: "Due", value: due });
-  if (parsed.data.doc_number !== undefined) {
-    facts.push({ label: "Invoice number", value: parsed.data.doc_number });
-  }
-  if (billEmail !== undefined) facts.push({ label: "Bill to", value: billEmail });
+  const date = str(input, "txn_date");
+  if (date !== undefined) facts.push({ label: "Invoice date", value: date });
+  const number = str(input, "doc_number");
+  if (number !== undefined) facts.push({ label: "Invoice number", value: number });
+  const billTo = address(input, "bill_email");
+  if (billTo !== undefined) facts.push({ label: "Billing email", value: billTo });
+  const cc = address(input, "bill_email_cc");
+  if (cc !== undefined) facts.push({ label: "Billing Cc", value: cc });
+  const bcc = address(input, "bill_email_bcc");
+  if (bcc !== undefined) facts.push({ label: "Billing Bcc", value: bcc });
+  const memo = str(obj(input, "customer_memo"), "value");
+  if (memo !== undefined) facts.push({ label: "Message on invoice", value: preview(memo, 200) });
+  facts.push({ label: "Sent", value: "No: QuickBooks does not email it" });
   return {
     actionClass: "financial",
     operation: "quickbooks.invoices.create",
@@ -186,92 +255,72 @@ function createInvoice(
   };
 }
 
-export const UNCONFIRMED_BILL_EMAIL =
-  "The invoice's billing email, which was not read in this run. Check it in QuickBooks before approving.";
+// --- Payments ----------------------------------------------------------------
 
-function sendInvoice(
-  input: JsonObject,
-  settings: ClassifierSettings,
+function appliedFact(
+  applied: AppliedPayment,
+  currency: string,
   known: QuickBooksKnown,
-): Classification | null {
-  const parsed = sendInvoiceInput.safeParse(input);
-  if (!parsed.success) return null;
-  const { invoice_id: invoice, send_to: sendTo } = parsed.data;
-  const seen = known.invoice(invoice);
-  // send_to overrides the invoice's billing email; without it, QuickBooks uses the one saved on
-  // the invoice, which only a read in this run can confirm.
-  const recipient = sendTo ?? seen?.billEmail ?? null;
-  const facts = invoiceFacts(invoice, known, settings.currency);
-  facts.push({ label: "Recipient", value: recipient ?? UNCONFIRMED_BILL_EMAIL });
-  const total = seen === undefined ? null : invoiceMoney(seen, seen.totalMinor, settings.currency);
-  const customer =
-    seen?.customerId === null || seen?.customerId === undefined
-      ? null
-      : (customerName(seen.customerId, known) ?? seen.customerName);
-  const about = [
-    total === null ? null : formatMoney(total),
-    customer === null ? null : preview(customer, 80),
-  ]
-    .filter((part) => part !== null)
-    .join(", ");
-  const what = `${invoiceLabel(invoice, known)}${about === "" ? "" : ` (${about})`}`;
+): ApprovalFact {
+  const seen = known.invoice(applied.invoiceId);
+  const number = seen?.docNumber ?? null;
+  const balance = seen === undefined ? null : invoiceMoney(seen, seen.balanceMinor, currency);
   return {
-    actionClass: "financial",
-    operation: "quickbooks.invoices.send",
-    title: "Send invoice from QuickBooks",
-    details: {
-      consequence:
-        recipient === null
-          ? `Email ${what} to its billing email, which could not be confirmed`
-          : `Email ${what} to ${recipient}`,
-      facts,
-      ...(recipient === null ? {} : { recipients: [recipient] }),
-      ...(total === null ? {} : { amount: total }),
-      recordIds: [invoice],
-    },
+    label: "Applied to",
+    value:
+      `${formatMoney(money(applied.amountMinor, currency))} to ` +
+      (number === null
+        ? `QuickBooks invoice ${applied.invoiceId}${seen === undefined ? " (not read in this run)" : ""}`
+        : `invoice ${number} (QuickBooks id ${applied.invoiceId})`) +
+      (balance === null ? "" : `, open balance ${formatMoney(balance)}`),
   };
 }
 
-function recordPayment(
+function createPayment(
   input: JsonObject,
   settings: ClassifierSettings,
   known: QuickBooksKnown,
 ): Classification | null {
-  const parsed = recordPaymentInput.safeParse(input);
-  if (!parsed.success) return null;
-  const { customer_id: customer, invoice_id: invoice, amount_minor: amountMinor } = parsed.data;
-  const amount = money(amountMinor, settings.currency);
+  if (field(input, "process_payment") === true) return null;
+  const card = field(input, "credit_card_payment");
+  if (card !== undefined && card !== null) return null;
+  const customer = qboId(field(input, "customer_id"));
+  const totalDecimal = decimal(field(input, "total_amt"));
+  if (customer === undefined || totalDecimal === undefined) return null;
+  const currency = currencyOf(str(input, "currency_ref_value"), settings);
+  const amount = money(decimalToMinor(totalDecimal, currency), currency);
   const formatted = formatMoney(amount);
+  const applied = appliedFrom(objects(input, "lines"), currency);
+  const checks: ApprovalFact[] = [];
   const facts: ApprovalFact[] = [
     { label: "Amount", value: formatted },
     customerFact(customer, known),
   ];
-  if (invoice === undefined) {
-    facts.push({ label: "Applied to", value: "Unapplied" });
-  } else {
-    const seen = known.invoice(invoice);
-    const balance =
-      seen === undefined ? null : invoiceMoney(seen, seen.balanceMinor, settings.currency);
-    const number = seen?.docNumber ?? null;
-    facts.push({
-      label: "Applied to",
-      value:
-        (number === null
-          ? `QuickBooks invoice ${invoice}`
-          : `Invoice ${number} (QuickBooks id ${invoice})`) +
-        (balance === null ? "" : `, open balance ${formatMoney(balance)}`),
-    });
+  if (applied.length === 0) facts.push({ label: "Applied to", value: "Unapplied" });
+  for (const entry of applied) {
+    facts.push(appliedFact(entry, currency, known));
+    const seen = known.invoice(entry.invoiceId);
     if (
       seen?.customerId !== null &&
       seen?.customerId !== undefined &&
       seen.customerId !== customer
     ) {
-      facts.push({
+      checks.push({
         label: "Mismatch",
-        value: `The invoice belongs to ${customerLabel(seen.customerId, known)}, not this customer`,
+        value: `${invoiceLabel(entry.invoiceId, known)} belongs to ${customerLabel(seen.customerId, known)}, not this customer`,
       });
     }
-    const payments = known.paymentsInRun(invoice);
+    const balance = seen === undefined ? null : invoiceMoney(seen, seen.balanceMinor, currency);
+    if (balance !== null && entry.amountMinor > balance.amountMinor) {
+      checks.push({
+        label: "Check",
+        value:
+          balance.amountMinor === 0
+            ? `${invoiceLabel(entry.invoiceId, known)} has no open balance; this payment would be left unapplied or refused.`
+            : `The payment to ${invoiceLabel(entry.invoiceId, known)} is more than its open balance of ${formatMoney(balance)}.`,
+      });
+    }
+    const payments = known.paymentsInRun(entry.invoiceId);
     const recorded = payments.filter((payment) => !payment.uncertain);
     if (recorded.length > 0) {
       facts.push({
@@ -279,7 +328,7 @@ function recordPayment(
         value: recorded
           .map(
             (payment) =>
-              `${formatMoney(money(payment.amountMinor, seen?.currency ?? settings.currency))}${payment.id === null ? "" : ` (payment ${payment.id})`}`,
+              `${formatMoney(money(payment.amountMinor, seen?.currency ?? currency))}${payment.id === null ? "" : ` (payment ${payment.id})`} to ${invoiceLabel(entry.invoiceId, known)}`,
           )
           .join(", "),
       });
@@ -289,63 +338,38 @@ function recordPayment(
       facts.push({
         label: "May already be applied",
         value: `${unanswered
-          .map((payment) =>
-            formatMoney(money(payment.amountMinor, seen?.currency ?? settings.currency)),
-          )
+          .map((payment) => formatMoney(money(payment.amountMinor, seen?.currency ?? currency)))
           .join(
             ", ",
-          )} sent in this run got no answer from QuickBooks. Check the invoice's payments before approving another.`,
-      });
-    }
-    if (balance !== null && amountMinor > balance.amountMinor) {
-      facts.unshift({
-        label: "Check",
-        value:
-          balance.amountMinor === 0
-            ? "The invoice has no open balance; this payment would be left unapplied or refused."
-            : `The payment is more than the invoice's open balance of ${formatMoney(balance)}.`,
+          )} sent in this run to ${invoiceLabel(entry.invoiceId, known)} got no answer from QuickBooks. Check its payments before approving another.`,
       });
     }
   }
-  if (parsed.data.payment_date !== undefined) {
-    facts.push({ label: "Date received", value: parsed.data.payment_date });
+  const appliedMinor = applied.reduce((sum, entry) => sum + entry.amountMinor, 0);
+  if (applied.length > 0 && appliedMinor < amount.amountMinor) {
+    facts.push({
+      label: "Unapplied",
+      value: formatMoney(money(amount.amountMinor - appliedMinor, currency)),
+    });
   }
-  if (parsed.data.reference !== undefined) {
-    facts.push({ label: "Reference", value: parsed.data.reference });
-  }
-  const against = invoice === undefined ? "" : ` against ${invoiceLabel(invoice, known)}`;
+  const date = str(input, "txn_date");
+  if (date !== undefined) facts.push({ label: "Date received", value: date });
+  const reference = str(input, "payment_ref_num");
+  if (reference !== undefined) facts.push({ label: "Reference", value: reference });
+  const invoices = [...new Set(applied.map((entry) => entry.invoiceId))];
+  const against =
+    invoices.length === 0
+      ? ""
+      : ` against ${listOf(invoices.map((id) => invoiceLabel(id, known)))}`;
   return {
     actionClass: "financial",
     operation: "quickbooks.payments.create",
     title: "Record payment in QuickBooks",
     details: {
       consequence: `Record a ${formatted} payment from ${customerLabel(customer, known)}${against}`,
-      facts,
+      facts: [...checks, ...facts],
       amount,
-      recordIds: invoice === undefined ? [customer] : [customer, invoice],
-    },
-  };
-}
-
-function voidInvoice(
-  input: JsonObject,
-  settings: ClassifierSettings,
-  known: QuickBooksKnown,
-): Classification | null {
-  const parsed = voidInvoiceInput.safeParse(input);
-  if (!parsed.success) return null;
-  const invoice = parsed.data.invoice_id;
-  return {
-    actionClass: "financial",
-    operation: "quickbooks.invoices.void",
-    title: "Void invoice in QuickBooks",
-    details: {
-      consequence: `Void ${invoiceLabel(invoice, known)}; its amounts become zero`,
-      facts: [
-        ...invoiceFacts(invoice, known, settings.currency),
-        { label: "Effect", value: "Amounts set to zero; cannot be undone" },
-      ],
-      recordIds: [invoice],
+      recordIds: [customer, ...invoices],
     },
   };
 }
@@ -364,16 +388,12 @@ export function classifyQuickBooks(
   const spec = specOf(QUICKBOOKS_PROFILE, tool);
   if (spec === undefined) return null;
   switch (spec.name) {
-    case "create_customer":
-      return createCustomer(input);
-    case "create_invoice":
+    case "QUICKBOOKS_CREATE_CUSTOMER":
+      return createCustomer(input, settings);
+    case "QUICKBOOKS_CREATE_INVOICE":
       return createInvoice(input, settings, known);
-    case "send_invoice":
-      return sendInvoice(input, settings, known);
-    case "record_payment":
-      return recordPayment(input, settings, known);
-    case "void_invoice":
-      return voidInvoice(input, settings, known);
+    case "QUICKBOOKS_CREATE_PAYMENT":
+      return createPayment(input, settings, known);
     default:
       return fromSpec(spec);
   }

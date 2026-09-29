@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { STOPPED_BEFORE_RUN_REASON } from "../../../src/agent/sdk-mapper.js";
 import type { ApprovalDescriptor } from "../../../src/contracts/events.js";
 import { UNCONFIRMED_RECIPIENTS } from "../../../src/integrations/gmail/classify.js";
-import { expectedIdempotencyKey, HARBOR_PINE, SOLSTICE } from "../../scenarios/facts.js";
+import { expectedIdempotencyKey, HARBOR_PINE } from "../../scenarios/facts.js";
 import {
   J1_BILLING_INQUIRY,
   J2_REFUND_DENIED,
@@ -130,10 +130,8 @@ describe("full stack: the jobs, with the database checked against what happened"
         [
           "j1_inbox",
           "j1_stripe_customer",
-          "j1_qbo_customer",
           "j1_contact",
           "j1_charges",
-          "j1_invoices",
           "j1_draft",
           "j1_send",
         ].sort(),
@@ -154,18 +152,7 @@ describe("full stack: the jobs, with the database checked against what happened"
         connection_kind: "api",
         upstream_tool: "GET /v1/charges",
       });
-      expect(rows.call("j1_invoices")).toMatchObject({
-        integration: "quickbooks",
-        connection_kind: "api",
-      });
-      for (const id of [
-        "j1_inbox",
-        "j1_stripe_customer",
-        "j1_qbo_customer",
-        "j1_contact",
-        "j1_charges",
-        "j1_invoices",
-      ]) {
+      for (const id of ["j1_inbox", "j1_stripe_customer", "j1_contact", "j1_charges"]) {
         expect(rows.call(id), id).toMatchObject({
           action_class: "read",
           decision: "auto",
@@ -242,7 +229,7 @@ describe("full stack: the jobs, with the database checked against what happened"
     });
   });
 
-  it("J2 approved: one Stripe refund with the run's Idempotency-Key, a HubSpot note and a Slack post", {
+  it("J2 approved: one Stripe refund with the run's Idempotency-Key and a HubSpot note", {
     timeout: TIMEOUT,
   }, async () => {
     await withHarness(J2_REFUND_DUPLICATE, {}, async (harness) => {
@@ -287,17 +274,6 @@ describe("full stack: the jobs, with the database checked against what happened"
         http_status: null,
         idempotency_key: null,
       });
-      // Slack has no idempotency key: the post records its status and no key.
-      expect(rows.call("j2_post")).toMatchObject({
-        integration: "slack",
-        connection_kind: "api",
-        operation: "slack.chat.post_message",
-        action_class: "internal_write",
-        decision: "auto",
-        status: "succeeded",
-        http_status: 200,
-        idempotency_key: null,
-      });
       expect(rows.approvals).toHaveLength(1);
       // The refund row's input is what was approved; no key or token was stored.
       expect(JSON.parse(refund.input_json)).toMatchObject({
@@ -307,35 +283,25 @@ describe("full stack: the jobs, with the database checked against what happened"
     });
   });
 
-  it("J4: the invoice cards name the customer, the invoice number and who receives it", {
+  it("J4 without QuickBooks and Slack: nothing is created, sent or posted, and the reply says so", {
     timeout: TIMEOUT,
   }, async () => {
     await withHarness(J4_CLOSED_WON, {}, async (harness) => {
       const { rows } = await play(harness, J4_CLOSED_WON);
       expect(rows.run.status).toBe("completed");
-      const card = (id: string) =>
-        JSON.parse(rows.approval(id).descriptor_json) as ApprovalDescriptor;
-      // From the customer this run created, not from the model's words.
-      expect(card("j4_invoice")).toMatchObject({
-        consequence: `Create a $18,000.00 invoice for ${SOLSTICE.name} (not sent)`,
-        recordIds: [SOLSTICE.expectedCustomerId],
+      expect(rows.approvals).toHaveLength(0);
+      expect(rows.toolCalls.every((row) => row.action_class === "read")).toBe(true);
+      // Their boot checks said no one signed in, so the run left them out and said why.
+      expect(rows.connection("quickbooks")).toMatchObject({
+        kind: "composio",
+        availability: "unavailable",
+        state: "needs_auth",
       });
-      expect(card("j4_invoice").facts[0]).toEqual({
-        label: "Customer",
-        value: `${SOLSTICE.name} (QuickBooks customer ${SOLSTICE.expectedCustomerId})`,
+      expect(rows.connection("slack")).toMatchObject({
+        kind: "composio",
+        availability: "unavailable",
+        state: "needs_auth",
       });
-      // From the invoice this run created: its number, total, customer and billing email.
-      const send = card("j4_send");
-      expect(send).toMatchObject({
-        consequence: `Email invoice ${SOLSTICE.expectedDocNumber} ($18,000.00, ${SOLSTICE.name}) to ${SOLSTICE.contactEmail}`,
-        recipients: [SOLSTICE.contactEmail],
-        amount: { amountMinor: SOLSTICE.amountMinor, currency: "USD" },
-        recordIds: [SOLSTICE.expectedInvoiceId],
-      });
-      // The card named exactly who QuickBooks emailed.
-      expect(harness.fakes.quickbooks.sentInvoices.map((entry) => entry.to)).toEqual(
-        send.recipients,
-      );
     });
   });
 
@@ -469,27 +435,12 @@ describe("full stack: the jobs, with the database checked against what happened"
     });
   });
 
-  it("J3: QuickBooks pages to the end, reminders are drafted, the external invite asks and is approved", {
+  it("J3: reminders are drafted, the external invite asks and is approved", {
     timeout: TIMEOUT,
   }, async () => {
     await withHarness(J3_COLLECTIONS, {}, async (harness) => {
       const { rows } = await play(harness, J3_COLLECTIONS);
       expect(rows.run.status).toBe("completed");
-
-      // One tool call; the client read every page until an empty one.
-      expect(rows.call("j3_overdue")).toMatchObject({
-        integration: "quickbooks",
-        connection_kind: "api",
-        operation: "quickbooks.invoices.query",
-        decision: "auto",
-        status: "succeeded",
-      });
-      const invoicePages = harness.fakes.quickbooks.requests.filter(
-        (entry) =>
-          entry.path.endsWith("/query") &&
-          (entry.query.query?.[0] ?? entry.body).includes("FROM Invoice"),
-      );
-      expect(invoicePages.length).toBeGreaterThanOrEqual(3);
 
       const drafts = rows.toolCalls.filter((row) => row.operation === "gmail.drafts.create");
       expect(drafts).toHaveLength(3);

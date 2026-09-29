@@ -5,8 +5,7 @@
  */
 import { Checks, HARBOR_PINE } from "./facts.js";
 import { J1_PROMPT, J1_STEPS, verifyJ1 } from "./j1-billing-inquiry.js";
-import { J4_CLOSED_WON, verifyInvoiceFault } from "./j4-closed-won.js";
-import { J5_WEEKLY_DIGEST, verifyDigestPosted } from "./j5-weekly-digest.js";
+import { J5_WEEKLY_DIGEST, verifyDigestReadOnly } from "./j5-weekly-digest.js";
 import { apiError, type Scenario, type Step, text } from "./script.js";
 import { stripe } from "./tools.js";
 
@@ -21,55 +20,11 @@ export const FAIL_STRIPE_429: Scenario = {
   },
   verify: (fakes) => {
     const checks = new Checks();
-    checks.problems.push(...verifyDigestPosted(fakes));
+    checks.problems.push(...verifyDigestReadOnly(fakes));
     checks.equal(
       fakes.stripe.http.requestsTo("GET", "/v1/charges").map((entry) => entry.status),
       [429, 200],
       "the rate-limited read was retried once",
-    );
-    return checks.problems;
-  },
-};
-
-/** A QuickBooks Fault on the approved invoice: nothing is sent or announced. */
-export const FAIL_QUICKBOOKS_FAULT: Scenario = {
-  ...J4_CLOSED_WON,
-  id: "fail-quickbooks-fault",
-  job: "failure",
-  title: "QuickBooks answers the approved invoice with a validation Fault",
-  arrange: (fakes) => {
-    fakes.quickbooks.faults.fault(
-      /\/invoice$/,
-      {
-        code: "6000",
-        message: "A business validation error has occurred while processing your request",
-        detail: "Business Validation Error: The customer's billing address is incomplete.",
-      },
-      { method: "POST" },
-    );
-  },
-  approvals: { j4_invoice: "approve" },
-  expected: { status: "completed", replyIncludes: ["QuickBooks refused the invoice"] },
-  verify: (fakes) => verifyInvoiceFault(fakes),
-};
-
-/** Slack answers the digest post with HTTP 200 ok:false. */
-export const FAIL_SLACK_NOT_OK: Scenario = {
-  ...J5_WEEKLY_DIGEST,
-  id: "fail-slack-not-ok",
-  job: "failure",
-  title: "Slack refuses the post with ok:false",
-  arrange: (fakes) => {
-    fakes.slack.faults.error("chat.postMessage", "channel_not_found");
-  },
-  expected: { status: "completed", replyIncludes: ["was not posted", "channel_not_found"] },
-  verify: (fakes) => {
-    const checks = new Checks();
-    checks.equal(fakes.slack.posts().length, 0, "nothing posted");
-    checks.equal(
-      fakes.slack.http.requestsTo("POST", "/api/chat.postMessage").length,
-      1,
-      "one post attempt (no retry of a write)",
     );
     return checks.problems;
   },
@@ -104,7 +59,7 @@ export const FAIL_HUBSPOT_DOWN: Scenario = {
   },
 };
 
-/** Composio session creation fails: Gmail and Calendar are unavailable for the run. */
+/** Composio session creation fails: Gmail, Calendar, QuickBooks and Slack are unavailable for the run. */
 export const FAIL_COMPOSIO_SESSION: Scenario = {
   id: "fail-composio-session",
   job: "failure",
@@ -143,7 +98,7 @@ export const FAIL_COMPOSIO_SESSION: Scenario = {
   expected: { status: "completed", replyIncludes: ["Gmail is unavailable"] },
   verify: (fakes) => {
     const checks = new Checks();
-    checks.equal(fakes.composio.toolCalls.length, 0, "no Gmail or Calendar tool calls");
+    checks.equal(fakes.composio.toolCalls.length, 0, "no Composio tool calls");
     checks.equal(fakes.composio.gmail.outbox.length, 0, "no email sent");
     checks.that(
       fakes.composio.requests.some(
@@ -168,9 +123,7 @@ export const FAIL_MODEL_529: Scenario = {
     const checks = new Checks();
     const writes =
       fakes.stripe.writes().length +
-      fakes.quickbooks.writes().length +
       fakes.hubspot.writes().length +
-      fakes.slack.posts().length +
       fakes.composio.toolCalls.length;
     checks.equal(writes, 0, "nothing reached any integration");
     return checks.problems;

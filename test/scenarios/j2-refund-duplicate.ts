@@ -1,9 +1,10 @@
 /**
  * J2 Refund a duplicate charge: the agent finds Harbor & Pine's duplicate
  * September charge in Stripe, checks it was not refunded already, proposes
- * the refund (financial: approval), then logs a HubSpot note and posts to
- * #billing. Variants: denied, declined by Stripe (402), and an invalid first
- * attempt that the agent's schema check rejects before any approval.
+ * the refund (financial: approval), then logs a HubSpot note. Slack is not
+ * connected in the fake world, so the agent says #billing was not told.
+ * Variants: denied, declined by Stripe (402), and an invalid first attempt
+ * that the agent's schema check rejects before any approval.
  */
 import type { Fakes } from "../support/fakes/index.js";
 import { Checks, expectedIdempotencyKey, firstLine, HARBOR_PINE, MAYA, NOW_ISO } from "./facts.js";
@@ -16,7 +17,7 @@ import {
   text,
   toolUseId,
 } from "./script.js";
-import { ASSOCIATION, associate, hubspot, slack, stripe } from "./tools.js";
+import { ASSOCIATION, associate, hubspot, stripe } from "./tools.js";
 
 export const J2_PROMPT =
   "Harbor & Pine were charged twice for September. Refund the duplicate, note it in HubSpot and let #billing know.";
@@ -89,13 +90,13 @@ const recordOrStop =
     if (result === undefined || result.isError) {
       return [
         text(
-          `${refundNotMade(result?.text, HARBOR_PINE.duplicateCharge)} Nothing was logged in HubSpot or posted to #billing.`,
+          `${refundNotMade(result?.text, HARBOR_PINE.duplicateCharge)} Nothing was logged in HubSpot.`,
         ),
       ];
     }
     const stripeRefund = context.pick(refundId, /\b(re_[A-Za-z0-9]+)\b/, "re_unknown");
     return [
-      text("Refunded. Logging it in HubSpot and letting #billing know."),
+      text("Refunded. Logging it in HubSpot."),
       hubspot.createNote("j2_note", {
         body: `Refunded duplicate charge ${HARBOR_PINE.duplicateCharge} ($490.00, refund ${stripeRefund}). The September Growth plan was charged twice on 2026-09-22; Dana Whitfield asked in Gmail thread ${HARBOR_PINE.gmailThread}.`,
         timestamp: NOW_ISO,
@@ -105,27 +106,21 @@ const recordOrStop =
           associate(HARBOR_PINE.hubspotCompany, ASSOCIATION.noteToCompany),
         ],
       }),
-      slack.postMessage("j2_post", {
-        channel: "#billing",
-        text: `Refunded $490.00 to Harbor & Pine Outfitters: duplicate charge ${HARBOR_PINE.duplicateCharge} from Sep 22 (refund ${stripeRefund}). Noted in HubSpot.`,
-      }),
     ];
   };
 
+/** Slack is not connected in the fake world: #billing is not told, and the reply says so. */
+export const J2_SLACK_UNAVAILABLE = "Slack is not connected, so #billing was not told.";
+
 function summary(context: StepContext): string {
   const note = context.result("j2_note");
-  const post = context.result("j2_post");
   const parts = [`Refunded $490.00 on the duplicate charge ${HARBOR_PINE.duplicateCharge}.`];
   parts.push(
     note !== undefined && !note.isError
       ? "Logged a note on Dana's HubSpot contact and company."
       : `The HubSpot note failed: ${firstLine(note?.text)}`,
   );
-  parts.push(
-    post !== undefined && !post.isError
-      ? "Posted to #billing."
-      : `Posting to #billing failed: ${firstLine(post?.text)}`,
-  );
+  parts.push(J2_SLACK_UNAVAILABLE);
   return parts.join(" ");
 }
 
@@ -161,11 +156,6 @@ function verifyRefunded(fakes: Fakes, run: RunFacts, refundCallId: string): stri
       JSON.stringify(notes).includes(`"toId":"${HARBOR_PINE.hubspotCompany}"`),
     "the note is associated with Dana's contact and company",
   );
-  checks.equal(
-    fakes.slack.posts().map((post) => post.channelName),
-    ["#billing"],
-    "one post, in #billing",
-  );
   return checks.problems;
 }
 
@@ -177,18 +167,17 @@ function verifyNotRefunded(fakes: Fakes): string[] {
     "no refund",
   );
   checks.equal(fakes.hubspot.writes().length, 0, "no HubSpot writes");
-  checks.equal(fakes.slack.posts().length, 0, "no Slack posts");
   return checks.problems;
 }
 
 export const J2_REFUND_DUPLICATE: Scenario = {
   id: "j2-refund-duplicate",
   job: "J2",
-  title: "Refund a duplicate charge, note it and tell #billing",
+  title: "Refund a duplicate charge and note it",
   prompt: J2_PROMPT,
   steps: J2_STEPS,
   approvals: { j2_refund: "approve" },
-  expected: { status: "completed", replyIncludes: ["Refunded $490.00", "Posted to #billing"] },
+  expected: { status: "completed", replyIncludes: ["Refunded $490.00", J2_SLACK_UNAVAILABLE] },
   verify: (fakes, run) => verifyRefunded(fakes, run, "j2_refund"),
 };
 
@@ -297,7 +286,7 @@ const noteAssociations = [
  * The live lane's J2, played deterministically: the agent knows only the
  * company name, so it searches Stripe by name (no guessed address); its first
  * HubSpot note has no hs_timestamp, which the gateway refuses before HubSpot
- * sees it; it posts to #billing only after the corrected note succeeded.
+ * sees it, and the corrected note follows.
  */
 export const J2_NAME_SEARCH_AND_NOTE_RULE: Scenario = {
   ...J2_REFUND_DUPLICATE,
@@ -333,20 +322,6 @@ export const J2_NAME_SEARCH_AND_NOTE_RULE: Scenario = {
           body: `Refunded duplicate charge ${HARBOR_PINE.duplicateCharge} ($490.00).`,
           timestamp: NOW_ISO,
           associations: noteAssociations,
-        }),
-      ];
-    },
-    (context) => {
-      const note = context.result("j2_note");
-      if (note === undefined || note.isError) {
-        return [
-          text(`The HubSpot note failed: ${firstLine(note?.text)} I did not post to #billing.`),
-        ];
-      }
-      return [
-        slack.postMessage("j2_post", {
-          channel: "#billing",
-          text: `Refunded $490.00 to Harbor & Pine Outfitters: duplicate charge ${HARBOR_PINE.duplicateCharge}. Noted in HubSpot.`,
         }),
       ];
     },

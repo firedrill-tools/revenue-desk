@@ -97,7 +97,10 @@ export function ChatEmptyState({
         {count !== null && count.connected < count.total ? (
           <p className="text-body-sm text-muted-foreground">
             {count.connected} of {count.total} systems are connected.{" "}
-            <Link href="/connections">Set up connections →</Link>
+            {/* Underlined: a link inside running text must not rely on colour alone. */}
+            <Link href="/connections" className="underline">
+              Set up connections →
+            </Link>
           </p>
         ) : null}
       </div>

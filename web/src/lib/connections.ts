@@ -46,7 +46,10 @@ export function connectionDetail(connection: Pick<ConnectionView, "state" | "det
 
 /** What each connection kind is, for the page's legend. */
 export const KIND_EXPLANATIONS: readonly (readonly [ConnectionKind, string])[] = [
-  ["composio", "Google sign-in held by Composio; use Connect to sign in."],
+  [
+    "composio",
+    "Gmail, Google Calendar, QuickBooks and Slack: Composio holds each sign-in; use Connect to sign in.",
+  ],
   ["mcp", "HubSpot's own MCP server, run with your private-app token."],
-  ["api", "Direct calls with a key from your configuration file."],
+  ["api", "Stripe's API, called directly with the key from your configuration file."],
 ];

@@ -98,7 +98,7 @@ function NoticeLine({ notice }: { notice: NoticeData }) {
         {linked ? (
           <>
             {pointsThere ? null : " "}
-            <Link href="/connections" className="whitespace-nowrap">
+            <Link href="/connections" className="whitespace-nowrap underline">
               Connections
             </Link>
             {pointsThere ? "." : null}

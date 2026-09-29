@@ -296,15 +296,20 @@ export function testCatalog(options: TestCatalogOptions = {}): IntegrationCatalo
     },
     quickbooks: {
       ...definition("quickbooks", [
-        spec("get_company_info", "quickbooks.company_info.get", "Read QuickBooks company", "read"),
+        spec(
+          "QUICKBOOKS_GET_COMPANY_INFO",
+          "quickbooks.company_info.get",
+          "Get company info from QuickBooks",
+          "read",
+        ),
       ]),
-      tools: () => [],
+      connector,
     },
     slack: {
       ...definition("slack", [
-        spec("list_channels", "slack.conversations.list", "List Slack channels", "read"),
+        spec("SLACK_LIST_ALL_CHANNELS", "slack.conversations.list", "List Slack channels", "read"),
       ]),
-      tools: () => [],
+      connector,
     },
   };
 }

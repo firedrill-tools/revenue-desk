@@ -59,8 +59,8 @@ const JOB_SUGGESTIONS: readonly JobSuggestion[] = [
     id: "handoff",
     title: "Hand off a closed-won deal",
     prompt:
-      "Take the most recent closed-won HubSpot deal, find or create its QuickBooks customer, create and send the invoice, and tell {notices} about the handoff.",
-    systems: ["hubspot", "quickbooks", "slack"],
+      "Take the most recent closed-won HubSpot deal, find or create its QuickBooks customer, create the invoice, email it to the billing contact from Gmail, and tell {notices} about the handoff.",
+    systems: ["hubspot", "quickbooks", "gmail", "slack"],
   },
   {
     id: "digest",

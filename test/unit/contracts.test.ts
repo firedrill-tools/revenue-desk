@@ -86,9 +86,14 @@ describe("agent SDK vocabulary", () => {
 });
 
 describe("integration contract", () => {
-  it("maps two Composio, one MCP and three API integrations", () => {
+  it("maps four Composio integrations, one MCP (HubSpot) and one API (Stripe)", () => {
     const kinds = INTEGRATION_IDS.map((id) => INTEGRATIONS[id].kind);
-    expect(kinds).toEqual(["composio", "composio", "mcp", "api", "api", "api"]);
+    expect(kinds).toEqual(["composio", "composio", "mcp", "api", "composio", "composio"]);
+    expect(INTEGRATIONS.hubspot).toMatchObject({ kind: "mcp", profile: "hubspot-mcp-0.4" });
+    expect(INTEGRATIONS.stripe).toMatchObject({ kind: "api", profile: "stripe-api" });
+    for (const id of ["gmail", "google_calendar", "quickbooks", "slack"] as const) {
+      expect(INTEGRATIONS[id].profile).toBe("composio");
+    }
     for (const id of INTEGRATION_IDS) expect(INTEGRATIONS[id].id).toBe(id);
     expect(Object.values(COMPOSIO_TOOLKIT_OF).sort()).toEqual([...COMPOSIO_TOOLKITS].sort());
   });
@@ -120,10 +125,20 @@ describe("integration contract", () => {
 
   it("offers Composio outbound tools only when the policy can allow them", () => {
     expect(composioAccessFor(DEFAULT_POLICY)).toBe("outbound");
-    expect(composioAccessFor({ ...DEFAULT_POLICY, outbound: "deny" })).toBe("draft");
-    expect(composioAccessFor({ ...DEFAULT_POLICY, outbound: "deny", internal_write: "deny" })).toBe(
-      "read",
+    // Outbound-level tools include QuickBooks invoices and payments (financial).
+    expect(composioAccessFor({ ...DEFAULT_POLICY, outbound: "deny" })).toBe("outbound");
+    expect(composioAccessFor({ ...DEFAULT_POLICY, financial: "deny" })).toBe("outbound");
+    expect(composioAccessFor({ ...DEFAULT_POLICY, outbound: "deny", financial: "deny" })).toBe(
+      "draft",
     );
+    expect(
+      composioAccessFor({
+        ...DEFAULT_POLICY,
+        outbound: "deny",
+        financial: "deny",
+        internal_write: "deny",
+      }),
+    ).toBe("read");
   });
 });
 
@@ -145,8 +160,6 @@ describe("environment contract", () => {
       "HUBSPOT_ACCESS_TOKEN",
       "HUBSPOT_MCP_TOKEN",
       "STRIPE_SECRET_KEY",
-      "QBO_ACCESS_TOKEN",
-      "SLACK_BOT_TOKEN",
     ]);
   });
 

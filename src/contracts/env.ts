@@ -107,12 +107,12 @@ export const ENV_VARS = {
     scope: "product",
     description: "An env file outside the repository to load at start.",
   },
-  // --- Gmail and Google Calendar (Composio) ------------------------------------
+  // --- Gmail, Google Calendar, QuickBooks and Slack (Composio) ------------------
   COMPOSIO_API_KEY: {
     group: "gmail",
     secret: true,
     scope: "product",
-    description: "Composio project key. Gmail and Google Calendar need it.",
+    description: "Composio project key. Gmail, Google Calendar, QuickBooks and Slack need it.",
   },
   COMPOSIO_USER_ID: {
     group: "gmail",
@@ -189,44 +189,6 @@ export const ENV_VARS = {
     scope: "product",
     description: "Stripe-Version header. Default: the account's version.",
   },
-  // --- QuickBooks Online (API) -----------------------------------------------------
-  QBO_ACCESS_TOKEN: {
-    group: "quickbooks",
-    secret: true,
-    scope: "product",
-    description: "OAuth access token (expires hourly).",
-  },
-  QBO_REALM_ID: {
-    group: "quickbooks",
-    secret: false,
-    scope: "product",
-    description: "Company (realm) id.",
-  },
-  QBO_API_BASE_URL: {
-    group: "quickbooks",
-    secret: false,
-    scope: "product",
-    description: "Default https://sandbox-quickbooks.api.intuit.com. A path prefix is kept.",
-  },
-  QBO_MINOR_VERSION: {
-    group: "quickbooks",
-    secret: false,
-    scope: "product",
-    description: "minorversion query parameter. Default: omitted.",
-  },
-  // --- Slack (API) -------------------------------------------------------------------
-  SLACK_BOT_TOKEN: {
-    group: "slack",
-    secret: true,
-    scope: "product",
-    description: "Bot token (xoxb-).",
-  },
-  SLACK_API_BASE_URL: {
-    group: "slack",
-    secret: false,
-    scope: "product",
-    description: "Default https://slack.com. A path prefix is kept.",
-  },
 } as const satisfies Record<string, EnvVarSpec>;
 
 export type EnvVarName = keyof typeof ENV_VARS;
@@ -269,8 +231,6 @@ export const ENV_DEFAULTS = {
   AGENT_APPROVAL_TIMEOUT_MS: 900_000,
   COMPOSIO_BASE_URL: "https://backend.composio.dev",
   STRIPE_API_BASE_URL: "https://api.stripe.com",
-  QBO_API_BASE_URL: "https://sandbox-quickbooks.api.intuit.com",
-  SLACK_API_BASE_URL: "https://slack.com",
 } as const satisfies {
   readonly AGENT_EFFORT: AgentEffort;
   readonly THINKING_DISPLAY_UI: ThinkingDisplay;
@@ -368,15 +328,5 @@ export type AgentEnv = {
     readonly allowLive: boolean;
     readonly apiBaseUrl: string;
     readonly apiVersion: string | null;
-  };
-  readonly quickbooks: {
-    readonly accessToken: SecretValue | null;
-    readonly realmId: string | null;
-    readonly apiBaseUrl: string;
-    readonly minorVersion: string | null;
-  };
-  readonly slack: {
-    readonly botToken: SecretValue | null;
-    readonly apiBaseUrl: string;
   };
 };

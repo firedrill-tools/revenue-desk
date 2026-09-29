@@ -320,8 +320,10 @@ describe("connections", () => {
       ["hubspot", "not_configured", false],
       ["stripe", "invalid", false],
       ["quickbooks", "not_configured", false],
-      ["slack", "unknown", false],
+      // Slack is a Composio integration: configured and not connected yet, it offers Connect.
+      ["slack", "unknown", true],
     ]);
+    expect(items[5]).toMatchObject({ kind: "composio", profile: "composio" });
     expect(items[1]).toMatchObject({
       label: "Google Calendar",
       kind: "composio",

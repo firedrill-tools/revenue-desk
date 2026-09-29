@@ -4,7 +4,7 @@
 // The CLI (2.1.283) sends the model's tool_use id as
 // `_meta["claudecode/toolUseId"]` on every tools/call to an in-process server.
 // The idempotency key of a write is sha256hex(`${runId}:${toolUseId}`), so a
-// replayed call reuses its key (Stripe Idempotency-Key, QuickBooks requestid).
+// replayed call reuses its key (the Stripe Idempotency-Key).
 // A write without the id fails closed.
 
 import { createHash, randomUUID } from "node:crypto";

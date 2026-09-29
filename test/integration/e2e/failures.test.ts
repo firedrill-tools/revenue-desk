@@ -13,8 +13,6 @@ import {
   FAIL_COMPOSIO_SESSION,
   FAIL_HUBSPOT_DOWN,
   FAIL_MODEL_529,
-  FAIL_QUICKBOOKS_FAULT,
-  FAIL_SLACK_NOT_OK,
   FAIL_STRIPE_429,
   J2_INVALID_ARGUMENTS,
   J2_NAME_SEARCH_AND_NOTE_RULE,
@@ -105,45 +103,6 @@ describe("full stack: failures, with the database checked against what happened"
     });
   });
 
-  it("QuickBooks answers the approved invoice with a Fault: failed with its code, nothing sent", {
-    timeout: TIMEOUT,
-  }, async () => {
-    await playScenario(FAIL_QUICKBOOKS_FAULT, ({ rows }) => {
-      expect(rows.call("j4_invoice")).toMatchObject({
-        integration: "quickbooks",
-        connection_kind: "api",
-        operation: "quickbooks.invoices.create",
-        action_class: "financial",
-        decision: "approved",
-        status: "failed",
-        is_error: 1,
-        error_code: "6000",
-      });
-      expect(rows.call("j4_invoice").http_status).toBeGreaterThanOrEqual(400);
-      expect(rows.toolCalls.some((row) => row.operation === "quickbooks.invoices.send")).toBe(
-        false,
-      );
-      expect(rows.run.status).toBe("completed");
-    });
-  });
-
-  it("Slack answers HTTP 200 with ok:false: the post is a failed call, never retried", {
-    timeout: TIMEOUT,
-  }, async () => {
-    await playScenario(FAIL_SLACK_NOT_OK, ({ harness, rows }) => {
-      expect(harness.fakes.slack.http.requestsTo("POST", "/api/chat.postMessage")).toHaveLength(1);
-      expect(rows.call("j5_post")).toMatchObject({
-        integration: "slack",
-        connection_kind: "api",
-        operation: "slack.chat.post_message",
-        decision: "auto",
-        status: "failed",
-        is_error: 1,
-        error_code: "channel_not_found",
-      });
-    });
-  });
-
   it("HubSpot's MCP server is down at start: unavailable for the run, no MCP call, a notice", {
     timeout: TIMEOUT,
   }, async () => {
@@ -190,7 +149,7 @@ describe("full stack: failures, with the database checked against what happened"
     });
   });
 
-  it("A HubSpot note without hs_timestamp is refused before HubSpot; the corrected note runs first, then the post", {
+  it("A HubSpot note without hs_timestamp is refused before HubSpot; the corrected note runs after it", {
     timeout: TIMEOUT,
   }, async () => {
     await playScenario(J2_NAME_SEARCH_AND_NOTE_RULE, ({ harness, rows }) => {
@@ -209,9 +168,11 @@ describe("full stack: failures, with the database checked against what happened"
       expect(rows.call("j2_note_untimed").output_json).toContain("hs_timestamp");
       expect(rows.call("j2_note")).toMatchObject({ decision: "auto", status: "succeeded" });
       expect(harness.fakes.hubspot.writes()).toHaveLength(1);
-      // The post came after the note it mentions had succeeded.
+      // The corrected note came after the refused one.
       const order = rows.toolCalls.map((row) => row.tool_use_id);
-      expect(order.indexOf("toolu_j2_post")).toBeGreaterThan(order.indexOf("toolu_j2_note"));
+      expect(order.indexOf("toolu_j2_note")).toBeGreaterThan(
+        order.indexOf("toolu_j2_note_untimed"),
+      );
 
       // The refund card names the customer the run found, not only the charge id.
       const card = JSON.parse(rows.approval("j2_refund").descriptor_json) as ApprovalDescriptor;

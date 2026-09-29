@@ -1,7 +1,8 @@
 // Connections in every state (docs/ARCHITECTURE.md §9): this suite starts its
 // own sandbox on the production build, with the local fakes arranged so that
-// Gmail, HubSpot and Stripe are connected, Google Calendar needs sign-in,
-// QuickBooks answers its read-only check with a 500, and Slack has no token.
+// Gmail is connected; Google Calendar, QuickBooks and Slack (Composio) need
+// sign-in; Stripe answers its read-only check with a 500; and HubSpot has no
+// token.
 // Connect runs the whole sign-in: the fake's hosted page completes it and
 // sends the new tab back to the app, which checks the connection.
 
@@ -19,10 +20,10 @@ test.beforeAll(async () => {
   harness = await startHarness({
     server: "process",
     entry: "built",
-    env: { SLACK_BOT_TOKEN: "" },
+    env: { HUBSPOT_ACCESS_TOKEN: "" },
     arrange: (fakes) => {
       fakes.composio.setConnection("googlecalendar", null);
-      fakes.quickbooks.faults.serverError(/companyinfo/, { times: Number.POSITIVE_INFINITY });
+      fakes.stripe.faults.serverError(/\/v1\/balance/, { times: Number.POSITIVE_INFINITY });
     },
   });
   if (harness.api === null || harness.url === null) throw new Error("The harness has no server");
@@ -53,39 +54,40 @@ test("every connection state reads plainly: connected, sign-in, not configured, 
   const phone = isPhone(testInfo);
   await openConnections(page);
 
-  for (const label of ["Gmail", "HubSpot", "Stripe"]) {
+  const gmail = connection(page, "Gmail", phone);
+  await expect(gmail).toContainText("Connected");
+  await expect(gmail.getByRole("button", { name: "Check Gmail" })).toBeEnabled();
+  await expect(gmail.getByRole("button", { name: "Connect" })).toHaveCount(0);
+
+  // Composio toolkits nobody signed in to: Connect starts Composio's sign-in.
+  for (const label of ["Google Calendar", "QuickBooks Online", "Slack"]) {
     const item = connection(page, label, phone);
-    await expect(item).toContainText("Connected");
-    await expect(item.getByRole("button", { name: `Check ${label}` })).toBeEnabled();
-    await expect(item.getByRole("button", { name: "Connect" })).toHaveCount(0);
+    await expect(item).toContainText("Needs sign-in");
+    await expect(item.getByRole("button", { name: "Connect" })).toBeEnabled();
   }
 
-  const calendar = connection(page, "Google Calendar", phone);
-  await expect(calendar).toContainText("Needs sign-in");
-  await expect(calendar.getByRole("button", { name: "Connect" })).toBeEnabled();
-
-  const slack = connection(page, "Slack", phone);
-  await expect(slack).toContainText("Not configured");
-  await expect(slack.getByText("SLACK_BOT_TOKEN", { exact: true })).toBeVisible();
-  await expect(slack).toContainText(
+  const hubspot = connection(page, "HubSpot", phone);
+  await expect(hubspot).toContainText("Not configured");
+  await expect(hubspot.getByText("HUBSPOT_ACCESS_TOKEN", { exact: true })).toBeVisible();
+  await expect(hubspot).toContainText(
     "Add these to the file DOTENV_PATH names, then restart Revenue Desk.",
   );
   // Nothing to check until the server has a token; the button says why.
   await expect(
-    slack.getByRole("button", { name: "Check Slack: configure it first" }),
+    hubspot.getByRole("button", { name: "Check HubSpot: configure it first" }),
   ).toBeDisabled();
 
-  const quickbooks = connection(page, "QuickBooks Online", phone);
-  await expect(quickbooks).toContainText("Error");
-  // A plain sentence with the next step, then QuickBooks' own words.
-  await expect(quickbooks).toContainText("QuickBooks Online did not answer the check");
-  await expect(quickbooks).toContainText("Try Check again later.");
+  const stripe = connection(page, "Stripe", phone);
+  await expect(stripe).toContainText("Error");
+  // A plain sentence with the next step, then Stripe's own words.
+  await expect(stripe).toContainText("Stripe did not answer the check");
+  await expect(stripe).toContainText("Try Check again later.");
 
   // The three connection kinds are explained on the page.
-  await expect(page.getByText("Google sign-in held by Composio")).toBeVisible();
+  await expect(page.getByText(/Composio holds each sign-in/)).toBeVisible();
 
   // The app bar summarises the same states.
-  await expect(page.getByRole("button", { name: "Connections: 3 of 6 connected" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connections: 1 of 6 connected" })).toBeVisible();
 
   await expectAccessible(page);
   await expectNoSideScroll(page);
@@ -96,14 +98,14 @@ test("Check runs the read-only probe again and keeps a failing system in error",
 }, testInfo) => {
   const phone = isPhone(testInfo);
   await openConnections(page);
-  const quickbooks = connection(page, "QuickBooks Online", phone);
-  await quickbooks.getByRole("button", { name: "Check QuickBooks Online" }).click();
-  await expect(quickbooks.getByRole("button", { name: "Check QuickBooks Online" })).toBeEnabled();
-  await expect(quickbooks).toContainText("Error");
   const stripe = connection(page, "Stripe", phone);
   await stripe.getByRole("button", { name: "Check Stripe" }).click();
   await expect(stripe.getByRole("button", { name: "Check Stripe" })).toBeEnabled();
-  await expect(stripe).toContainText("Connected");
+  await expect(stripe).toContainText("Error");
+  const gmail = connection(page, "Gmail", phone);
+  await gmail.getByRole("button", { name: "Check Gmail" }).click();
+  await expect(gmail.getByRole("button", { name: "Check Gmail" })).toBeEnabled();
+  await expect(gmail).toContainText("Connected");
 });
 
 test("Connect signs in in a new tab, which comes back and confirms the connection", async ({
@@ -142,5 +144,5 @@ test("Connect signs in in a new tab, which comes back and confirms the connectio
   await expect(page.getByText("Google Calendar is connected.")).toBeVisible({ timeout: 30_000 });
   await expect(calendar).toContainText("Connected");
   await expect(calendar.getByRole("button", { name: "Connect" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Connections: 4 of 6 connected" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Connections: 2 of 6 connected" })).toBeVisible();
 });

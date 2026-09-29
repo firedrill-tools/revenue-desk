@@ -1,10 +1,10 @@
 /**
- * The Stripe, QuickBooks and Slack integrations end to end against the
- * contract-faithful loopback fakes (test/support/fakes): configuration is
- * resolved from an AgentEnv exactly as in production, tools are built from the
- * registry, and every call goes over real HTTP to 127.0.0.1. Covers the
- * behaviours the fakes enforce: bracket forms, idempotency replay, requestid,
- * size-truncated query pages, Fault envelopes, ok:false and 429 handling.
+ * The Stripe integration (the one API integration) end to end against its
+ * contract-faithful loopback fake (test/support/fakes): configuration is
+ * resolved from an AgentEnv exactly as in production, tools are built from
+ * the registry, and every call goes over real HTTP to 127.0.0.1. Covers the
+ * behaviours the fake enforces: bracket forms, idempotency replay and 429
+ * handling.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ApiCallContext, ClassifierSettings } from "../../src/contracts/integration.js";
@@ -19,15 +19,11 @@ import type { ApiTool } from "../../src/integrations/shared/api-tool.js";
 import { createClock } from "../support/fakes/core/clock.js";
 import { FAKE_CREDENTIAL_VALUES, FAKE_CREDENTIALS } from "../support/fakes/credentials.js";
 import { type BusinessFixtures, loadBusinessFixtures } from "../support/fakes/fixtures.js";
-import { QuickBooksFake } from "../support/fakes/quickbooks/index.js";
-import { SlackFake } from "../support/fakes/slack.js";
 import { StripeFake } from "../support/fakes/stripe/index.js";
 import { at, secret, testEnv } from "../unit/integrations/helpers.js";
 
 let fixtures: BusinessFixtures;
 let stripe: StripeFake;
-let quickbooks: QuickBooksFake;
-let slack: SlackFake;
 let set: Integrations;
 let settings: ClassifierSettings;
 const tools = new Map<string, ApiTool>();
@@ -58,31 +54,12 @@ beforeAll(async () => {
     secretKey: FAKE_CREDENTIALS.stripeSecretKey,
     prefix: "/stripe",
   });
-  quickbooks = await QuickBooksFake.start({
-    fixture: fixtures.quickbooks,
-    clock,
-    accessToken: FAKE_CREDENTIALS.quickbooksAccessToken,
-    prefix: "/qbo",
-  });
-  slack = await SlackFake.start({
-    fixture: fixtures.slack,
-    clock,
-    botToken: FAKE_CREDENTIALS.slackBotToken,
-    prefix: "/slack",
-  });
   const env = testEnv({
     stripe: {
       secretKey: secret(FAKE_CREDENTIALS.stripeSecretKey),
       apiBaseUrl: stripe.baseUrl,
       apiVersion: fixtures.stripe.account.apiVersion,
     },
-    quickbooks: {
-      accessToken: secret(FAKE_CREDENTIALS.quickbooksAccessToken),
-      realmId: fixtures.quickbooks.realmId,
-      apiBaseUrl: quickbooks.baseUrl,
-      minorVersion: "75",
-    },
-    slack: { botToken: secret(FAKE_CREDENTIALS.slackBotToken), apiBaseUrl: slack.baseUrl },
   });
   // Instant backoff so retried reads do not slow the suite.
   set = createIntegrations({ http: { sleep: async () => {} } });
@@ -92,14 +69,7 @@ beforeAll(async () => {
   for (const plan of plans) {
     if (plan.status !== "available") continue;
     const connection = plan.connection;
-    const built =
-      connection.integration === "stripe"
-        ? set.stripe.tools(connection, options)
-        : connection.integration === "quickbooks"
-          ? set.quickbooks.tools(connection, options)
-          : connection.integration === "slack"
-            ? set.slack.tools(connection, options)
-            : [];
+    const built = connection.integration === "stripe" ? set.stripe.tools(connection, options) : [];
     for (const tool of built) tools.set(`mcp__${connection.integration}__${tool.name}`, tool);
   }
   expect(Object.values(resolveAll(set, env)).map((resolution) => resolution.status)).toEqual([
@@ -107,13 +77,13 @@ beforeAll(async () => {
     "not_configured",
     "not_configured",
     "configured",
-    "configured",
-    "configured",
+    "not_configured",
+    "not_configured",
   ]);
 });
 
 afterAll(async () => {
-  await Promise.all([stripe?.close(), quickbooks?.close(), slack?.close()]);
+  await stripe?.close();
 });
 
 describe("Stripe against the fake", () => {
@@ -197,163 +167,12 @@ describe("Stripe against the fake", () => {
   });
 });
 
-describe("QuickBooks against the fake", () => {
-  it("probes the company and reads every page of a truncated query", async () => {
-    const resolution = resolveAll(
-      set,
-      testEnv({
-        quickbooks: {
-          accessToken: secret(FAKE_CREDENTIALS.quickbooksAccessToken),
-          realmId: fixtures.quickbooks.realmId,
-          apiBaseUrl: quickbooks.baseUrl,
-        },
-      }),
-    ).quickbooks;
-    if (resolution.status !== "configured") throw new Error("not configured");
-    await expect(
-      set.quickbooks.probe(resolution.connection, AbortSignal.timeout(5000)),
-    ).resolves.toMatchObject({
-      state: "connected",
-      detail: "Connected to Kestrel Analytics, Inc.",
-    });
-
-    const before = quickbooks.requests.filter((request) => request.path.endsWith("/query")).length;
-    const result = await run("mcp__quickbooks__list_invoices", {
-      status: "all",
-      as_of: "2026-09-28",
-      limit: 200,
-    });
-    const invoices = at(result, "invoices") as JsonObject[];
-    const queries =
-      quickbooks.requests.filter((request) => request.path.endsWith("/query")).length - before;
-    expect(at(result, "complete")).toBe(true);
-    expect(invoices.map((invoice) => invoice.id).sort()).toEqual(
-      fixtures.quickbooks.invoices.map((invoice) => invoice.Id).sort(),
-    );
-    // Pages hold at most queryPageCap rows, then one empty page ends the query.
-    expect(queries).toBe(Math.ceil(invoices.length / fixtures.quickbooks.queryPageCap) + 1);
-    const overdue = invoices.find((invoice) => invoice.id === "143");
-    expect(overdue).toMatchObject({
-      due_date: "2026-07-20",
-      total_minor: 360_000,
-      currency: "USD",
-      days_overdue: 70,
-    });
-  });
-
-  it("finds customers and payments in minor units", async () => {
-    const customers = await run("mcp__quickbooks__find_customers", { name: "Harbor", limit: 20 });
-    expect(at(customers, "customers", 0)).toMatchObject({
-      id: "58",
-      display_name: "Harbor & Pine Outfitters",
-      email: "dana@harborpine.test",
-    });
-    const payments = await run("mcp__quickbooks__list_payments", { customer_id: "58", limit: 100 });
-    expect(at(payments, "payments", 0)).toMatchObject({
-      id: "214",
-      total_minor: 49000,
-      reference: "ch_KAhp_0922a",
-      applied_to: [{ invoice_id: "149", amount_minor: 49000 }],
-    });
-  });
-
-  it("creates an invoice once per requestid", async () => {
-    const before = quickbooks.invoicesFor("58").length;
-    const args: JsonObject = {
-      customer_id: "58",
-      lines: [
-        {
-          description: "Growth plan (monthly)",
-          quantity: 1,
-          unit_price_minor: 49000,
-          item_id: "2",
-        },
-      ],
-      due_date: "2026-10-28",
-    };
-    expect(set.quickbooks.classify("create_invoice", args, settings)).toMatchObject({
-      actionClass: "financial",
-      details: { amount: { amountMinor: 49000, currency: "USD" } },
-    });
-    const key = "b2".repeat(32);
-    const created = await run("mcp__quickbooks__create_invoice", args, context(key));
-    const replayed = await run("mcp__quickbooks__create_invoice", args, context(key));
-    expect(at(created, "total_minor")).toBe(49000);
-    expect(at(replayed, "id")).toBe(at(created, "id"));
-    expect(quickbooks.invoicesFor("58")).toHaveLength(before + 1);
-    expect(
-      quickbooks
-        .writes()
-        .filter((write) => write.requestId === key)
-        .map((write) => write.replayed),
-    ).toEqual([false, true]);
-  });
-
-  it("surfaces the Fault envelope for a stale sync token", async () => {
-    await expect(
-      run("mcp__quickbooks__void_invoice", { invoice_id: "157", sync_token: "99" }),
-    ).rejects.toMatchObject({
-      provider: "quickbooks",
-      status: 400,
-      code: "5010",
-    });
-  });
-});
-
-describe("Slack against the fake", () => {
-  it("probes, reads a channel and posts to an allowed channel", async () => {
-    const resolution = resolveAll(
-      set,
-      testEnv({
-        slack: { botToken: secret(FAKE_CREDENTIALS.slackBotToken), apiBaseUrl: slack.baseUrl },
-      }),
-    ).slack;
-    if (resolution.status !== "configured") throw new Error("not configured");
-    await expect(
-      set.slack.probe(resolution.connection, AbortSignal.timeout(5000)),
-    ).resolves.toMatchObject({
-      state: "connected",
-      detail: "Connected to Kestrel Analytics as revenue-desk.",
-    });
-
-    const history = await run("mcp__slack__read_channel", { channel: "C0BILLING01", limit: 30 });
-    expect(JSON.stringify(at(history, "messages"))).toContain("charged twice");
-
-    const post = {
-      channel: "#billing",
-      text: "Refunded the duplicate Harbor & Pine charge ch_KAhp_0922b ($490.00).",
-    };
-    expect(set.slack.classify("post_message", post, settings)?.actionClass).toBe("internal_write");
-    expect(
-      set.slack.classify("post_message", { ...post, channel: "#general" }, settings)?.actionClass,
-    ).toBe("outbound");
-    const posted = await run("mcp__slack__post_message", post);
-    expect(at(posted, "channel")).toBe("C0BILLING01");
-    expect(slack.posts().map((entry) => [entry.channelName, entry.text])).toEqual([
-      ["#billing", post.text],
-    ]);
-  });
-
-  it("reports ok:false errors and does not repeat a failed post", async () => {
-    slack.faults.error("chat.postMessage", "not_in_channel");
-    await expect(
-      run("mcp__slack__post_message", { channel: "#billing", text: "again" }),
-    ).rejects.toMatchObject({
-      provider: "slack",
-      code: "not_in_channel",
-    });
-    expect(slack.posts()).toHaveLength(1);
-  });
-});
-
 describe("secrets", () => {
   it("never appear in what the fakes recorded outside the credential headers", () => {
-    const recorded = [...stripe.requests, ...quickbooks.requests, ...slack.requests].map(
-      (request) => {
-        const { authorization: _authorization, ...headers } = request.headers;
-        return JSON.stringify({ ...request, headers });
-      },
-    );
+    const recorded = stripe.requests.map((request) => {
+      const { authorization: _authorization, ...headers } = request.headers;
+      return JSON.stringify({ ...request, headers });
+    });
     for (const value of FAKE_CREDENTIAL_VALUES) {
       for (const entry of recorded) expect(entry).not.toContain(value);
     }

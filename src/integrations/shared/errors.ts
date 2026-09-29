@@ -11,8 +11,6 @@ export { ApiToolError };
 
 const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   stripe: "Stripe",
-  quickbooks: "QuickBooks",
-  slack: "Slack",
   hubspot: "HubSpot",
 };
 
@@ -64,9 +62,9 @@ export type CredentialRules = {
   readonly expired?: (failure: ToolFailure) => boolean;
   /** The failure says the credential was refused. Default: HTTP 401 or 403. */
   readonly rejected?: (failure: ToolFailure) => boolean;
-  /** The configuration variable that holds it, e.g. "QBO_ACCESS_TOKEN". */
+  /** The configuration variable that holds it, e.g. "STRIPE_SECRET_KEY". */
   readonly variable?: string;
-  /** What it is, in words: "the access token (it expires hourly)". */
+  /** What it is, in words: "the API key". */
   readonly credential?: string;
 };
 

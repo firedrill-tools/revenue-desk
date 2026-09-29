@@ -52,13 +52,6 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
       apiBaseUrl: "https://api.stripe.com",
       apiVersion: null,
     },
-    quickbooks: {
-      accessToken: null,
-      realmId: null,
-      apiBaseUrl: "https://sandbox-quickbooks.api.intuit.com",
-      minorVersion: null,
-    },
-    slack: { botToken: null, apiBaseUrl: "https://slack.com" },
   };
   return {
     model: { ...base.model, ...overrides.model },
@@ -67,8 +60,6 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
     composio: { ...base.composio, ...overrides.composio },
     hubspot: { ...base.hubspot, ...overrides.hubspot },
     stripe: { ...base.stripe, ...overrides.stripe },
-    quickbooks: { ...base.quickbooks, ...overrides.quickbooks },
-    slack: { ...base.slack, ...overrides.slack },
   };
 }
 

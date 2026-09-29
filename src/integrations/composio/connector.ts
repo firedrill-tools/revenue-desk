@@ -1,8 +1,8 @@
-// Wires the Composio session manager (session.ts) into the Gmail and Google
-// Calendar integrations.
+// Wires the Composio session manager (session.ts) into the Gmail, Google
+// Calendar, QuickBooks and Slack integrations.
 //
 // - One connector per Composio configuration (base URL, user, key), shared by
-//   both integrations, so a probe of Gmail and one of Calendar reuse a session.
+//   the four integrations, so their probes reuse one session.
 // - upstream(): the session MCP endpoint for a run, per (toolkits, access),
 //   where access comes from the run's policy (composioAccessFor). Sessions are
 //   cached for 30 minutes by the manager.
@@ -122,7 +122,7 @@ export class ComposioConnector {
   }
 }
 
-/** Connectors keyed by configuration, so Gmail and Calendar share one per Composio user. */
+/** Connectors keyed by configuration, so the Composio integrations share one per Composio user. */
 export class ComposioConnectors {
   readonly #deps: ComposioConnectorDeps;
   readonly #connectors = new Map<string, ComposioConnector>();

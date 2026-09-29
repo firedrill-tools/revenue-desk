@@ -1,5 +1,6 @@
-// Read-only capture of the Composio direct_tools MCP surface for Gmail and
-// Google Calendar, written to test/fixtures/surfaces/composio-direct.json.
+// Read-only capture of the Composio direct_tools MCP surface for Gmail,
+// Google Calendar, QuickBooks and Slack, written to
+// test/fixtures/surfaces/composio-direct.json.
 //
 //   DOTENV_PATH=/abs/path/outside/repo/.env pnpm exec tsx scripts/surfaces/capture-composio-direct.ts
 //   pnpm exec biome format --write test/fixtures/surfaces/composio-direct.json
@@ -14,14 +15,17 @@
 //   1. Reads COMPOSIO_API_KEY and COMPOSIO_USER_ID from the DOTENV_PATH file
 //      (parsed locally; process.env is not modified; values are never printed).
 //   2. Checks every allowlisted slug against the Composio tool catalog (read-only).
-//   3. Creates one Composio session (toolkits gmail + googlecalendar, the full
-//      allowlist, sessionPreset direct_tools, no sandbox, mcp: true) and reads
-//      its per-toolkit connection state.
+//   3. Creates one Composio session (the four toolkits, the full allowlist,
+//      sessionPreset direct_tools, no sandbox, mcp: true) and reads its
+//      per-toolkit connection state.
 //   4. Connects an MCP client to the session's hosted MCP URL and calls
 //      tools/list only. No tool is called. No OAuth flow is started.
 //   5. Passes the listed tools through an in-process MCP server and client, to
 //      check the raw JSON schemas survive a proxy hop unchanged.
-//   6. Writes the fixture with nothing account-specific (no ids, emails, URLs
+//   6. Reads each toolkit's public Connect facts (Composio-managed auth
+//      schemes and the fields a new connection asks for), never an auth
+//      config or connected account of this project.
+//   7. Writes the fixture with nothing account-specific (no ids, emails, URLs
 //      or tokens) and fails if any such value would be written.
 // This script writes its own output to stderr only; stdout stays empty.
 
@@ -71,6 +75,23 @@ const selection = { toolkits: COMPOSIO_TOOLKITS, access: "outbound" as const };
 const allowlisted = COMPOSIO_TOOLKITS.flatMap((toolkit) =>
   COMPOSIO_ALLOWLISTS[toolkit].map((entry) => ({ toolkit, ...entry })),
 );
+
+type ConnectFieldSource = {
+  readonly name: string;
+  readonly displayName?: string | undefined;
+  readonly description?: string | undefined;
+  readonly default?: string | null | undefined;
+};
+
+/** A field a new connection asks for: public toolkit metadata, never a value of this project. */
+function connectField(field: ConnectFieldSource) {
+  return {
+    name: field.name,
+    displayName: field.displayName ?? null,
+    description: field.description ?? null,
+    default: field.default ?? null,
+  };
+}
 
 function toolkitOf(name: string): ComposioToolkit | null {
   for (const toolkit of COMPOSIO_TOOLKITS) {
@@ -222,7 +243,32 @@ async function main(): Promise<void> {
   const proxyIntact = isDeepStrictEqual(echoed, listed);
   log(`in-process MCP proxy hop preserves tools/list exactly: ${proxyIntact}`);
 
-  // 5. Fixture.
+  // 5. Public Connect facts per toolkit (the same for every Composio project).
+  const connect: Record<string, unknown> = {};
+  for (const toolkit of COMPOSIO_TOOLKITS) {
+    const info = await catalogClient.toolkits.get(toolkit);
+    connect[toolkit] = {
+      composioManagedAuthSchemes: info.composioManagedAuthSchemes ?? [],
+      authModes: (info.authConfigDetails ?? []).map((detail) => ({
+        mode: detail.mode,
+        connectionFields: [
+          ...(detail.fields?.connectedAccountInitiation?.required ?? []).map((field) => ({
+            ...connectField(field),
+            required: true,
+          })),
+          ...(detail.fields?.connectedAccountInitiation?.optional ?? []).map((field) => ({
+            ...connectField(field),
+            required: false,
+          })),
+        ],
+      })),
+    };
+  }
+  log(
+    `connect: ${COMPOSIO_TOOLKITS.map((toolkit) => `${toolkit} managed ${JSON.stringify((connect[toolkit] as { composioManagedAuthSchemes: string[] }).composioManagedAuthSchemes)}`).join("; ")}`,
+  );
+
+  // 6. Fixture.
   const metaKeys = [...new Set(listed.flatMap((tool) => Object.keys(tool._meta ?? {})))].sort();
   const toolkits = Object.fromEntries(
     COMPOSIO_TOOLKITS.map((toolkit) => [
@@ -244,17 +290,18 @@ async function main(): Promise<void> {
               tags: catalogBySlug.get(tool.name)?.tags ?? [],
             },
           })),
+        connect: connect[toolkit],
       },
     ]),
   );
   const fixture = {
     $comment:
-      "Composio direct_tools MCP surface for Revenue Desk's Gmail and Google Calendar allowlists. Captured read-only (tools/list only; no tool was called). Account-specific values (ids, emails, URLs, tokens) are excluded. Regenerate with scripts/surfaces/capture-composio-direct.ts.",
+      "Composio direct_tools MCP surface for Revenue Desk's Gmail, Google Calendar, QuickBooks and Slack allowlists, with each toolkit's public Connect facts. Captured read-only (tools/list only; no tool was called; no OAuth started). Account-specific values (ids, emails, URLs, tokens, connection states) are excluded. Regenerate with scripts/surfaces/capture-composio-direct.ts.",
     capturedAt: new Date().toISOString(),
     source: {
       sdk: "@composio/core 0.21.0",
       method:
-        "composio.sessions.create(userId, config) then MCP tools/list on session.mcp.url; catalog metadata from composio.tools.getRawComposioTools",
+        "composio.sessions.create(userId, config) then MCP tools/list on session.mcp.url; catalog metadata from composio.tools.getRawComposioTools; Connect facts from composio.toolkits.get",
       mcpClient: "@modelcontextprotocol/sdk 1.30.1",
       mcpTransport: safeEndpoint.type,
       mcpHost: safeEndpoint.host,

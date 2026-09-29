@@ -156,9 +156,16 @@ describe("Composio fake session MCP", () => {
         const expected = [
           ...allowedTools("gmail", access),
           ...allowedTools("googlecalendar", access),
+          ...allowedTools("quickbooks", access),
+          ...allowedTools("slack", access),
         ];
         expect(listed.tools.map((tool) => tool.name).sort()).toEqual([...expected].sort());
-        const all = [...captured.gmail, ...captured.googlecalendar];
+        const all = [
+          ...captured.gmail,
+          ...captured.googlecalendar,
+          ...captured.quickbooks,
+          ...captured.slack,
+        ];
         for (const tool of listed.tools)
           expect(tool).toEqual(all.find((entry) => entry.name === tool.name));
       } finally {

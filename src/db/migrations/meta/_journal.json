@@ -43,6 +43,13 @@
       "when": 1790634937793,
       "tag": "0005_one_running_run_per_conversation",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790676868239,
+      "tag": "0006_composio_quickbooks_slack",
+      "breakpoints": true
     }
   ]
 }

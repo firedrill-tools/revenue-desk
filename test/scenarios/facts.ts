@@ -20,7 +20,6 @@ export const HARBOR_PINE = {
   paidCharge: "ch_KAhp_0922a",
   duplicateCharge: "ch_KAhp_0922b",
   chargeAmountMinor: 49_000,
-  quickbooksCustomer: "58",
   hubspotCompany: "30011001",
   hubspotContact: "51011001",
 } as const;
@@ -51,16 +50,11 @@ export const SOLSTICE = {
   familyName: "Bellini",
   hubspotDeal: "90011004",
   hubspotContact: "51011007",
-  quickbooksItem: "3",
   amountMinor: 1_800_000,
   dueDate: "2026-10-28",
-  /** The ids the QuickBooks fake gives the first new customer and invoice. */
-  expectedCustomerId: "68",
-  expectedInvoiceId: "158",
-  expectedDocNumber: "1058",
 } as const;
 
-/** The Idempotency-Key / requestid of a write: hex sha256 of `${runId}:${toolUseId}` (docs/ARCHITECTURE.md §5). */
+/** The Idempotency-Key of a Stripe write: hex sha256 of `${runId}:${toolUseId}` (docs/ARCHITECTURE.md §5). */
 export function expectedIdempotencyKey(runId: string, toolUseId: string): string {
   return createHash("sha256").update(`${runId}:${toolUseId}`).digest("hex");
 }

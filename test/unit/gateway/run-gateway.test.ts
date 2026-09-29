@@ -218,11 +218,17 @@ describe("openRunGateway", () => {
   it("asks Composio for one session covering the run's toolkits at the policy's exposure", async () => {
     const cases: [typeof DEFAULT_POLICY, ComposioAccess][] = [
       [DEFAULT_POLICY, "outbound"],
-      [{ ...DEFAULT_POLICY, outbound: "deny" }, "draft"],
+      [{ ...DEFAULT_POLICY, outbound: "deny" }, "outbound"],
+      [{ ...DEFAULT_POLICY, outbound: "deny", financial: "deny" }, "draft"],
     ];
     for (const [policy, access] of cases) {
       const { catalog, selections } = await upstreams();
-      const calendar = { ...gmailConnection(), integration: "google_calendar" as const };
+      const composio = gmailConnection().composio;
+      const base = {
+        kind: "composio",
+        profile: "composio",
+        endpointLabel: "backend.composio.dev",
+      } as const;
       await open({
         policy,
         catalog,
@@ -232,13 +238,34 @@ describe("openRunGateway", () => {
             integration: "google_calendar",
             status: "available",
             connection: {
-              ...calendar,
-              composio: { ...calendar.composio, toolkit: "googlecalendar" },
+              ...base,
+              integration: "google_calendar",
+              composio: { ...composio, toolkit: "googlecalendar" },
+            },
+          },
+          {
+            integration: "quickbooks",
+            status: "available",
+            connection: {
+              ...base,
+              integration: "quickbooks",
+              composio: { ...composio, toolkit: "quickbooks" },
+            },
+          },
+          {
+            integration: "slack",
+            status: "available",
+            connection: {
+              ...base,
+              integration: "slack",
+              composio: { ...composio, toolkit: "slack" },
             },
           },
         ]),
       });
-      expect(selections).toEqual([{ toolkits: ["gmail", "googlecalendar"], access }]);
+      expect(selections).toEqual([
+        { toolkits: ["gmail", "googlecalendar", "quickbooks", "slack"], access },
+      ]);
     }
   });
 

@@ -55,8 +55,6 @@ const PROFILE = [
   "composio",
   "hubspot-mcp-0.4",
   "stripe-api",
-  "quickbooks-api",
-  "slack-api",
 ] as const satisfies readonly ProfileId[];
 const ACTION_CLASS = [
   "read",

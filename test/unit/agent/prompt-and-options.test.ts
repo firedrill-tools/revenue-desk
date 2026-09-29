@@ -179,13 +179,25 @@ describe("buildSystemPrompt", () => {
     );
   });
 
-  it("checks payments before reporting receivables, and keeps tables and emoji out of Slack", () => {
+  it("checks payments before reporting receivables, and keeps Slack posts plain Markdown", () => {
     // J5 read the payments system only for the reporting week and missed an older payment.
     expect(STABLE_RULES).toContain(
       "look in the payments system for payments against them made since each was issued, not only in the period you are reporting on",
     );
-    expect(STABLE_RULES).toContain("Slack messages are Slack mrkdwn, without tables or headings");
+    // Composio's Slack post takes standard Markdown (markdown_text), tables included.
+    expect(STABLE_RULES).toContain(
+      "Slack messages are standard Markdown, short, with mentions only as user ids",
+    );
     expect(STABLE_RULES).toContain("Use no emoji.");
+  });
+
+  it("states each system's money unit: Stripe minor units, QuickBooks decimals", () => {
+    expect(STABLE_RULES).toContain("each system states its amounts in its own unit");
+    expect(SYSTEM_NOTES.stripe).toContain("integer minor units");
+    expect(SYSTEM_NOTES.quickbooks).toContain("decimals in the company currency");
+    // Composio's QuickBooks toolkit cannot email an invoice; Gmail sends it.
+    expect(SYSTEM_NOTES.quickbooks).toContain("through Gmail");
+    expect(SYSTEM_NOTES.slack).toContain("<@USERID>");
   });
 
   it("is not fitted to the sandbox: no fixture company, person, id or amount", () => {

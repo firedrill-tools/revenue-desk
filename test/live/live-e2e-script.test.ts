@@ -171,43 +171,70 @@ describe("the lead's approval rules", () => {
     ).toBe(false);
     expect(
       job("j3").decide(
-        ask("mcp__quickbooks__record_payment", { customer_id: "63", amount_minor: 198_000 }),
+        ask("mcp__quickbooks__QUICKBOOKS_CREATE_PAYMENT", {
+          customer_id: "63",
+          total_amt: 1980,
+          lines: [{ Amount: 1980, LinkedTxn: [{ TxnId: "151", TxnType: "Invoice" }] }],
+        }),
         [],
       ).approved,
     ).toBe(false);
   });
 
-  it("J4 approves the $18,000.00 invoice for the new customer and sends only that one", () => {
+  it("J4 approves the $18,000.00 invoice for the new customer and emails it only to Marco", () => {
+    // QUICKBOOKS_CREATE_CUSTOMER answers {successful, data: {Customer: {Id, …}}}.
     const created = seenCall(
-      "mcp__quickbooks__create_customer",
+      "mcp__quickbooks__QUICKBOOKS_CREATE_CUSTOMER",
       { display_name: "Solstice Energy Cooperative" },
-      { customer: { id: "68", display_name: "Solstice Energy Cooperative" } },
+      {
+        successful: true,
+        data: { Customer: { Id: "68", DisplayName: "Solstice Energy Cooperative" } },
+      },
     );
-    const invoice = (customer: string, unit: number) =>
-      ask("mcp__quickbooks__create_invoice", {
+    const invoice = (customer: string, amount: number) =>
+      ask("mcp__quickbooks__QUICKBOOKS_CREATE_INVOICE", {
         customer_id: customer,
-        lines: [{ quantity: 1, unit_price_minor: unit, description: "Enterprise annual" }],
+        lines: [
+          {
+            DetailType: "SalesItemLineDetail",
+            Amount: amount,
+            Description: "Enterprise annual",
+            SalesItemLineDetail: { ItemRef: { value: "3" } },
+          },
+        ],
       });
-    expect(job("j4").decide(invoice("68", 1_800_000), [created]).approved).toBe(true);
-    expect(job("j4").decide(invoice("68", 1_500_000), [created]).approved).toBe(false);
-    expect(job("j4").decide(invoice("58", 1_800_000), [created]).approved).toBe(false);
+    expect(job("j4").decide(invoice("68", 18_000), [created]).approved).toBe(true);
+    expect(job("j4").decide(invoice("68", 15_000), [created]).approved).toBe(false);
+    expect(job("j4").decide(invoice("58", 18_000), [created]).approved).toBe(false);
     const raised = seenCall(
-      "mcp__quickbooks__create_invoice",
+      "mcp__quickbooks__QUICKBOOKS_CREATE_INVOICE",
       { customer_id: "68" },
-      { invoice: { id: "158", doc_number: "1058" } },
+      { successful: true, data: { Id: "158", DocNumber: "1058", TotalAmt: "18000.00" } },
       "approved",
     );
-    const send = (input: JsonObject) =>
-      job("j4").decide(ask("mcp__quickbooks__send_invoice", input), [created, raised]).approved;
-    expect(send({ invoice_id: "158" })).toBe(true);
-    expect(send({ invoice_id: "158", send_to: "marco@solstice.test" })).toBe(true);
-    expect(send({ invoice_id: "158", send_to: "someone@else.test" })).toBe(false);
-    expect(send({ invoice_id: "143" })).toBe(false);
+    const draft = (to: string) =>
+      seenCall(
+        "mcp__gmail__GMAIL_CREATE_EMAIL_DRAFT",
+        { recipient_email: to, subject: "Invoice 1058", body: "Invoice 1058 for $18,000.00." },
+        { successful: true, data: { id: "r-1058" } },
+      );
+    const send = (to: string, seen: SeenCall[]) =>
+      job("j4").decide(ask("mcp__gmail__GMAIL_SEND_DRAFT", { draft_id: "r-1058" }), [
+        ...seen,
+        draft(to),
+      ]).approved;
+    expect(send("marco@solstice.test", [created, raised])).toBe(true);
+    expect(send("someone@else.test", [created, raised])).toBe(false);
+    // No invoice yet: nothing to email.
+    expect(send("marco@solstice.test", [created])).toBe(false);
   });
 
   it("allowlisted channels are approved only when they are the job's channel", () => {
     const post = (channel: string) =>
-      job("j5").decide(ask("mcp__slack__post_message", { channel, text: "digest" }), []).approved;
+      job("j5").decide(
+        ask("mcp__slack__SLACK_SEND_MESSAGE", { channel, markdown_text: "digest" }),
+        [],
+      ).approved;
     expect(post("#revenue")).toBe(true);
     expect(post("C0REVENUE01")).toBe(true);
     expect(post("#general")).toBe(false);
@@ -281,11 +308,28 @@ describe("helpers", () => {
         }),
       ),
     ).toEqual(["amount 4900 != input 49000", "consequence lacks $490.00"]);
+    const payment = {
+      customer_id: "63",
+      total_amt: 1980,
+      lines: [{ Amount: 1980, LinkedTxn: [{ TxnId: "151", TxnType: "Invoice" }] }],
+    };
     expect(
       checkCard(
-        ask("mcp__quickbooks__send_invoice", { invoice_id: "158" }, { recordIds: ["158"] }),
+        ask("mcp__quickbooks__QUICKBOOKS_CREATE_PAYMENT", payment, {
+          amount: { amountMinor: 198_000, currency: "USD" },
+          consequence: "Record a $1,980.00 payment from Meridian Labs against invoice 1051",
+          recordIds: ["63", "151"],
+        }),
       ),
-    ).toEqual(["the card does not name the recipient (only 'the invoice's billing email')"]);
+    ).toEqual([]);
+    expect(
+      checkCard(
+        ask("mcp__quickbooks__QUICKBOOKS_CREATE_INVOICE", {
+          customer_id: "68",
+          lines: [{ DetailType: "SalesItemLineDetail", Amount: "18000.00" }],
+        }),
+      ),
+    ).toEqual(["amount 49000 != input 1800000", "consequence lacks $18,000.00"]);
     expect(
       checkCard(
         ask(

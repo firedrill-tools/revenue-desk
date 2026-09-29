@@ -1,560 +1,340 @@
+// Slack through Composio: the classifier, the input rules and the run
+// memory, from inputs shaped by the captured SLACK_* schemas
+// (test/fixtures/surfaces/composio-direct.json) and results shaped by each
+// tool's Composio output schema ({successful, data, error}, Slack's own JSON
+// inside).
+
 import { describe, expect, it } from "vitest";
-import type { SlackConnection } from "../../../src/contracts/integration.js";
-import type { JsonObject, JsonValue } from "../../../src/contracts/json.js";
-import type { ApiTool } from "../../../src/integrations/shared/api-tool.js";
+import type { ClassifierSettings } from "../../../src/contracts/integration.js";
+import type { JsonObject } from "../../../src/contracts/json.js";
+import {
+  channelFrom,
+  mentionsEveryone,
+  normaliseChannel,
+  postedChannel,
+} from "../../../src/integrations/slack/channels.js";
 import { classifySlack } from "../../../src/integrations/slack/classify.js";
-import { SlackClient, slackError } from "../../../src/integrations/slack/client.js";
-import { createSlackIntegration, probeSlack } from "../../../src/integrations/slack/definition.js";
 import { checkSlackInput } from "../../../src/integrations/slack/input-rules.js";
 import { SLACK_PROFILE } from "../../../src/integrations/slack/profile.js";
-import { resolveSlack } from "../../../src/integrations/slack/resolve.js";
-import {
-  at,
-  callContext,
-  mockFetch,
-  paramsOf,
-  type Reply,
-  SETTINGS,
-  secret,
-  testEnv,
-} from "./helpers.js";
+import { SlackRunMemory } from "../../../src/integrations/slack/run-memory.js";
+import { SETTINGS } from "./helpers.js";
 
-const TOKEN = "xoxb-unit-test-token";
+const ok = (data: JsonObject): JsonObject => ({ successful: true, data, error: null });
 
-const connection: SlackConnection = {
-  integration: "slack",
-  kind: "api",
-  profile: "slack-api",
-  endpointLabel: "slack.test",
-  api: { baseUrl: "https://slack.test/prefix", botToken: secret(TOKEN) },
-};
+const CHANNELS = ok({
+  ok: true,
+  channels: [
+    { id: "C0BILLING01", name: "billing", is_member: true, is_ext_shared: false },
+    { id: "C0PARTNERS1", name: "partners-acme", is_ext_shared: true },
+    { id: "C0GENERAL01", name: "general" },
+  ],
+});
 
-function setup(
-  reply: (index: number, body: Record<string, string>) => Reply | Error,
-  timezone?: string,
-) {
-  const mock = mockFetch((request, index) => reply(index, paramsOf(request.body)));
-  const options = timezone === undefined ? { currency: "USD" } : { currency: "USD", timezone };
-  const tools = new Map(
-    createSlackIntegration({ http: mock.http })
-      .tools(connection, options)
-      .map((tool) => [tool.name, tool]),
-  );
-  const run = (name: string, args: JsonObject): Promise<JsonValue> => {
-    const tool: ApiTool | undefined = tools.get(name);
-    if (tool === undefined) throw new Error(`no tool ${name}`);
-    return tool.run(args, callContext());
-  };
-  const call = (index = 0) => {
-    const request = mock.requests[index];
-    return { method: request?.url.pathname, form: paramsOf(request?.body ?? "") };
-  };
-  return { mock, tools, run, call };
-}
+const post = (input: JsonObject) => classifySlack("SLACK_SEND_MESSAGE", input, SETTINGS);
 
-describe("Slack formatting and times", () => {
-  it("tells the model that post text is Slack mrkdwn: no tables, headings or emoji", () => {
-    const { tools } = setup(() => ({ json: { ok: true } }));
-    const post = tools.get("post_message");
-    expect(post?.description).toContain("Slack mrkdwn, not Markdown");
-    expect(post?.description).toContain("Post about an action only after it succeeded");
-    const text = post?.input.text as { description?: string } | undefined;
-    expect(text?.description).toContain("<@U123> to mention a person by their Slack user id");
-    expect(text?.description).toContain(
-      "a plain @name or another system's id, such as a CRM owner id, mentions nobody",
-    );
-    expect(text?.description).toContain("Markdown tables, # headings and **double asterisks**");
-    expect(text?.description).toContain("No emoji.");
+describe("Slack channels and mentions", () => {
+  it("normalises channel names and keeps ids", () => {
+    expect(normaliseChannel("#Billing")).toBe("billing");
+    expect(normaliseChannel(" sales-ops ")).toBe("sales-ops");
+    expect(normaliseChannel("C0BILLING01")).toBe("C0BILLING01");
   });
 
-  it("refuses mentions that notify nobody, before the post reaches Slack", () => {
-    // A HubSpot owner id in Slack's mention syntax, and a plain @name (both seen live).
-    expect(
-      checkSlackInput("post_message", {
-        channel: "#sales-ops",
-        text: "Closed by <@71001>. Flagging for @Sam to reconcile.",
-      }),
-    ).toEqual([
-      {
-        path: "/text",
-        message:
-          "mentions <@71001>, which is not a Slack user id (U… or W…): find the person with find_user and use their id, or write their name without a mention",
-      },
-      {
-        path: "/text",
-        message:
-          "has a plain @Sam, which mentions nobody in Slack: find the person with find_user and write <@USERID>, or write the name without @",
-      },
-    ]);
-    // Real mentions, email addresses and broadcasts (the classifier asks for those) pass.
+  it("recognises broadcasts, user groups included", () => {
     for (const text of [
-      "Thanks <@U0SAM0001> and <@W0MAYA001|maya>.",
-      "Sent to marco@solstice.test.",
-      "Heads up @here: the digest is out.",
+      "<!channel> heads up",
+      "hi <!here|here>",
+      "@everyone look",
+      "<!subteam^S01> ping",
     ]) {
-      expect(checkSlackInput("post_message", { channel: "#billing", text }), text).toEqual([]);
+      expect(mentionsEveryone(text), text).toBe(true);
     }
-    expect(checkSlackInput("read_channel", { text: "<@71001>" })).toEqual([]);
-    expect(createSlackIntegration().checkInput).toBe(checkSlackInput);
+    for (const text of ["mail maya@kestrel.test", "<@U0MAYA0001> done", "channel is fine"]) {
+      expect(mentionsEveryone(text), text).toBe(false);
+    }
   });
 
-  it("refuses Markdown that Slack does not render: tables, # headings, **bold**", () => {
-    // The shape of the live J5 digests.
-    const digest = [
-      "## Revenue digest",
-      "*AR aging*",
-      "| Customer | Invoice | Balance |",
-      "|---|---|---:|",
-      "| Copperleaf Studios | #1043 | $3,600.00 |",
-      "**Total open AR:** $27,028.00",
-    ].join("\n");
+  it("reads channels from Slack's results, and what a post by name reached", () => {
+    expect(channelFrom({ id: "C0PARTNERS1", name: "partners-acme", is_ext_shared: true })).toEqual({
+      id: "C0PARTNERS1",
+      name: "partners-acme",
+      externallyShared: true,
+    });
+    expect(channelFrom({ id: "not-an-id", name: "x" })).toBeNull();
     expect(
-      checkSlackInput("post_message", { channel: "#revenue", text: digest }).map(
-        (issue) => issue.message.split(",")[0],
+      postedChannel(
+        { channel: "#billing", markdown_text: "x" },
+        ok({ ok: true, channel: "C0BILLING01", ts: "1790604312.000200" }),
       ),
-    ).toEqual(["has a Markdown table", "has a Markdown # heading", "uses **double asterisks**"]);
-    // Slack mrkdwn passes: *bold*, bullets, a channel name at a line start, prices with pipes.
-    const mrkdwn = [
-      "*Revenue digest — Sep 21–28*",
-      "• Copperleaf Studios — invoice 1043 — $3,600.00 — 70 days overdue",
-      "#billing has the details | ask there",
-      "- Net: $590.00",
-    ].join("\n");
-    expect(checkSlackInput("post_message", { channel: "#revenue", text: mrkdwn })).toEqual([]);
-  });
-
-  it("writes message times in the workspace time zone", async () => {
-    const { run } = setup(
-      () => ({ json: { ok: true, channel: "C0BILLING01", ts: "1790600465.632000" } }),
-      "America/New_York",
-    );
-    await expect(
-      run("post_message", { channel: "#billing", text: "Refund issued." }),
-    ).resolves.toEqual({
-      channel: "C0BILLING01",
-      ts: "1790600465.632000",
-      time: "2026-09-28T09:01:05.632-04:00",
-    });
-  });
-});
-
-describe("SlackClient", () => {
-  it("posts form bodies to /api/<method> under the prefix with the bot token", async () => {
-    const mock = mockFetch(() => ({ json: { ok: true, channels: [] } }));
-    const client = new SlackClient({
-      baseUrl: "https://slack.test/prefix",
-      botToken: secret(TOKEN),
-      http: mock.http,
-    });
-    await client.read(
-      "conversations.list",
-      { limit: 5, cursor: undefined, exclude_archived: true },
-      undefined,
-    );
-    const [request] = mock.requests;
-    expect(request?.method).toBe("POST");
-    expect(request?.url.toString()).toBe("https://slack.test/prefix/api/conversations.list");
-    expect(request?.headers.authorization).toBe(`Bearer ${TOKEN}`);
-    expect(request?.headers["content-type"]).toBe(
-      "application/x-www-form-urlencoded; charset=utf-8",
-    );
-    expect(paramsOf(request?.body ?? "")).toEqual({ limit: "5", exclude_archived: "true" });
-  });
-
-  it("turns ok:false on HTTP 200 into an error with Slack's code", async () => {
-    const mock = mockFetch(() => ({ json: { ok: false, error: "channel_not_found" } }));
-    const client = new SlackClient({
-      baseUrl: "https://slack.test",
-      botToken: secret(TOKEN),
-      http: mock.http,
-    });
-    await expect(
-      client.write("chat.postMessage", { channel: "#nope", text: "x" }, undefined),
-    ).rejects.toMatchObject({
-      provider: "slack",
-      status: 200,
-      code: "channel_not_found",
-      message: "The channel was not found, or the bot cannot see it.",
-    });
-  });
-
-  it("handles HTTP errors, missing scopes and unknown codes", () => {
+    ).toEqual({ id: "C0BILLING01", name: "billing", externallyShared: false });
+    // Posted by id: nothing new is learned; a failed post teaches nothing.
     expect(
-      slackError(200, { ok: false, error: "missing_scope", needed: "chat:write" }).toJSON(),
-    ).toMatchObject({
-      code: "missing_scope",
-      message: "The bot token lacks the chat:write scope.",
-    });
-    expect(slackError(500, undefined).toJSON()).toEqual({
-      provider: "slack",
-      status: 500,
-      code: "http_500",
-      message: "Slack returned HTTP 500.",
-    });
-    expect(slackError(429, undefined).toJSON()).toMatchObject({ code: "ratelimited" });
-    expect(slackError(200, { ok: false, error: "fatal_error" }).toJSON()).toMatchObject({
-      message: "Slack returned error fatal_error.",
-    });
-  });
-
-  it("retries reads on 429 with Retry-After but never retries a post", async () => {
-    const reads = mockFetch(
-      (_, index): Reply =>
-        index === 0
-          ? {
-              status: 429,
-              headers: { "retry-after": "3" },
-              json: { ok: false, error: "ratelimited" },
-            }
-          : { json: { ok: true } },
-    );
-    const client = new SlackClient({
-      baseUrl: "https://slack.test",
-      botToken: secret(TOKEN),
-      http: reads.http,
-    });
-    await expect(
-      client.read("conversations.history", { channel: "C1" }, undefined),
-    ).resolves.toEqual({ ok: true });
-    expect(reads.sleeps).toEqual([3000]);
-
-    const posts = mockFetch(() => ({ status: 429, headers: { "retry-after": "1" } }));
-    const writer = new SlackClient({
-      baseUrl: "https://slack.test",
-      botToken: secret(TOKEN),
-      http: posts.http,
-    });
-    await expect(
-      writer.write("chat.postMessage", { channel: "C1", text: "x" }, undefined),
-    ).rejects.toMatchObject({ status: 429, code: "ratelimited" });
-    expect(posts.requests).toHaveLength(1);
-  });
-});
-
-describe("Slack tools", () => {
-  it("are exactly the slack-api profile", () => {
-    const { tools } = setup(() => ({ json: { ok: true } }));
-    expect([...tools.keys()].sort()).toEqual(Object.keys(SLACK_PROFILE.tools).sort());
-  });
-
-  it("list_channels projects channels and filters by name", async () => {
-    const channels: JsonObject[] = [
-      {
-        id: "C1",
-        name: "billing",
-        is_private: false,
-        is_member: true,
-        num_members: 4,
-        topic: { value: "Refunds" },
-        purpose: { value: "" },
-      },
-      { id: "C2", name: "random", is_private: false, is_member: false },
-    ];
-    const { run, call } = setup(() => ({
-      json: { ok: true, channels, response_metadata: { next_cursor: "" } },
-    }));
-    const result = await run("list_channels", {
-      name_contains: "#bill",
-      include_private: false,
-      limit: 200,
-    });
-    expect(call()).toEqual({
-      method: "/prefix/api/conversations.list",
-      form: { types: "public_channel", exclude_archived: "true", limit: "200" },
-    });
-    expect(result).toEqual({
-      channels: [
-        {
-          id: "C1",
-          name: "billing",
-          is_private: false,
-          is_member: true,
-          num_members: 4,
-          topic: "Refunds",
-        },
-      ],
-      next_cursor: null,
-    });
-  });
-
-  it("read_channel converts the time window to Slack timestamps", async () => {
-    const { run, call } = setup(() => ({
-      json: {
-        ok: true,
-        has_more: true,
-        messages: [
-          {
-            ts: "1790000000.000100",
-            user: "U1",
-            text: "refund?",
-            thread_ts: "1790000000.000100",
-            reply_count: 2,
-            blocks: [],
-          },
-        ],
-        response_metadata: { next_cursor: "abc" },
-      },
-    }));
-    const result = await run("read_channel", { channel: "C1", after: "2026-09-01", limit: 30 });
-    expect(call().form).toEqual({
-      channel: "C1",
-      oldest: String(Date.UTC(2026, 8, 1) / 1000),
-      limit: "30",
-    });
-    expect(result).toEqual({
-      messages: [
-        {
-          ts: "1790000000.000100",
-          time: "2026-09-21T14:13:20.000Z",
-          user: "U1",
-          text: "refund?",
-          thread_ts: "1790000000.000100",
-          reply_count: 2,
-        },
-      ],
-      has_more: true,
-      next_cursor: "abc",
-    });
-  });
-
-  it("read_thread reads replies of a parent ts", async () => {
-    const { run, call } = setup(() => ({ json: { ok: true, messages: [] } }));
-    await run("read_thread", { channel: "C1", thread_ts: "1790000000.000100", limit: 50 });
-    expect(call()).toEqual({
-      method: "/prefix/api/conversations.replies",
-      form: { channel: "C1", ts: "1790000000.000100", limit: "50" },
-    });
-  });
-
-  it("find_user looks up an id, or searches users.list page by page", async () => {
-    const byId = setup(() => ({
-      json: {
-        ok: true,
-        user: {
-          id: "U1",
-          name: "ana",
-          real_name: "Ana Diaz",
-          profile: { email: "ana@kestrel.test", display_name: "ana" },
-        },
-      },
-    }));
-    await expect(byId.run("find_user", { user_id: "U1" })).resolves.toEqual({
-      users: [
-        {
-          id: "U1",
-          name: "ana",
-          real_name: "Ana Diaz",
-          display_name: "ana",
-          email: "ana@kestrel.test",
-        },
-      ],
-      complete: true,
-    });
-    expect(byId.call().method).toBe("/prefix/api/users.info");
-
-    const pages: Reply[] = [
-      {
-        json: {
-          ok: true,
-          members: [{ id: "U1", name: "bo", profile: { email: "bo@kestrel.test" } }],
-          response_metadata: { next_cursor: "p2" },
-        },
-      },
-      {
-        json: {
-          ok: true,
-          members: [{ id: "U2", name: "ana", profile: { email: "Ana@Kestrel.test" } }],
-          response_metadata: { next_cursor: "" },
-        },
-      },
-    ];
-    const search = setup((index) => pages[index] ?? { json: { ok: true } });
-    const result = await search.run("find_user", { query: "ANA@" });
-    expect(at(result, "users")).toEqual([{ id: "U2", name: "ana", email: "Ana@Kestrel.test" }]);
-    expect(at(result, "complete")).toBe(true);
-    expect(search.call(1).form).toEqual({ limit: "200", cursor: "p2" });
-
-    const neither = setup(() => ({ json: { ok: true } }));
-    await expect(neither.run("find_user", {})).rejects.toMatchObject({ code: "invalid_request" });
-    expect(neither.mock.requests).toHaveLength(0);
-  });
-
-  it("post_message posts once without link unfurling", async () => {
-    const { run, call, mock } = setup(() => ({
-      json: { ok: true, channel: "C1", ts: "1790000000.000200" },
-    }));
-    await expect(
-      run("post_message", {
-        channel: "Billing",
-        text: "Refunded ch_2",
-        thread_ts: "1790000000.000100",
-      }),
-    ).resolves.toEqual({
-      channel: "C1",
-      ts: "1790000000.000200",
-      time: "2026-09-21T14:13:20.000Z",
-    });
-    expect(call()).toEqual({
-      method: "/prefix/api/chat.postMessage",
-      form: {
-        channel: "#billing",
-        text: "Refunded ch_2",
-        thread_ts: "1790000000.000100",
-        unfurl_links: "false",
-        unfurl_media: "false",
-      },
-    });
-    expect(mock.requests).toHaveLength(1);
-  });
-
-  it("add_reaction treats an existing reaction as done", async () => {
-    const added = setup(() => ({ json: { ok: true } }));
-    await expect(
-      added.run("add_reaction", {
-        channel: "C1",
-        timestamp: "1790000000.000100",
-        name: "white_check_mark",
-      }),
-    ).resolves.toEqual({ added: true, already_reacted: false });
-    const again = setup(() => ({ json: { ok: false, error: "already_reacted" } }));
-    await expect(
-      again.run("add_reaction", {
-        channel: "C1",
-        timestamp: "1790000000.000100",
-        name: "white_check_mark",
-      }),
-    ).resolves.toEqual({ added: false, already_reacted: true });
-    const failing = setup(() => ({ json: { ok: false, error: "invalid_name" } }));
-    await expect(
-      failing.run("add_reaction", { channel: "C1", timestamp: "1790000000.000100", name: "nope" }),
-    ).rejects.toMatchObject({ code: "invalid_name" });
+      postedChannel({ channel: "C0BILLING01" }, ok({ ok: true, channel: "C0BILLING01" })),
+    ).toBeNull();
+    expect(
+      postedChannel({ channel: "#billing" }, { successful: false, data: { channel: "C0X12" } }),
+    ).toBeNull();
+    expect(postedChannel({ channel: "#billing" }, ok({ ok: false, channel: "C0X12" }))).toBeNull();
   });
 });
 
 describe("classifySlack", () => {
   it("classifies reads as read and reactions as internal_write", () => {
-    for (const name of ["list_channels", "read_channel", "read_thread", "find_user"]) {
-      expect(classifySlack(name, {}, SETTINGS)?.actionClass).toBe("read");
+    for (const spec of Object.values(SLACK_PROFILE.tools)) {
+      if (spec.baseClass !== "read") continue;
+      expect(classifySlack(spec.name, {}, SETTINGS)).toEqual({
+        actionClass: "read",
+        operation: spec.operation,
+        title: spec.title,
+      });
     }
-    expect(classifySlack("add_reaction", {}, SETTINGS)).toEqual({
+    expect(
+      classifySlack(
+        "SLACK_ADD_REACTION_TO_AN_ITEM",
+        { channel: "C0BILLING01", timestamp: "1790604312.000200", name: ":white_check_mark:" },
+        SETTINGS,
+      ),
+    ).toEqual({
       actionClass: "internal_write",
       operation: "slack.reactions.add",
       title: "Add reaction in Slack",
-    });
-  });
-
-  it("posts to allowed channels as internal_write, however they are written", () => {
-    for (const channel of ["#billing", "billing", "#Billing"]) {
-      expect(classifySlack("post_message", { channel, text: "Refunded ch_2" }, SETTINGS)).toEqual({
-        actionClass: "internal_write",
-        operation: "slack.chat.post_message",
-        title: "Post to #billing in Slack",
-        details: {
-          consequence: "Post a message to #billing in Slack",
-          facts: [
-            { label: "Channel", value: "#billing" },
-            { label: "Message", value: "Refunded ch_2" },
-          ],
-          recipients: ["#billing"],
-        },
-      });
-    }
-  });
-
-  it("posts anywhere else, or to everyone, as outbound", () => {
-    expect(
-      classifySlack("post_message", { channel: "#general", text: "hi" }, SETTINGS),
-    ).toMatchObject({
-      actionClass: "outbound",
-      title: "Post to #general in Slack",
       details: {
-        recipients: ["#general"],
-        facts: expect.arrayContaining([{ label: "Allowed channel", value: "No" }]),
+        consequence: "React with :white_check_mark: to a message in C0BILLING01",
+        facts: [
+          { label: "Channel", value: "C0BILLING01 (its name was not read in this run)" },
+          { label: "Message", value: "1790604312.000200" },
+          { label: "Reaction", value: ":white_check_mark:" },
+        ],
+        recordIds: ["1790604312.000200"],
       },
     });
-    expect(
-      classifySlack("post_message", { channel: "C0123ABC", text: "hi" }, SETTINGS),
-    ).toMatchObject({
-      actionClass: "outbound",
-      title: "Post to C0123ABC in Slack",
-    });
-    expect(
-      classifySlack(
-        "post_message",
-        { channel: "C0123ABC", text: "hi" },
-        { ...SETTINGS, allowedSlackChannels: ["C0123ABC"] },
-      )?.actionClass,
-    ).toBe("internal_write");
-    for (const text of ["<!channel> refunds done", "heads up @here", "<!everyone|everyone>"]) {
-      expect(classifySlack("post_message", { channel: "#billing", text }, SETTINGS)).toMatchObject({
-        actionClass: "outbound",
-        details: { consequence: "Post a message to #billing in Slack, notifying everyone" },
-      });
-    }
-    expect(
-      classifySlack("post_message", { channel: "#billing", text: "mail me@here.test" }, SETTINGS)
-        ?.actionClass,
-    ).toBe("internal_write");
-    expect(
-      classifySlack(
-        "post_message",
-        { channel: "#billing", text: "done", thread_ts: "1790000000.000100" },
-        SETTINGS,
-      )?.details?.consequence,
-    ).toBe("Post a message in a thread in #billing in Slack");
   });
 
-  it("denies unknown tools and invalid posts", () => {
-    expect(classifySlack("chat_delete", {}, SETTINGS)).toBeNull();
-    expect(classifySlack("post_message", { channel: "#billing" }, SETTINGS)).toBeNull();
-    expect(classifySlack("post_message", { channel: "#billing", text: "" }, SETTINGS)).toBeNull();
+  it("posts to an allowed channel as internal_write, however its name is written", () => {
+    for (const channel of ["#billing", "billing", "#Billing", "sales-ops"]) {
+      expect(
+        post({ channel, markdown_text: "Refunded the duplicate." })?.actionClass,
+        channel,
+      ).toBe("internal_write");
+    }
     expect(
-      classifySlack("post_message", { channel: "bad channel", text: "x" }, SETTINGS),
+      post({ channel: "billing", markdown_text: "Refunded **$490.00**.\n- Harbor & Pine" }),
+    ).toEqual({
+      actionClass: "internal_write",
+      operation: "slack.chat.post_message",
+      title: "Post to #billing in Slack",
+      details: {
+        consequence: "Post a message to #billing in Slack",
+        facts: [
+          { label: "Channel", value: "#billing" },
+          { label: "Message", value: "Refunded **$490.00**.\n- Harbor & Pine" },
+        ],
+        recipients: ["#billing"],
+      },
+    });
+  });
+
+  it("posts anywhere else, to everyone, or as a direct message as outbound", () => {
+    const general = post({ channel: "general", markdown_text: "hello" });
+    expect(general).toMatchObject({
+      actionClass: "outbound",
+      title: "Post to #general in Slack",
+      details: { facts: expect.arrayContaining([{ label: "Allowed channel", value: "No" }]) },
+    });
+    const everyone = post({ channel: "#billing", markdown_text: "<!channel> refunds are done" });
+    expect(everyone).toMatchObject({
+      actionClass: "outbound",
+      details: {
+        consequence: "Post a message to #billing in Slack, notifying everyone",
+        facts: expect.arrayContaining([
+          { label: "Notifies", value: "Everyone in the channel or group" },
+        ]),
+      },
+    });
+    const direct = classifySlack(
+      "SLACK_SEND_MESSAGE",
+      { channel: "D0MAYA00001", markdown_text: "Refunded." },
+      { ...SETTINGS, allowedSlackChannels: [...SETTINGS.allowedSlackChannels] },
+    );
+    expect(direct).toMatchObject({
+      actionClass: "outbound",
+      details: { facts: expect.arrayContaining([{ label: "Direct message", value: "Yes" }]) },
+    });
+    const thread = post({
+      channel: "#billing",
+      markdown_text: "Done.",
+      thread_ts: "1790604312.000200",
+      reply_broadcast: true,
+    });
+    expect(thread).toMatchObject({
+      actionClass: "internal_write",
+      details: {
+        consequence: "Post a message in a thread in #billing in Slack",
+        facts: expect.arrayContaining([
+          { label: "In thread", value: "1790604312.000200, also shown in the channel" },
+        ]),
+      },
+    });
+  });
+
+  it("asks for a channel id it cannot name, unless the allowlist names that id", () => {
+    expect(post({ channel: "C0BILLING01", markdown_text: "x" })).toMatchObject({
+      actionClass: "outbound",
+      title: "Post to C0BILLING01 in Slack",
+      details: {
+        facts: expect.arrayContaining([
+          { label: "Channel", value: "C0BILLING01 (its name was not read in this run)" },
+        ]),
+      },
+    });
+    const byId: ClassifierSettings = { ...SETTINGS, allowedSlackChannels: ["C0BILLING01"] };
+    expect(
+      classifySlack("SLACK_SEND_MESSAGE", { channel: "C0BILLING01", markdown_text: "x" }, byId)
+        ?.actionClass,
+    ).toBe("internal_write");
+  });
+
+  it("denies unknown tools, Block Kit posts and posts without text", () => {
+    expect(classifySlack("SLACK_DELETE_CHANNEL", { channel: "C0X12" }, SETTINGS)).toBeNull();
+    expect(classifySlack("post_message", { channel: "#billing", text: "x" }, SETTINGS)).toBeNull();
+    expect(post({ channel: "#billing" })).toBeNull();
+    expect(
+      post({ channel: "#billing", markdown_text: "x", blocks: [{ type: "divider" }] }),
+    ).toBeNull();
+    expect(post({ markdown_text: "x" })).toBeNull();
+    expect(
+      classifySlack("SLACK_ADD_REACTION_TO_AN_ITEM", { channel: "C0X12", name: "eyes" }, SETTINGS),
     ).toBeNull();
   });
 });
 
-describe("Slack resolution and probe", () => {
-  it("requires a bot token", () => {
-    expect(resolveSlack(testEnv())).toEqual({
-      status: "not_configured",
-      missing: ["SLACK_BOT_TOKEN"],
-    });
-    expect(resolveSlack(testEnv({ slack: { botToken: secret("xoxp-user-token") } }))).toMatchObject(
-      { status: "invalid", problems: [{ variable: "SLACK_BOT_TOKEN" }] },
-    );
+describe("Slack input rules", () => {
+  const issues = (input: JsonObject) =>
+    checkSlackInput("SLACK_SEND_MESSAGE", input).map((issue) => `${issue.path} ${issue.message}`);
+
+  it("accept standard Markdown, user-id mentions, email addresses and broadcasts", () => {
     expect(
-      resolveSlack(
-        testEnv({ slack: { botToken: secret(TOKEN), apiBaseUrl: "http://127.0.0.1:4430" } }),
-      ),
-    ).toMatchObject({
-      status: "configured",
-      connection: { endpointLabel: "127.0.0.1:4430", api: { baseUrl: "http://127.0.0.1:4430" } },
-    });
+      issues({
+        channel: "#revenue",
+        markdown_text:
+          "# Weekly digest\n\n| Deal | Amount |\n|---|---|\n| Solstice | $18,000 |\n\n**Owner:** <@U0MAYA0001>, mail maya@kestrel.test <!here>",
+      }),
+    ).toEqual([]);
   });
 
-  it("probes auth.test and maps token errors", async () => {
-    const ok = mockFetch(() => ({
-      json: { ok: true, team: "Kestrel", team_id: "T0123456789", user: "revenue-desk" },
-    }));
-    await expect(probeSlack(connection, new AbortController().signal, ok.http)).resolves.toEqual({
-      state: "connected",
-      detail: "Connected to Kestrel as revenue-desk.",
-      accountHint: "T01…789",
+  it("refuse mentions that notify nobody, before the post reaches Slack", () => {
+    expect(issues({ channel: "#billing", markdown_text: "Thanks @Sam and <@71001>" })).toEqual([
+      "/markdown_text mentions <@71001>, which is not a Slack user id (U… or W…): find the person with a Slack user search and use their id, or write their name without a mention",
+      "/markdown_text has a plain @Sam, which mentions nobody in Slack: find the person with a Slack user search and write <@USERID>, or write the name without @",
+    ]);
+  });
+
+  it("need the message as markdown_text, never Block Kit", () => {
+    expect(issues({ channel: "#billing" })).toEqual([
+      "/markdown_text is needed: the message itself, as standard Markdown",
+    ]);
+    expect(
+      issues({ channel: "#billing", markdown_text: "x", blocks: [{ type: "section" }] }),
+    ).toEqual([
+      "/blocks is not used by Revenue Desk: write the message as Markdown in markdown_text and leave blocks and fallback_text out",
+    ]);
+    expect(checkSlackInput("SLACK_FIND_USERS", { search_query: "@Sam" })).toEqual([]);
+  });
+});
+
+describe("Slack cards with what the run read (SlackRunMemory)", () => {
+  it("names a channel id from the run's channel search, and allows it when it is allowlisted", () => {
+    const memory = new SlackRunMemory(SETTINGS);
+    memory.record("SLACK_FIND_CHANNELS", { query: "billing" }, CHANNELS, false);
+    const card = memory.refine(
+      "SLACK_SEND_MESSAGE",
+      { channel: "C0BILLING01", markdown_text: "Refunded." },
+      {
+        actionClass: "outbound",
+        operation: "slack.chat.post_message",
+        title: "x",
+        details: { consequence: "x", facts: [] },
+      },
+    );
+    expect(card).toMatchObject({
+      actionClass: "internal_write",
+      title: "Post to #billing in Slack",
+      details: {
+        consequence: "Post a message to #billing in Slack",
+        facts: [
+          { label: "Channel", value: "#billing (C0BILLING01)" },
+          { label: "Message", value: "Refunded." },
+        ],
+        recipients: ["#billing"],
+      },
     });
-    expect(ok.requests[0]?.url.pathname).toBe("/prefix/api/auth.test");
-    const cases: Array<[string, string]> = [
-      ["invalid_auth", "needs_auth"],
-      ["token_revoked", "needs_auth"],
-      ["missing_scope", "needs_auth"],
-      ["token_expired", "expired"],
-      ["fatal_error", "error"],
-    ];
-    for (const [code, state] of cases) {
-      const mock = mockFetch(() => ({ json: { ok: false, error: code } }));
-      await expect(
-        probeSlack(connection, new AbortController().signal, mock.http),
-      ).resolves.toMatchObject({ state });
+    expect(memory.channelByName("billing")?.id).toBe("C0BILLING01");
+  });
+
+  it("asks before posting in a channel shared with another organisation, even an allowlisted one", () => {
+    const memory = new SlackRunMemory({
+      ...SETTINGS,
+      allowedSlackChannels: [...SETTINGS.allowedSlackChannels, "#partners-acme"],
+    });
+    memory.record("SLACK_LIST_ALL_CHANNELS", { limit: 200 }, CHANNELS, false);
+    for (const channel of ["#partners-acme", "C0PARTNERS1"]) {
+      const card = memory.refine(
+        "SLACK_SEND_MESSAGE",
+        { channel, markdown_text: "Invoice sent." },
+        { actionClass: "internal_write", operation: "slack.chat.post_message", title: "x" },
+      );
+      expect(card.actionClass, channel).toBe("outbound");
+      expect(card.details?.facts, channel).toContainEqual({
+        label: "Shared channel",
+        value: "Shared with another organisation: people outside the company read it",
+      });
     }
+  });
+
+  it("learns the id Slack answered a post by name with, and nothing from failures", () => {
+    const memory = new SlackRunMemory(SETTINGS);
+    memory.record(
+      "SLACK_SEND_MESSAGE",
+      { channel: "sales-ops", markdown_text: "Handoff done." },
+      ok({ ok: true, channel: "C0SALESOPS1", ts: "1790604312.000300" }),
+      false,
+    );
+    memory.record(
+      "SLACK_FIND_CHANNELS",
+      { query: "x" },
+      { successful: false, data: { channels: [{ id: "C0GENERAL01", name: "billing" }] } },
+      false,
+    );
+    memory.record("SLACK_LIST_ALL_CHANNELS", {}, CHANNELS, true);
+    expect(memory.channelById("C0SALESOPS1")).toEqual({
+      id: "C0SALESOPS1",
+      name: "sales-ops",
+      externallyShared: false,
+    });
+    expect(memory.channelById("C0GENERAL01")).toBeUndefined();
+    const reaction = memory.refine(
+      "SLACK_ADD_REACTION_TO_AN_ITEM",
+      { channel: "C0SALESOPS1", timestamp: "1790604312.000300", name: "eyes" },
+      { actionClass: "internal_write", operation: "slack.reactions.add", title: "x" },
+    );
+    expect(reaction.details?.consequence).toBe("React with :eyes: to a message in #sales-ops");
+    // Reads are left as they are.
+    const read = {
+      actionClass: "read",
+      operation: "slack.users.find",
+      title: "Find Slack user",
+    } as const;
+    expect(memory.refine("SLACK_FIND_USERS", { search_query: "maya" }, read)).toBe(read);
+  });
+
+  it("keeps a channel shared once it was seen shared", () => {
+    const memory = new SlackRunMemory(SETTINGS);
+    memory.record("SLACK_FIND_CHANNELS", { query: "acme" }, CHANNELS, false);
+    memory.record(
+      "SLACK_SEND_MESSAGE",
+      { channel: "partners-acme", markdown_text: "x" },
+      ok({ ok: true, channel: "C0PARTNERS1", ts: "1.2" }),
+      false,
+    );
+    expect(memory.channelById("C0PARTNERS1")?.externallyShared).toBe(true);
   });
 });

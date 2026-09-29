@@ -197,10 +197,6 @@ export function sandboxEndpointProblems(env: AgentEnv): ConfigProblem[] {
     require("HUBSPOT_API_BASE_URL", env.hubspot.apiBaseUrl);
   }
   if (env.stripe.secretKey !== null) require("STRIPE_API_BASE_URL", env.stripe.apiBaseUrl);
-  if (env.quickbooks.accessToken !== null || env.quickbooks.realmId !== null) {
-    require("QBO_API_BASE_URL", env.quickbooks.apiBaseUrl);
-  }
-  if (env.slack.botToken !== null) require("SLACK_API_BASE_URL", env.slack.apiBaseUrl);
   return problems;
 }
 
@@ -278,16 +274,6 @@ export function loadAgentEnv(
       apiBaseUrl: reader.text("STRIPE_API_BASE_URL") ?? ENV_DEFAULTS.STRIPE_API_BASE_URL,
       apiVersion: reader.text("STRIPE_API_VERSION"),
     },
-    quickbooks: {
-      accessToken: reader.secret("QBO_ACCESS_TOKEN"),
-      realmId: reader.text("QBO_REALM_ID"),
-      apiBaseUrl: reader.text("QBO_API_BASE_URL") ?? ENV_DEFAULTS.QBO_API_BASE_URL,
-      minorVersion: reader.text("QBO_MINOR_VERSION"),
-    },
-    slack: {
-      botToken: reader.secret("SLACK_BOT_TOKEN"),
-      apiBaseUrl: reader.text("SLACK_API_BASE_URL") ?? ENV_DEFAULTS.SLACK_API_BASE_URL,
-    },
   };
 
   const problems = [...reader.problems];
@@ -340,8 +326,6 @@ export function configuredSecrets(env: AgentEnv): string[] {
     env.hubspot.accessToken,
     env.hubspot.mcpToken,
     env.stripe.secretKey,
-    env.quickbooks.accessToken,
-    env.slack.botToken,
   ];
   return secrets.flatMap((secret) => (secret === null ? [] : [secret.reveal()]));
 }

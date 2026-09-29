@@ -61,17 +61,6 @@ describe("a failed check", () => {
 });
 
 describe("a failed call's credential", () => {
-  it("marks QuickBooks expired on a 401, as its check would", () => {
-    const result = connectionFromFailure(
-      "quickbooks",
-      failure("quickbooks", 401, "AuthenticationFailed", "Token expired"),
-    );
-    expect(result?.state).toBe("expired");
-    expect(result?.detail).toMatch(
-      /^QuickBooks Online rejected the access token \(it expires hourly\)\./,
-    );
-  });
-
   it("marks Stripe refused only on a 401, never on one call's 403 or a decline", () => {
     expect(
       connectionFromFailure("stripe", failure("stripe", 401, null, "Invalid API Key"))?.state,
@@ -86,22 +75,15 @@ describe("a failed call's credential", () => {
     expect(connectionFromFailure("stripe", failure("stripe", 500, null, "Oops"))).toBeNull();
   });
 
-  it("marks Slack on a dead token, not on one method's missing scope", () => {
-    expect(
-      connectionFromFailure("slack", failure("slack", 200, "token_expired", "token_expired"))
-        ?.state,
-    ).toBe("expired");
-    expect(
-      connectionFromFailure("slack", failure("slack", 200, "invalid_auth", "invalid_auth"))?.state,
-    ).toBe("needs_auth");
-    expect(connectionFromFailure("slack", failure("slack", 200, "missing_scope", "x"))).toBeNull();
-    expect(
-      connectionFromFailure("slack", failure("slack", 200, "channel_not_found", "x")),
-    ).toBeNull();
-  });
-
-  it("leaves Composio's sign-in to its own check", () => {
+  it("leaves Composio's sign-in to its own check, QuickBooks and Slack included", () => {
     expect(connectionFromFailure("gmail", failure("gmail", 401, null, "Unauthorized"))).toBeNull();
+    // A Composio tool's failure reaches the gateway as the tool's text, with no HTTP status.
+    expect(
+      connectionFromFailure("quickbooks", failure("quickbooks", null, null, "Token expired")),
+    ).toBeNull();
+    expect(
+      connectionFromFailure("slack", failure("slack", null, "token_expired", "token_expired")),
+    ).toBeNull();
     expect(
       connectionFromFailure("hubspot", failure("hubspot", 401, null, "Bad token"))?.state,
     ).toBe("needs_auth");

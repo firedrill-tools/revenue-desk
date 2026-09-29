@@ -1,8 +1,9 @@
 // The server's ConnectionService over the production integrations
 // (createIntegrations) with a fake Composio client: statuses, checks and run
 // plans come from the integrations' registry rules, and Connect goes through
-// the Gmail or Calendar integration's own connector, sharing its Composio
-// session with the checks. Nothing but Connect ever starts a sign-in.
+// each Composio integration's own connector (Gmail, Calendar, QuickBooks,
+// Slack), sharing its Composio session with the checks. Nothing but Connect
+// ever starts a sign-in.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentEnv } from "../../../src/contracts/env.js";
@@ -34,6 +35,12 @@ const CONNECTED_GMAIL: ComposioToolkitState = {
   connection: { isActive: true, connectedAccount: { id: "ca_gmail_000111", status: "ACTIVE" } },
 };
 const UNCONNECTED_CALENDAR: ComposioToolkitState = { slug: "googlecalendar", isNoAuth: false };
+const UNCONNECTED_QUICKBOOKS: ComposioToolkitState = { slug: "quickbooks", isNoAuth: false };
+const CONNECTED_SLACK: ComposioToolkitState = {
+  slug: "slack",
+  isNoAuth: false,
+  connection: { isActive: true, connectedAccount: { id: "ca_slack_000222", status: "ACTIVE" } },
+};
 
 function composioClient(options: { readonly failAuthorize?: string } = {}) {
   const authorize = vi.fn(async (toolkit: string, request?: { callbackUrl?: string }) => {
@@ -43,7 +50,9 @@ function composioClient(options: { readonly failAuthorize?: string } = {}) {
       redirectUrl: `https://connect.composio.test/link/${toolkit}?next=${request?.callbackUrl ?? ""}`,
     };
   });
-  const toolkits = vi.fn(async () => ({ items: [CONNECTED_GMAIL, UNCONNECTED_CALENDAR] }));
+  const toolkits = vi.fn(async () => ({
+    items: [CONNECTED_GMAIL, UNCONNECTED_CALENDAR, UNCONNECTED_QUICKBOOKS, CONNECTED_SLACK],
+  }));
   const session: ComposioSessionLike = {
     sessionId: "trs_1",
     mcp: { url: "https://backend.composio.test/mcp", type: "http", headers: {} },
@@ -109,6 +118,19 @@ describe("ConnectionService over the production integrations", () => {
       state: "needs_auth",
       canConnect: true,
     });
+    // QuickBooks and Slack are Composio toolkits of the same session.
+    expect(connections.get("quickbooks")).toMatchObject({
+      kind: "composio",
+      state: "needs_auth",
+      detail: "QuickBooks Online is not connected. Click Connect in Connections to sign in.",
+      canConnect: true,
+    });
+    expect(connections.get("slack")).toMatchObject({
+      kind: "composio",
+      state: "connected",
+      accountHint: "ca_…222",
+      canConnect: false,
+    });
 
     // The run plan equals the registry's snapshot for the same checks.
     const { plans, snapshot } = connections.plans();
@@ -118,6 +140,11 @@ describe("ConnectionService over the production integrations", () => {
         state: "needs_auth",
         detail: "Google Calendar is not connected. Click Connect in Connections to sign in.",
       },
+      quickbooks: {
+        state: "needs_auth",
+        detail: "QuickBooks Online is not connected. Click Connect in Connections to sign in.",
+      },
+      slack: { state: "connected", detail: "Slack connected" },
     });
     expect(plans).toEqual(expected.plans);
     expect(snapshot).toEqual(expected.connections);
@@ -147,6 +174,23 @@ describe("ConnectionService over the production integrations", () => {
     });
     // One Composio session, shared by the check and Connect: no second session manager.
     expect(fake.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects QuickBooks and Slack through Composio like Gmail and Calendar", async () => {
+    const fake = composioClient();
+    const { connections } = service(fake.client);
+    for (const [integration, toolkit] of [
+      ["quickbooks", "quickbooks"],
+      ["slack", "slack"],
+    ] as const) {
+      const callback = `http://127.0.0.1:4320/connections?connected=${integration}`;
+      expect(await connections.connect(integration, callback)).toEqual({
+        ok: true,
+        redirectUrl: `https://connect.composio.test/link/${toolkit}?next=${callback}`,
+      });
+      expect(fake.authorize).toHaveBeenLastCalledWith(toolkit, { callbackUrl: callback });
+    }
+    expect(fake.authorize).toHaveBeenCalledTimes(2);
   });
 
   it("offers Connect only for configured Composio integrations and reports failures redacted", async () => {

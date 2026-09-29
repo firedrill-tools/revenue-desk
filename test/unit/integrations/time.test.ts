@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  cardTime,
-  zonedFromIso,
-  zonedFromUnix,
-  zonedIso,
-} from "../../../src/integrations/shared/time.js";
+import { cardTime, zonedFromUnix, zonedIso } from "../../../src/integrations/shared/time.js";
 
 // 2026-09-22T13:00:12Z, as Stripe returns it (Unix seconds).
 const SECONDS = 1_790_082_012;
@@ -33,19 +28,6 @@ describe("timestamps in the workspace time zone", () => {
     expect(zonedFromUnix(SECONDS, undefined)).toBe("2026-09-22T13:00:12.000Z");
     expect(zonedFromUnix(SECONDS, "Not/AZone")).toBe("2026-09-22T13:00:12.000Z");
     expect(zonedFromUnix(undefined, "America/New_York")).toBeUndefined();
-  });
-
-  it("re-expresses a provider's own offset, and leaves dates and bad text alone", () => {
-    expect(zonedFromIso("2026-09-28T09:01:22.949-07:00", "America/New_York")).toBe(
-      "2026-09-28T12:01:22.949-04:00",
-    );
-    expect(zonedFromIso("2026-09-28T16:01:22Z", "America/New_York")).toBe(
-      "2026-09-28T12:01:22-04:00",
-    );
-    expect(zonedFromIso("2026-09-28T09:01:22-07:00", undefined)).toBe("2026-09-28T09:01:22-07:00");
-    expect(zonedFromIso("2026-09-28", "America/New_York")).toBe("2026-09-28");
-    expect(zonedFromIso("2026-09-28T09:01:22", "America/New_York")).toBe("2026-09-28T09:01:22");
-    expect(zonedFromIso("soon", "America/New_York")).toBe("soon");
   });
 
   it("shows a card time as date, clock time and zone", () => {

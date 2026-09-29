@@ -48,8 +48,8 @@ test.describe("Revenue Desk in the sandbox", () => {
     await expect(card).toContainText("Send the Gmail draft to dana@harborpine.test");
     await expect(page.locator("[data-status]").first()).toBeVisible();
     // Three or more reads collapse into one line; a source is a system, not a call.
-    await expect(page.getByText(/Checked 4 sources/).first()).toBeVisible();
-    await expect(page.getByText(/6\scalls/).first()).toBeVisible();
+    await expect(page.getByText(/Checked 3 sources/).first()).toBeVisible();
+    await expect(page.getByText(/4\scalls/).first()).toBeVisible();
     await expectAccessible(page);
     await card.getByRole("button", { name: "Approve" }).click();
     await expect(page.getByText(/I replied to Dana/)).toBeVisible({ timeout: 30_000 });

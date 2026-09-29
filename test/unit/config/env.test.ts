@@ -49,8 +49,6 @@ describe("loadAgentEnv", () => {
       baseUrl: "https://backend.composio.dev",
     });
     expect(env.stripe).toMatchObject({ apiBaseUrl: "https://api.stripe.com", allowLive: false });
-    expect(env.quickbooks.apiBaseUrl).toBe("https://sandbox-quickbooks.api.intuit.com");
-    expect(env.slack.apiBaseUrl).toBe("https://slack.com");
     expect(env.hubspot).toEqual({
       accessToken: null,
       apiBaseUrl: null,
@@ -159,7 +157,10 @@ describe("loadAgentEnv", () => {
   });
 
   it("returns a deeply frozen snapshot whose secrets never print", () => {
-    const env = ok({ STRIPE_SECRET_KEY: "sk_test_visible_value", SLACK_BOT_TOKEN: "xoxb-1-2-3" });
+    const env = ok({
+      STRIPE_SECRET_KEY: "sk_test_visible_value",
+      HUBSPOT_ACCESS_TOKEN: "pat-na1-visible",
+    });
     expect(Object.isFrozen(env)).toBe(true);
     expect(Object.isFrozen(env.stripe)).toBe(true);
     expect(Object.isFrozen(env.runtime.policyOverrides)).toBe(true);
@@ -173,7 +174,7 @@ describe("loadAgentEnv", () => {
     ];
     for (const text of printed) {
       expect(text).not.toContain("sk_test_visible_value");
-      expect(text).not.toContain("xoxb-1-2-3");
+      expect(text).not.toContain("pat-na1-visible");
     }
     expect(JSON.stringify(env.stripe)).toContain(REDACTED);
     expect(env.stripe.secretKey?.reveal()).toBe("sk_test_visible_value");
@@ -211,9 +212,6 @@ describe("the AGENT_SANDBOX loopback rule", () => {
     COMPOSIO_USER_ID: "user",
     HUBSPOT_ACCESS_TOKEN: "pat-na1-token",
     STRIPE_SECRET_KEY: "sk_test_key",
-    QBO_ACCESS_TOKEN: "qbo-token",
-    QBO_REALM_ID: "123",
-    SLACK_BOT_TOKEN: "xoxb-token",
   };
 
   it("refuses every configured integration whose endpoint is not loopback", () => {
@@ -221,13 +219,7 @@ describe("the AGENT_SANDBOX loopback rule", () => {
       problems(configured)
         .map((problem) => problem.variable)
         .sort(),
-    ).toEqual([
-      "COMPOSIO_BASE_URL",
-      "HUBSPOT_API_BASE_URL",
-      "QBO_API_BASE_URL",
-      "SLACK_API_BASE_URL",
-      "STRIPE_API_BASE_URL",
-    ]);
+    ).toEqual(["COMPOSIO_BASE_URL", "HUBSPOT_API_BASE_URL", "STRIPE_API_BASE_URL"]);
   });
 
   it("accepts loopback endpoints and ignores unconfigured integrations", () => {
@@ -236,8 +228,6 @@ describe("the AGENT_SANDBOX loopback rule", () => {
       COMPOSIO_BASE_URL: "http://127.0.0.1:4001",
       HUBSPOT_API_BASE_URL: "http://localhost:4002/hubspot",
       STRIPE_API_BASE_URL: "http://[::1]:4003",
-      QBO_API_BASE_URL: "http://127.0.0.1:4004",
-      SLACK_API_BASE_URL: "http://127.0.0.1:4005",
     });
     expect(env.runtime.sandbox).toBe(true);
     expect(ok({ AGENT_SANDBOX: "1" }).runtime.sandbox).toBe(true);
@@ -259,7 +249,7 @@ describe("the AGENT_SANDBOX loopback rule", () => {
 
   it("does not apply outside sandbox mode", () => {
     const env = ok({ ...configured, AGENT_SANDBOX: "0" });
-    expect(sandboxEndpointProblems(env)).toHaveLength(5);
+    expect(sandboxEndpointProblems(env)).toHaveLength(3);
   });
 });
 

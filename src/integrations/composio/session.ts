@@ -3,14 +3,15 @@ import { Composio, type ComposioLogger, type ToolRouterCreateSessionConfig } fro
 import { isLoopbackHost } from "../shared/url.js";
 
 // ---------------------------------------------------------------------------
-// Composio session for Gmail and Google Calendar.
+// Composio session for Gmail, Google Calendar, QuickBooks and Slack.
 //
 // This module is the only place Revenue Desk talks to Composio. It creates a
 // Composio session for one configured user with:
-//   - toolkits restricted to gmail and googlecalendar,
+//   - toolkits restricted to gmail, googlecalendar, quickbooks and slack,
 //   - per-toolkit tool allowlists (below) so only the named operations exist,
 //   - sessionPreset 'direct_tools', so the session's hosted MCP server lists
-//     the real operations (GMAIL_FETCH_EMAILS, ...) instead of router meta-tools,
+//     the real operations (GMAIL_FETCH_EMAILS, QUICKBOOKS_CREATE_INVOICE, ...)
+//     instead of router meta-tools,
 //   - no sandbox or workbench, no in-chat connection management,
 //   - mcp: true, so the session carries its hosted MCP endpoint.
 // It also reports per-toolkit connection state and can produce a Connect link.
@@ -26,17 +27,20 @@ import { isLoopbackHost } from "../shared/url.js";
 // never logged. Use describeEndpoint() for anything that is printed or stored.
 // ---------------------------------------------------------------------------
 
-export const COMPOSIO_TOOLKITS = ["gmail", "googlecalendar"] as const;
+export const COMPOSIO_TOOLKITS = ["gmail", "googlecalendar", "quickbooks", "slack"] as const;
 export type ComposioToolkit = (typeof COMPOSIO_TOOLKITS)[number];
 
 /**
  * How far a tool reaches beyond the signed-in user's own account.
  * - read: no side effects.
- * - draft: changes only the user's own mailbox (drafts, labels).
- * - outbound: can reach other people (sending mail, calendar events that can
- *   carry attendees).
+ * - draft: internal writes (the user's own mailbox: drafts and labels; a
+ *   QuickBooks customer; a Slack reaction).
+ * - outbound: can reach other people or move money (sending mail, calendar
+ *   events that can carry attendees, Slack posts, QuickBooks invoices and
+ *   payments).
  * This is only the exposure level for a session. The approval policy
- * classifies each call separately (for example by inspecting attendees).
+ * classifies each call separately (for example by inspecting attendees, the
+ * Slack channel or the amount).
  */
 export type ComposioToolAccess = "read" | "draft" | "outbound";
 
@@ -49,9 +53,15 @@ export interface ComposioAllowlistEntry {
 
 /**
  * Explicit allowlists (docs/ARCHITECTURE.md §2). Every slug was checked against
- * the live Composio catalog on 2026-09-28 (none deprecated). Exact input
- * schemas are captured in test/fixtures/surfaces/composio-direct.json by
+ * the live Composio catalog (Gmail and Calendar on 2026-09-28, QuickBooks and
+ * Slack on 2026-09-29; none deprecated). Exact input schemas are captured in
+ * test/fixtures/surfaces/composio-direct.json by
  * scripts/surfaces/capture-composio-direct.ts.
+ *
+ * QuickBooks: Composio's toolkit (version 20260721_00) has no tool that
+ * emails or voids an invoice, so neither is offered; an invoice is sent to
+ * its billing contact through Gmail. SLACK_CHAT_POST_MESSAGE is deprecated in
+ * favour of SLACK_SEND_MESSAGE.
  */
 export const COMPOSIO_ALLOWLISTS: Readonly<
   Record<ComposioToolkit, readonly ComposioAllowlistEntry[]>
@@ -72,6 +82,28 @@ export const COMPOSIO_ALLOWLISTS: Readonly<
     { slug: "GOOGLECALENDAR_FIND_EVENT", access: "read" },
     { slug: "GOOGLECALENDAR_CREATE_EVENT", access: "outbound" },
     { slug: "GOOGLECALENDAR_UPDATE_EVENT", access: "outbound" },
+  ],
+  quickbooks: [
+    { slug: "QUICKBOOKS_GET_COMPANY_INFO", access: "read" },
+    { slug: "QUICKBOOKS_QUERY_CUSTOMERS", access: "read" },
+    { slug: "QUICKBOOKS_READ_CUSTOMER", access: "read" },
+    { slug: "QUICKBOOKS_QUERY_INVOICES", access: "read" },
+    { slug: "QUICKBOOKS_READ_INVOICE", access: "read" },
+    { slug: "QUICKBOOKS_QUERY_PAYMENTS", access: "read" },
+    { slug: "QUICKBOOKS_QUERY_ITEMS", access: "read" },
+    { slug: "QUICKBOOKS_GET_AGED_RECEIVABLES_REPORT", access: "read" },
+    { slug: "QUICKBOOKS_CREATE_CUSTOMER", access: "draft" },
+    { slug: "QUICKBOOKS_CREATE_INVOICE", access: "outbound" },
+    { slug: "QUICKBOOKS_CREATE_PAYMENT", access: "outbound" },
+  ],
+  slack: [
+    { slug: "SLACK_FIND_CHANNELS", access: "read" },
+    { slug: "SLACK_LIST_ALL_CHANNELS", access: "read" },
+    { slug: "SLACK_FETCH_CONVERSATION_HISTORY", access: "read" },
+    { slug: "SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION", access: "read" },
+    { slug: "SLACK_FIND_USERS", access: "read" },
+    { slug: "SLACK_ADD_REACTION_TO_AN_ITEM", access: "draft" },
+    { slug: "SLACK_SEND_MESSAGE", access: "outbound" },
   ],
 };
 
@@ -100,7 +132,7 @@ export function allowedTools(
 }
 
 export interface SessionSelection {
-  /** Defaults to every Composio toolkit (gmail and googlecalendar). */
+  /** Defaults to every Composio toolkit (gmail, googlecalendar, quickbooks and slack). */
   toolkits?: readonly ComposioToolkit[];
   /** Defaults to DEFAULT_COMPOSIO_ACCESS ('draft'). */
   access?: ComposioToolAccess;
@@ -260,6 +292,16 @@ export interface ToolkitConnectionStatus {
 const TOOLKIT_LABEL: Record<ComposioToolkit, string> = {
   gmail: "Gmail",
   googlecalendar: "Google Calendar",
+  quickbooks: "QuickBooks Online",
+  slack: "Slack",
+};
+
+/** Whose sign-in Composio holds for a toolkit, for the Connections screen. */
+const SIGN_IN: Record<ComposioToolkit, string> = {
+  gmail: "Google",
+  googlecalendar: "Google",
+  quickbooks: "Intuit",
+  slack: "Slack",
 };
 
 export function maskAccountId(id: string): string {
@@ -318,7 +360,7 @@ export function toConnectionStatus(
       state: "expired",
       accountStatus,
       accountHint,
-      detail: `${label}'s Google sign-in expired. Click Connect in Connections to sign in again.`,
+      detail: `${label}'s ${SIGN_IN[toolkit]} sign-in expired. Click Connect in Connections to sign in again.`,
     };
   }
   return {
@@ -326,7 +368,7 @@ export function toConnectionStatus(
     state: "needs_auth",
     accountStatus,
     accountHint,
-    detail: `${label}'s Google sign-in is ${accountStatus}. Click Connect in Connections to finish it.`,
+    detail: `${label}'s ${SIGN_IN[toolkit]} sign-in is ${accountStatus}. Click Connect in Connections to finish it.`,
   };
 }
 
@@ -366,7 +408,7 @@ export interface ComposioSessionManagerOptions {
   logger?: ComposioLogger;
   /**
    * The toolkits and access level the app uses. Methods use it unless a call
-   * passes its own selection. Defaults to both toolkits at access 'draft'.
+   * passes its own selection. Defaults to every toolkit at access 'draft'.
    */
   selection?: SessionSelection;
   /** Injected client (tests). Defaults to createComposioClient(). */

@@ -2,7 +2,9 @@
  * Tool calls as the model makes them: model-visible names
  * (`mcp__<integration>__<tool>`, docs/ARCHITECTURE.md §2) and argument names
  * from the offered schemas: the captured Composio and HubSpot 0.4.0 surfaces,
- * and the zod shapes of src/integrations/{stripe,quickbooks,slack}/schemas.ts.
+ * and the zod shapes of src/integrations/stripe/schemas.ts. QuickBooks and
+ * Slack are Composio toolkits the local fakes do not run, so no scenario
+ * calls them.
  *
  * This is the only file that knows argument names. When an integration's
  * schema changes, the scenario responder reports the drifted call (it checks
@@ -201,65 +203,4 @@ export const stripe = {
     },
     options?: Options,
   ): ScriptedCall => call(id, "mcp__stripe__create_refund", input(args), options),
-};
-
-// --- QuickBooks ------------------------------------------------------------------------
-
-type InvoiceLine = {
-  description?: string;
-  quantity?: number;
-  unit_price_minor: number;
-  item_id?: string;
-};
-
-export const quickbooks = {
-  companyInfo: (id: string): ScriptedCall => call(id, "mcp__quickbooks__get_company_info", {}),
-  findCustomers: (id: string, args: { name?: string; email?: string }): ScriptedCall =>
-    call(id, "mcp__quickbooks__find_customers", input(args)),
-  listInvoices: (
-    id: string,
-    args: {
-      customer_id?: string;
-      status?: "open" | "paid" | "all";
-      due_before?: string;
-      issued_from?: string;
-      as_of?: string;
-    },
-  ): ScriptedCall => call(id, "mcp__quickbooks__list_invoices", input(args)),
-  listPayments: (
-    id: string,
-    args: { customer_id?: string; received_from?: string },
-  ): ScriptedCall => call(id, "mcp__quickbooks__list_payments", input(args)),
-  createCustomer: (
-    id: string,
-    args: {
-      display_name: string;
-      company_name?: string;
-      given_name?: string;
-      family_name?: string;
-      email?: string;
-    },
-  ): ScriptedCall => call(id, "mcp__quickbooks__create_customer", input(args)),
-  createInvoice: (
-    id: string,
-    args: { customer_id: string; lines: InvoiceLine[]; due_date?: string; customer_memo?: string },
-  ): ScriptedCall =>
-    call(
-      id,
-      "mcp__quickbooks__create_invoice",
-      input({ ...args, lines: args.lines.map((line) => input(line)) }),
-    ),
-  sendInvoice: (id: string, args: { invoice_id: string; send_to?: string }): ScriptedCall =>
-    call(id, "mcp__quickbooks__send_invoice", input(args)),
-};
-
-// --- Slack --------------------------------------------------------------------------------
-
-export const slack = {
-  postMessage: (
-    id: string,
-    args: { channel: string; text: string; thread_ts?: string },
-  ): ScriptedCall => call(id, "mcp__slack__post_message", input(args)),
-  readChannel: (id: string, args: { channel: string; limit?: number }): ScriptedCall =>
-    call(id, "mcp__slack__read_channel", input(args)),
 };

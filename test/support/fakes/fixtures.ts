@@ -57,7 +57,6 @@ const companySchema = z.object({
       domain: z.string(),
       contact: z.object({ name: z.string(), email: z.string(), title: z.string() }),
       stripeCustomer: z.string().nullable(),
-      quickbooksCustomer: z.string().nullable(),
       hubspotCompany: z.string().nullable(),
       hubspotContact: z.string().nullable(),
       story: z.string(),
@@ -175,95 +174,6 @@ const stripeSchema = z.object({
 });
 export type StripeFixture = z.infer<typeof stripeSchema>;
 
-// --- quickbooks.json -------------------------------------------------------------
-
-const ref = z.object({ value: z.string(), name: z.string().optional() });
-const address = z.object({
-  Line1: z.string(),
-  City: z.string(),
-  CountrySubDivisionCode: z.string(),
-  PostalCode: z.string(),
-  Country: z.string(),
-});
-
-const quickbooksSchema = z.object({
-  realmId: z.string(),
-  timezone: z.string(),
-  queryPageCap: z.number().int().positive(),
-  nextDocNumber: z.number().int(),
-  companyInfo: z.object({
-    CompanyName: z.string(),
-    LegalName: z.string(),
-    CompanyAddr: address,
-    CustomerCommunicationAddr: address,
-    Email: z.object({ Address: z.string() }),
-    WebAddr: z.object({ URI: z.string() }),
-    PrimaryPhone: z.object({ FreeFormNumber: z.string() }),
-    CompanyStartDate: isoDate,
-    FiscalYearStartMonth: z.string(),
-    Country: z.string(),
-    SupportedLanguages: z.string(),
-  }),
-  terms: z.array(z.object({ Id: z.string(), Name: z.string(), DueDays: z.number().int() })),
-  items: z.array(
-    z.object({ Id: z.string(), Name: z.string(), Description: z.string(), UnitPrice: z.number() }),
-  ),
-  customers: z.array(
-    z.object({
-      Id: z.string(),
-      DisplayName: z.string(),
-      CompanyName: z.string(),
-      GivenName: z.string(),
-      FamilyName: z.string(),
-      PrimaryEmailAddr: z.object({ Address: z.string() }),
-      BillAddr: address,
-      SalesTermRef: z.object({ value: z.string() }),
-      CreateTime: z.string(),
-    }),
-  ),
-  invoices: z.array(
-    z.object({
-      Id: z.string(),
-      DocNumber: z.string(),
-      TxnDate: isoDate,
-      DueDate: isoDate,
-      CustomerRef: ref,
-      BillEmail: z.object({ Address: z.string() }),
-      SalesTermRef: ref,
-      EmailStatus: z.enum(["NotSet", "NeedToSend", "EmailSent"]),
-      CreateTime: z.string(),
-      PrivateNote: z.string().optional(),
-      Line: z.array(
-        z.object({
-          Description: z.string(),
-          Amount: z.number(),
-          ItemRef: ref,
-          Qty: z.number(),
-          UnitPrice: z.number(),
-        }),
-      ),
-    }),
-  ),
-  payments: z.array(
-    z.object({
-      Id: z.string(),
-      TxnDate: isoDate,
-      CustomerRef: ref,
-      TotalAmt: z.number(),
-      PaymentRefNum: z.string(),
-      PrivateNote: z.string().optional(),
-      CreateTime: z.string(),
-      Line: z.array(
-        z.object({
-          Amount: z.number(),
-          LinkedTxn: z.array(z.object({ TxnId: z.string(), TxnType: z.literal("Invoice") })),
-        }),
-      ),
-    }),
-  ),
-});
-export type QuickBooksFixture = z.infer<typeof quickbooksSchema>;
-
 // --- hubspot.json ------------------------------------------------------------------
 
 export const HUBSPOT_OBJECT_TYPES = ["contacts", "companies", "deals", "notes", "tasks"] as const;
@@ -379,73 +289,33 @@ export type CalendarFixture = z.infer<typeof calendarSchema>;
 const connectionStatus = z.enum(["ACTIVE", "INITIATED", "EXPIRED", "FAILED", "INACTIVE"]);
 export type ComposioConnectionStatus = z.infer<typeof connectionStatus>;
 
+const composioConnection = z.object({
+  id: z.string(),
+  status: connectionStatus,
+  authConfigId: z.string(),
+});
+
 const composioSchema = z.object({
   userId: z.string(),
+  /** A toolkit without an entry has no connected account (needs_auth). */
   connections: z.object({
-    gmail: z.object({ id: z.string(), status: connectionStatus, authConfigId: z.string() }),
-    googlecalendar: z.object({
-      id: z.string(),
-      status: connectionStatus,
-      authConfigId: z.string(),
-    }),
+    gmail: composioConnection.optional(),
+    googlecalendar: composioConnection.optional(),
+    quickbooks: composioConnection.optional(),
+    slack: composioConnection.optional(),
   }),
 });
 export type ComposioFixture = z.infer<typeof composioSchema>;
-
-// --- slack.json ------------------------------------------------------------------------
-
-const slackSchema = z.object({
-  team: z.object({ id: z.string(), name: z.string(), domain: z.string(), url: z.string() }),
-  bot: z.object({
-    userId: z.string(),
-    botId: z.string(),
-    name: z.string(),
-    scopes: z.array(z.string()),
-  }),
-  users: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      realName: z.string(),
-      email: z.string(),
-      title: z.string(),
-    }),
-  ),
-  channels: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      isPrivate: z.boolean(),
-      isArchived: z.boolean(),
-      botIsMember: z.boolean(),
-      created: z.number().int(),
-      topic: z.string(),
-      members: z.array(z.string()),
-    }),
-  ),
-  messages: z.array(
-    z.object({
-      channel: z.string(),
-      ts: z.string().regex(/^\d{10}\.\d{6}$/),
-      user: z.string(),
-      text: z.string(),
-      threadTs: z.string().optional(),
-    }),
-  ),
-});
-export type SlackFixture = z.infer<typeof slackSchema>;
 
 // --- All of them ------------------------------------------------------------------------
 
 export interface BusinessFixtures {
   readonly company: CompanyFixture;
   readonly stripe: StripeFixture;
-  readonly quickbooks: QuickBooksFixture;
   readonly hubspot: HubSpotFixture;
   readonly gmail: GmailFixture;
   readonly calendar: CalendarFixture;
   readonly composio: ComposioFixture;
-  readonly slack: SlackFixture;
 }
 
 function load<T>(file: string, schema: z.ZodType<T>): T {
@@ -462,11 +332,9 @@ export function loadBusinessFixtures(): BusinessFixtures {
   return {
     company: load("company.json", companySchema),
     stripe: load("stripe.json", stripeSchema),
-    quickbooks: load("quickbooks.json", quickbooksSchema),
     hubspot: load("hubspot.json", hubspotSchema),
     gmail: load("gmail.json", gmailSchema),
     calendar: load("google-calendar.json", calendarSchema),
     composio: load("composio.json", composioSchema),
-    slack: load("slack.json", slackSchema),
   };
 }

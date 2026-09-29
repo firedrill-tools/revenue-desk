@@ -1,6 +1,8 @@
 // What each kind of integration offers beyond the frozen IntegrationDefinition:
-// the in-process tools of an API integration, the upstream MCP server of
-// HubSpot, and the Composio connector of Gmail and Calendar.
+// the in-process tools of an API integration (Stripe). The upstream MCP
+// server of HubSpot and the Composio connector of Gmail, Calendar,
+// QuickBooks and Slack have their own shapes (hubspot/definition.ts,
+// composio/integration.ts).
 
 import type {
   ApiIntegrationId,

@@ -1,7 +1,9 @@
 /**
  * Starts every local fake with the Kestrel Analytics fixtures and produces
  * the ordinary integration variables (docs/ARCHITECTURE.md §3) that point
- * Revenue Desk at them. Nothing here is reachable from product code: the
+ * Revenue Desk at them. QuickBooks and Slack are Composio toolkits with no
+ * local fake: the Composio fake lists their captured tools and reports them
+ * not connected, as Composio does for a toolkit nobody signed in to. Nothing here is reachable from product code: the
  * product only ever sees base URLs and credentials, exactly as it would for
  * the real services.
  */
@@ -11,8 +13,6 @@ import { type ClockMode, createClock, type FakeClock } from "./core/clock.js";
 import { FAKE_CREDENTIALS } from "./credentials.js";
 import { type BusinessFixtures, loadBusinessFixtures } from "./fixtures.js";
 import { HubSpotFake } from "./hubspot/index.js";
-import { QuickBooksFake } from "./quickbooks/index.js";
-import { SlackFake } from "./slack.js";
 import { StripeFake } from "./stripe/index.js";
 
 export type HubSpotMode =
@@ -28,8 +28,6 @@ export interface StartFakesOptions {
   readonly prefixes?: boolean;
   /** How the product reaches HubSpot. Default "stdio". */
   readonly hubspot?: HubSpotMode;
-  /** Rows per QuickBooks query page (the fixture's cap by default). */
-  readonly quickbooksPageCap?: number;
   /** Fixtures to serve; a fresh copy of the business fixtures by default. */
   readonly fixtures?: BusinessFixtures;
 }
@@ -41,12 +39,10 @@ export interface Fakes {
   readonly fixtures: BusinessFixtures;
   readonly clock: FakeClock;
   readonly stripe: StripeFake;
-  readonly quickbooks: QuickBooksFake;
-  readonly slack: SlackFake;
   readonly hubspot: HubSpotFake;
   readonly composio: ComposioFake;
   readonly hubspotMode: HubSpotMode;
-  /** COMPOSIO_*, HUBSPOT_*, STRIPE_*, QBO_* and SLACK_* for the product. */
+  /** COMPOSIO_*, HUBSPOT_* and STRIPE_* for the product. */
   env(): IntegrationEnv;
   close(): Promise<void>;
 }
@@ -62,27 +58,12 @@ export async function startFakes(options: StartFakesOptions = {}): Promise<Fakes
     return fake;
   };
   try {
-    const [stripe, quickbooks, slack, hubspot, composio] = await Promise.all([
+    const [stripe, hubspot, composio] = await Promise.all([
       StripeFake.start({
         fixture: fixtures.stripe,
         clock,
         secretKey: FAKE_CREDENTIALS.stripeSecretKey,
         ...prefix("stripe"),
-      }).then(track),
-      QuickBooksFake.start({
-        fixture: fixtures.quickbooks,
-        clock,
-        accessToken: FAKE_CREDENTIALS.quickbooksAccessToken,
-        ...prefix("quickbooks"),
-        ...(options.quickbooksPageCap === undefined
-          ? {}
-          : { queryPageCap: options.quickbooksPageCap }),
-      }).then(track),
-      SlackFake.start({
-        fixture: fixtures.slack,
-        clock,
-        botToken: FAKE_CREDENTIALS.slackBotToken,
-        ...prefix("slack"),
       }).then(track),
       HubSpotFake.start({
         fixture: fixtures.hubspot,
@@ -105,8 +86,6 @@ export async function startFakes(options: StartFakesOptions = {}): Promise<Fakes
       fixtures,
       clock,
       stripe,
-      quickbooks,
-      slack,
       hubspot,
       composio,
       hubspotMode,
@@ -119,12 +98,6 @@ export async function startFakes(options: StartFakesOptions = {}): Promise<Fakes
           : hubspot.stdioEnv()),
         STRIPE_SECRET_KEY: FAKE_CREDENTIALS.stripeSecretKey,
         STRIPE_API_BASE_URL: stripe.baseUrl,
-        QBO_ACCESS_TOKEN: FAKE_CREDENTIALS.quickbooksAccessToken,
-        QBO_REALM_ID: fixtures.quickbooks.realmId,
-        QBO_API_BASE_URL: quickbooks.baseUrl,
-        QBO_MINOR_VERSION: "75",
-        SLACK_BOT_TOKEN: FAKE_CREDENTIALS.slackBotToken,
-        SLACK_API_BASE_URL: slack.baseUrl,
       }),
       close: async () => {
         await Promise.allSettled(started.map((fake) => fake.close()));
@@ -137,4 +110,4 @@ export async function startFakes(options: StartFakesOptions = {}): Promise<Fakes
 }
 
 export type { BusinessFixtures };
-export { ComposioFake, HubSpotFake, QuickBooksFake, SlackFake, StripeFake };
+export { ComposioFake, HubSpotFake, StripeFake };

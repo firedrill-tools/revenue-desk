@@ -2,8 +2,8 @@
 // definition per integration (profile, classifier) plus how to reach it:
 // - API: its in-process tools bound to one resolved connection;
 // - HubSpot: the upstream MCP configuration of a connection;
-// - Gmail and Calendar: a connector that opens the Composio session MCP for
-//   the run's toolkits at an access level.
+// - Gmail, Calendar, QuickBooks and Slack: a connector that opens the
+//   Composio session MCP for the run's toolkits at an access level.
 // W2's integrations (ApiIntegration, HubSpotIntegration, ComposioIntegration)
 // have these shapes, so its registry is a catalog as it stands.
 
@@ -21,6 +21,7 @@ import {
   type ResolvedConnectionOf,
   sdkToolName,
   type ToolDescriptor,
+  type ToolFailure,
 } from "../contracts/integration.js";
 import type { JsonObject, JsonValue } from "../contracts/json.js";
 import type { ApiToolDefinition } from "./api-server.js";
@@ -29,7 +30,7 @@ import type { SchemaIssue } from "./validate.js";
 
 /** Per-run facts API tools need besides the connection. */
 export type ApiToolFactoryOptions = {
-  /** WorkspaceSettings.currency (QuickBooks omits it when multicurrency is off). */
+  /** WorkspaceSettings.currency, for amounts that carry none. */
   readonly currency: string;
   /** WorkspaceSettings.timezone: timestamps returned to the model are written in it. */
   readonly timezone?: string;
@@ -53,7 +54,7 @@ export type HubSpotUpstreamSource = {
   apiTools?(connection: HubSpotConnection): readonly ApiToolDefinition[];
 };
 
-/** Opens the Composio session MCP for a run (one session serves both toolkits). */
+/** Opens the Composio session MCP for a run (one session serves every toolkit). */
 export type ComposioUpstreamSource<I extends ComposioIntegrationId> = {
   connector(connection: ResolvedConnectionOf<I>): {
     upstream(
@@ -70,8 +71,18 @@ export type ComposioUpstreamSource<I extends ComposioIntegrationId> = {
  * run; it never contacts a system.
  */
 export interface RunMemory {
-  /** A call of this integration finished; `output` is what the model received. */
-  record(tool: string, input: JsonObject, output: JsonValue, isError: boolean): void;
+  /**
+   * A call of this integration finished; `output` is what the model received
+   * and `failure` the normalised error of a failed call (its code says
+   * `outcome_unknown` for a write sent without an answer).
+   */
+  record(
+    tool: string,
+    input: JsonObject,
+    output: JsonValue,
+    isError: boolean,
+    failure?: ToolFailure | null,
+  ): void;
   /** The classification of `tool` for `input`, refined with what the run learned. */
   refine(tool: string, input: JsonObject, classification: Classification): Classification;
 }

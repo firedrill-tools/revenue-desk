@@ -11,6 +11,7 @@ import type { ConnectionPlan, RunConnection } from "../contracts/events.js";
 import {
   type ClassifierSettings,
   COMPOSIO_TOOLKIT_OF,
+  type ComposioIntegrationId,
   composioAccessFor,
   INTEGRATION_IDS,
   INTEGRATIONS,
@@ -68,13 +69,26 @@ type Outcome =
 
 type ComposioPlanConnection = Extract<
   ResolvedConnection,
-  { readonly integration: "gmail" | "google_calendar" }
+  { readonly integration: ComposioIntegrationId }
 >;
 
+function isComposioConnection(
+  connection: ResolvedConnection | undefined,
+): connection is ComposioPlanConnection {
+  return connection !== undefined && connection.kind === "composio";
+}
+
 function composioConnector(catalog: IntegrationCatalog, connection: ComposioPlanConnection) {
-  return connection.integration === "gmail"
-    ? catalog.gmail.connector(connection)
-    : catalog.google_calendar.connector(connection);
+  switch (connection.integration) {
+    case "gmail":
+      return catalog.gmail.connector(connection);
+    case "google_calendar":
+      return catalog.google_calendar.connector(connection);
+    case "quickbooks":
+      return catalog.quickbooks.connector(connection);
+    case "slack":
+      return catalog.slack.connector(connection);
+  }
 }
 
 function unavailable(
@@ -119,13 +133,7 @@ function apiTools(
 ): GatewayTool[] {
   const options = { currency: settings.currency, timezone: settings.timezone };
   const definitions =
-    connection.integration === "stripe"
-      ? catalog.stripe.tools(connection, options)
-      : connection.integration === "quickbooks"
-        ? catalog.quickbooks.tools(connection, options)
-        : connection.integration === "slack"
-          ? catalog.slack.tools(connection, options)
-          : [];
+    connection.integration === "stripe" ? catalog.stripe.tools(connection, options) : [];
   const byName = new Map(definitions.map((definition) => [definition.name, definition]));
   return descriptors.flatMap((descriptor) => {
     const definition = byName.get(descriptor.name);
@@ -159,7 +167,13 @@ function remembering(
     callFinished(result) {
       // The memory learns before the model sees the result, so its next call is classified with it.
       notify(() =>
-        memory.record(result.call.tool, result.call.arguments, result.output, result.isError),
+        memory.record(
+          result.call.tool,
+          result.call.arguments,
+          result.output,
+          result.isError,
+          result.error,
+        ),
       );
       observer?.callFinished(result);
     },
@@ -195,12 +209,11 @@ export async function openRunGateway(options: RunGatewayOptions): Promise<RunGat
           .catch((error: unknown) => new Error(messageOf(error)))
       : Promise.resolve(new Error("not available"));
 
-  // Gmail and Calendar: one Composio session for both toolkits.
+  // Gmail, Calendar, QuickBooks and Slack: one Composio session for all their toolkits.
   const composioConnections: ComposioPlanConnection[] = [];
-  for (const connection of [available.get("gmail"), available.get("google_calendar")]) {
-    if (connection?.integration === "gmail" || connection?.integration === "google_calendar") {
-      composioConnections.push(connection);
-    }
+  for (const integration of INTEGRATION_IDS) {
+    const connection = available.get(integration);
+    if (isComposioConnection(connection)) composioConnections.push(connection);
   }
   const firstComposio = composioConnections[0];
   const composioUpstream: Promise<Upstream | Error> =

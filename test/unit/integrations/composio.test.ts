@@ -237,14 +237,23 @@ describe("ComposioConnector", () => {
     await expect(probeComposio(connector, "googlecalendar", signal)).resolves.toMatchObject({
       state: "expired",
     });
+    // A toolkit Composio reports without a connected account needs a sign-in.
+    await expect(probeComposio(connector, "quickbooks", signal)).resolves.toMatchObject({
+      state: "needs_auth",
+    });
+    await expect(probeComposio(connector, "slack", signal)).resolves.toMatchObject({
+      state: "needs_auth",
+    });
     expect(fake.createSession).toHaveBeenCalledTimes(1);
     expect(fake.createSession).toHaveBeenCalledWith(
       USER_ID,
       expect.objectContaining({
-        toolkits: ["gmail", "googlecalendar"],
+        toolkits: ["gmail", "googlecalendar", "quickbooks", "slack"],
         tools: {
           gmail: { enable: allowedTools("gmail", "read") },
           googlecalendar: { enable: allowedTools("googlecalendar", "read") },
+          quickbooks: { enable: allowedTools("quickbooks", "read") },
+          slack: { enable: allowedTools("slack", "read") },
         },
       }),
     );

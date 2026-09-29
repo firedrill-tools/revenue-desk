@@ -1,6 +1,9 @@
 /**
- * A local fake of the Composio API and its session MCP endpoints, for Gmail
- * and Google Calendar (COMPOSIO_BASE_URL). Test-only; loopback only.
+ * A local fake of the Composio API and its session MCP endpoints
+ * (COMPOSIO_BASE_URL). Test-only; loopback only. It runs Gmail and Google
+ * Calendar on a local mailbox and calendar; QuickBooks and Slack are listed
+ * with their captured schemas but have no local data, so a call to one
+ * fails as Composio fails a toolkit with no usable connected account.
  *
  * What the real @composio/core 0.21 client does against it:
  * - `sessions.create(userId, config)`: POST /api/v3.1/tool_router/session
@@ -17,8 +20,8 @@
  * The session MCP endpoint (Streamable HTTP, stateless) lists exactly the
  * session's enabled slugs with the schemas captured read-only in
  * test/fixtures/surfaces/composio-direct.json, validates arguments against
- * them, and runs them on the local mailbox (gmail.ts) and calendar
- * (calendar.ts). Results are `{successful, data, error}`, as Composio tools
+ * them, and runs Gmail and Calendar ones on the local mailbox (gmail.ts) and
+ * calendar (calendar.ts). Results are `{successful, data, error}`, as Composio tools
  * return; a failure is also `isError: true`.
  */
 import { randomUUID } from "node:crypto";
@@ -57,7 +60,19 @@ import type {
 import { GoogleCalendar } from "./calendar.js";
 import { GmailMailbox, ToolError } from "./gmail.js";
 
-export const COMPOSIO_TOOLKIT_SLUGS = ["gmail", "googlecalendar"] as const;
+export const COMPOSIO_TOOLKIT_SLUGS = ["gmail", "googlecalendar", "quickbooks", "slack"] as const;
+
+const TOOLKIT_NAMES: Readonly<Record<ComposioToolkitSlug, string>> = {
+  gmail: "Gmail",
+  googlecalendar: "Google Calendar",
+  quickbooks: "QuickBooks",
+  slack: "Slack",
+};
+
+/** The toolkit a slug belongs to, by its prefix (GMAIL_, GOOGLECALENDAR_, …). */
+function toolkitOfSlug(name: string): ComposioToolkitSlug | undefined {
+  return COMPOSIO_TOOLKIT_SLUGS.find((slug) => name.startsWith(`${slug.toUpperCase()}_`));
+}
 export type ComposioToolkitSlug = (typeof COMPOSIO_TOOLKIT_SLUGS)[number];
 
 const SURFACE_FILE = resolve(
@@ -75,6 +90,8 @@ export function capturedComposioTools(): Readonly<Record<ComposioToolkitSlug, re
   return {
     gmail: strip(surface.toolkits.gmail.tools),
     googlecalendar: strip(surface.toolkits.googlecalendar.tools),
+    quickbooks: strip(surface.toolkits.quickbooks.tools),
+    slack: strip(surface.toolkits.slack.tools),
   };
 }
 
@@ -156,9 +173,10 @@ export class ComposioFake {
     this.gmail = new GmailMailbox(options.gmail, options.clock);
     this.calendar = new GoogleCalendar(options.calendar, options.clock);
     this.connections = new Map(
-      COMPOSIO_TOOLKIT_SLUGS.map(
-        (slug) => [slug, { ...options.composio.connections[slug] }] as const,
-      ),
+      COMPOSIO_TOOLKIT_SLUGS.flatMap((slug) => {
+        const connection = options.composio.connections[slug];
+        return connection === undefined ? [] : [[slug, { ...connection }] as const];
+      }),
     );
     const router = new Router();
     const api = (method: string, pattern: string, handler: (request: FakeRequest) => JsonObject) =>
@@ -365,7 +383,7 @@ export class ComposioFake {
         const connection = session.userId === this.userId ? this.connections.get(slug) : undefined;
         return {
           slug,
-          name: slug === "gmail" ? "Gmail" : "Google Calendar",
+          name: TOOLKIT_NAMES[slug],
           is_no_auth: false,
           connected_account:
             connection === undefined
@@ -440,7 +458,7 @@ export class ComposioFake {
     return {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8" },
-      body: `<!doctype html><title>Local sandbox</title><p>Local sandbox — no real services. ${link.toolkit} is now connected for the fictional Kestrel Analytics mailbox. You can close this tab.</p>`,
+      body: `<!doctype html><title>Local sandbox</title><p>Local sandbox — no real services. ${link.toolkit} is now connected for the fictional Kestrel Analytics account. You can close this tab.</p>`,
     };
   }
 
@@ -509,9 +527,8 @@ export class ComposioFake {
         ],
       };
     };
-    const toolkit: ComposioToolkitSlug = tool.name.startsWith("GMAIL_")
-      ? "gmail"
-      : "googlecalendar";
+    const toolkit = toolkitOfSlug(tool.name);
+    if (toolkit === undefined) return fail(`Tool ${tool.name} belongs to no toolkit of this fake.`);
     const connection = session.userId === this.userId ? this.connections.get(toolkit) : undefined;
     if (connection === undefined)
       return fail(`No connected account found for user ${session.userId} and toolkit ${toolkit}.`);

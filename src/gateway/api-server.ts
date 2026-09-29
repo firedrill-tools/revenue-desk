@@ -1,4 +1,5 @@
-// The in-process tools of the API integrations (Stripe, QuickBooks, Slack).
+// The in-process tools of the API integrations (Stripe) and of HubSpot's
+// owners lookup.
 //
 // An ApiToolDefinition is a zod raw shape plus a typed `run`. The gateway
 // offers the model the shape's JSON schema (draft-07, no undeclared

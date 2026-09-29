@@ -19,6 +19,7 @@ import type { AgentEnv } from "../contracts/env.js";
 import type { ConnectionPlan, RunConnection } from "../contracts/events.js";
 import {
   COMPOSIO_TOOLKIT_OF,
+  type ComposioIntegrationId,
   type ComposioToolkitSlug,
   type ConnectionStatus,
   INTEGRATION_IDS,
@@ -48,8 +49,6 @@ export type ConnectOutcome =
       readonly code: "not_supported" | "upstream_error";
       readonly message: string;
     };
-
-type ComposioIntegrationId = "gmail" | "google_calendar";
 
 /**
  * A Composio integration's Connect: its connector's hosted sign-in
@@ -88,7 +87,7 @@ const NOT_CONNECTABLE: ConnectOutcome = {
   ok: false,
   code: "not_supported",
   message:
-    "Connect is available only for configured Composio integrations (Gmail, Google Calendar).",
+    "Connect is available only for configured Composio integrations (Gmail, Google Calendar, QuickBooks Online, Slack).",
 };
 
 export class ConnectionService {
@@ -155,11 +154,18 @@ export class ConnectionService {
    * user's click on Connect calls this: every call starts a new link flow.
    */
   connect(integration: IntegrationId, callbackUrl: string): Promise<ConnectOutcome> {
-    if (integration === "gmail") return this.#connect(this.#set.gmail, callbackUrl);
-    if (integration === "google_calendar") {
-      return this.#connect(this.#set.google_calendar, callbackUrl);
+    switch (integration) {
+      case "gmail":
+        return this.#connect(this.#set.gmail, callbackUrl);
+      case "google_calendar":
+        return this.#connect(this.#set.google_calendar, callbackUrl);
+      case "quickbooks":
+        return this.#connect(this.#set.quickbooks, callbackUrl);
+      case "slack":
+        return this.#connect(this.#set.slack, callbackUrl);
+      default:
+        return Promise.resolve(NOT_CONNECTABLE);
     }
-    return Promise.resolve(NOT_CONNECTABLE);
   }
 
   async #connect<I extends ComposioIntegrationId>(

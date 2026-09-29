@@ -238,7 +238,7 @@ test.describe("runs", () => {
     page,
   }, testInfo) => {
     const phone = isPhone(testInfo);
-    // A finished run to find: the weekly digest posts without asking.
+    // A finished run to find: the weekly digest reads without asking.
     const api = await sandboxApi();
     const title = uniqueTitle("Weekly digest");
     const { conversation } = await api.expect("POST /api/conversations", { body: { title } });
@@ -260,7 +260,7 @@ test.describe("runs", () => {
     await expect(detail).toBeVisible();
     await expect(detail).toContainText("Completed");
     await expect(detail).toContainText("Tool calls");
-    await expect(detail).toContainText(/in Slack/);
+    await expect(detail).toContainText(/in Stripe/);
     await expect(detail).toContainText("Approval policy");
     await expectAccessible(page);
     await expectNoSideScroll(page);

@@ -63,9 +63,12 @@ describe("the redactor", () => {
   });
 
   it("builds from a snapshot's configured secrets", () => {
-    const result = loadAgentEnv({ QBO_ACCESS_TOKEN: "qbo-access-token-value", QBO_REALM_ID: "42" });
+    const result = loadAgentEnv({
+      COMPOSIO_API_KEY: "composio-project-key-value",
+      COMPOSIO_USER_ID: "42",
+    });
     if (!result.ok) throw new Error("unexpected problems");
     const redact = createRedactor(result.env);
-    expect(redact("token=qbo-access-token-value realm=42")).toBe(`token=${REDACTED} realm=42`);
+    expect(redact("key=composio-project-key-value user=42")).toBe(`key=${REDACTED} user=42`);
   });
 });

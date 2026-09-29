@@ -1,10 +1,12 @@
 /**
- * Gmail and Google Calendar through the real @composio/core client against
- * the local Composio fake (COMPOSIO_BASE_URL on loopback): configuration is
- * resolved from an AgentEnv, the probe reads each toolkit's state, the run's
- * session MCP endpoint (plain http on loopback, allowed only because the base
- * URL is loopback) lists exactly the allowlist for the policy's access level,
- * and Connect returns a sign-in link. No real Composio call is made.
+ * Gmail, Google Calendar, QuickBooks and Slack through the real
+ * @composio/core client against the local Composio fake (COMPOSIO_BASE_URL
+ * on loopback): configuration is resolved from an AgentEnv, the probe reads
+ * each toolkit's state (QuickBooks and Slack have no connected account in
+ * the fake), the run's session MCP endpoint (plain http on loopback, allowed
+ * only because the base URL is loopback) lists exactly the allowlist for the
+ * policy's access level, and Connect returns a sign-in link. No real
+ * Composio call is made.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composioAccessFor, DEFAULT_POLICY } from "../../src/contracts/integration.js";
@@ -57,7 +59,7 @@ function gmailConnection() {
 }
 
 describe("Composio integrations against the Composio fake", () => {
-  it("resolve and probe both toolkits through one session", async () => {
+  it("resolve and probe all four toolkits through one session", async () => {
     const now = () => new Date("2026-09-28T13:00:00Z");
     const signal = AbortSignal.timeout(15_000);
     await expect(checkConnection(set, "gmail", env, signal, now)).resolves.toMatchObject({
@@ -68,12 +70,24 @@ describe("Composio integrations against the Composio fake", () => {
     await expect(checkConnection(set, "google_calendar", env, signal, now)).resolves.toMatchObject({
       state: "connected",
     });
+    await expect(checkConnection(set, "quickbooks", env, signal, now)).resolves.toMatchObject({
+      kind: "composio",
+      state: "needs_auth",
+      detail: "QuickBooks Online is not connected. Click Connect in Connections to sign in.",
+      accountHint: null,
+    });
+    await expect(checkConnection(set, "slack", env, signal, now)).resolves.toMatchObject({
+      state: "needs_auth",
+      detail: "Slack is not connected. Click Connect in Connections to sign in.",
+    });
     expect(composio.sessions.size).toBe(1);
     const [session] = composio.sessions.values();
-    expect(session?.toolkits).toEqual(["gmail", "googlecalendar"]);
+    expect(session?.toolkits).toEqual(["gmail", "googlecalendar", "quickbooks", "slack"]);
     expect(session?.enabled).toEqual({
       gmail: allowedTools("gmail", "read"),
       googlecalendar: allowedTools("googlecalendar", "read"),
+      quickbooks: allowedTools("quickbooks", "read"),
+      slack: allowedTools("slack", "read"),
     });
   });
 
@@ -81,11 +95,13 @@ describe("Composio integrations against the Composio fake", () => {
     const access = composioAccessFor(DEFAULT_POLICY);
     const upstream = await set.gmail
       .connector(gmailConnection())
-      .upstream(["gmail", "googlecalendar"], access);
+      .upstream(["gmail", "googlecalendar", "quickbooks", "slack"], access);
     expect(upstream.config.url.startsWith(`${new URL(composio.baseUrl).origin}/`)).toBe(true);
     expect(upstream.allowlists).toEqual({
       gmail: allowedTools("gmail", "outbound"),
       googlecalendar: allowedTools("googlecalendar", "outbound"),
+      quickbooks: allowedTools("quickbooks", "outbound"),
+      slack: allowedTools("slack", "outbound"),
     });
     const client = await connectUpstream(upstream.config, { timeoutMs: 15_000 });
     try {
@@ -93,18 +109,23 @@ describe("Composio integrations against the Composio fake", () => {
         [
           ...allowedTools("gmail", "outbound"),
           ...allowedTools("googlecalendar", "outbound"),
+          ...allowedTools("quickbooks", "outbound"),
+          ...allowedTools("slack", "outbound"),
         ].sort(),
       );
     } finally {
       await client.close();
     }
 
-    const readOnly = await set.gmail
-      .connector(gmailConnection())
-      .upstream(
-        ["gmail"],
-        composioAccessFor({ ...DEFAULT_POLICY, outbound: "deny", internal_write: "deny" }),
-      );
+    const readOnly = await set.gmail.connector(gmailConnection()).upstream(
+      ["gmail"],
+      composioAccessFor({
+        ...DEFAULT_POLICY,
+        outbound: "deny",
+        financial: "deny",
+        internal_write: "deny",
+      }),
+    );
     const reader = await connectUpstream(readOnly.config, { timeoutMs: 15_000 });
     try {
       expect(reader.tools.map((tool) => tool.name).sort()).toEqual(
@@ -141,9 +162,43 @@ describe("Composio integrations against the Composio fake", () => {
       .connector(calendar.connection)
       .authorize("googlecalendar", callback);
     expect(link.redirectUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
+    // QuickBooks and Slack connect the same way, through their own connector.
+    const quickbooks = set.quickbooks.resolve(env);
+    const slack = set.slack.resolve(env);
+    if (quickbooks.status !== "configured" || slack.status !== "configured") {
+      throw new Error("QuickBooks and Slack should resolve from the Composio configuration");
+    }
+    const quickbooksCallback = "http://127.0.0.1:4320/api/connections/quickbooks/callback";
+    const slackCallback = "http://127.0.0.1:4320/api/connections/slack/callback";
+    await set.quickbooks
+      .connector(quickbooks.connection)
+      .authorize("quickbooks", quickbooksCallback);
+    await set.slack.connector(slack.connection).authorize("slack", slackCallback);
     expect(composio.links.slice(before).map((entry) => [entry.toolkit, entry.callbackUrl])).toEqual(
-      [["googlecalendar", callback]],
+      [
+        ["googlecalendar", callback],
+        ["quickbooks", quickbooksCallback],
+        ["slack", slackCallback],
+      ],
     );
+  });
+
+  it("fails a QuickBooks or Slack call as Composio does when no account is connected", async () => {
+    const upstream = await set.gmail
+      .connector(gmailConnection())
+      .upstream(["quickbooks", "slack"], composioAccessFor(DEFAULT_POLICY));
+    const client = await connectUpstream(upstream.config, { timeoutMs: 15_000 });
+    try {
+      const result = (await client.client.callTool({
+        name: "QUICKBOOKS_QUERY_INVOICES",
+        arguments: { status: "Overdue" },
+      })) as { isError?: boolean; content: { type: string; text?: string }[] };
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("No connected account found");
+      expect(result.content[0]?.text).toContain("quickbooks");
+    } finally {
+      await client.close();
+    }
   });
 
   it("reports a refused project as an error without the key", async () => {

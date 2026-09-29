@@ -1,4 +1,5 @@
-// The in-process tools of the API integrations (Stripe, QuickBooks, Slack).
+// The in-process tools of the API integrations (Stripe) and of HubSpot's
+// owners lookup.
 //
 // An ApiTool is structurally the gateway's ApiToolDefinition
 // (src/gateway/api-server.ts), typed against the frozen ApiCallContext so a
@@ -31,10 +32,7 @@ export function apiTool<Shape extends AnyZodRawShape>(tool: ApiTool<Shape>): Api
 
 /** Per-run facts the API tools need besides the connection. */
 export type ApiToolOptions = {
-  /**
-   * The workspace currency (WorkspaceSettings.currency). QuickBooks omits the
-   * currency on transactions when multicurrency is off; amounts then use it.
-   */
+  /** The workspace currency (WorkspaceSettings.currency), for amounts that carry none. */
   readonly currency: string;
   /**
    * The workspace time zone (WorkspaceSettings.timezone, IANA). Timestamps the

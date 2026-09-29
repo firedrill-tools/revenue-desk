@@ -1,6 +1,6 @@
-// Composio configuration shared by Gmail and Google Calendar
-// (docs/ARCHITECTURE.md §3): COMPOSIO_API_KEY, COMPOSIO_USER_ID (no default in
-// code), COMPOSIO_BASE_URL.
+// Composio configuration shared by Gmail, Google Calendar, QuickBooks and
+// Slack (docs/ARCHITECTURE.md §3): COMPOSIO_API_KEY, COMPOSIO_USER_ID (no
+// default in code), COMPOSIO_BASE_URL.
 
 import type { AgentEnv, ConfigProblem, EnvVarName, SecretValue } from "../../contracts/env.js";
 import { checkUrlVariable, hasSecret, hasValue, secretProblem } from "../shared/resolve.js";

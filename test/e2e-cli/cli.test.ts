@@ -24,6 +24,8 @@ import {
   type Scenario,
   text,
 } from "../scenarios/index.js";
+import { J2_SLACK_UNAVAILABLE } from "../scenarios/j2-refund-duplicate.js";
+import { J5_NOT_POSTED } from "../scenarios/j5-weekly-digest.js";
 import { ApiClient } from "../support/api-client.js";
 import { FAKE_CREDENTIAL_VALUES } from "../support/fakes/credentials.js";
 import { freePort, type Harness, startHarness } from "../support/harness.js";
@@ -152,12 +154,12 @@ describe("the built CLI against the fakes and the scripted model", () => {
     );
     expect(result.code, result.stderr).toBe(CLI_EXIT_CODES.completed);
     expect(result.stdout).toContain("Refunded $490.00 on the duplicate charge");
-    expect(result.stdout).toContain("Posted to #billing.");
+    expect(result.stdout).toContain(J2_SLACK_UNAVAILABLE);
     expect(result.stdout).not.toContain('"kind"');
     // Progress lines per tool call, then one status line.
     expect(result.stderr).toContain("> Refund charge in Stripe [API]");
     expect(result.stderr.trimEnd().split("\n").at(-1)).toMatch(
-      /^Done in \d+ ms · 6 tool calls · \$/,
+      /^Done in \d+ ms · 5 tool calls · \$/,
     );
     expectNoCredentials(result);
 
@@ -193,7 +195,7 @@ describe("the built CLI against the fakes and the scripted model", () => {
       });
       expect(detail.conversation.source).toBe("cli");
       expect(detail.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-      expect(JSON.stringify(detail.messages[1]?.parts)).toContain("Posted to #billing.");
+      expect(JSON.stringify(detail.messages[1]?.parts)).toContain(J2_SLACK_UNAVAILABLE);
     } finally {
       await app.close();
     }
@@ -403,7 +405,6 @@ describe("the built CLI against the fakes and the scripted model", () => {
   it("runs four at once with isolated state directories", async () => {
     const stateDirs = [1, 2, 3, 4].map((index) => freshStateDir(`parallel-${index}`));
     for (const stateDir of stateDirs) prepareWorkspace(stateDir, harness.fakes);
-    const postsBefore = harness.fakes.slack.posts().length;
     const results = await Promise.all(
       stateDirs.map((stateDir) =>
         runBuiltCli(["ask", "--json", "--state-dir", stateDir, J5_WEEKLY_DIGEST.prompt], { env }),
@@ -421,9 +422,8 @@ describe("the built CLI against the fakes and the scripted model", () => {
       expect(state.runs.map((run) => [run.id, run.source, run.status])).toEqual([
         [summaries[index]?.runId, "cli", "completed"],
       ]);
-      expect(summaries[index]?.reply).toContain("Posted the weekly digest to #revenue");
+      expect(summaries[index]?.reply).toContain(J5_NOT_POSTED);
     }
-    expect(harness.fakes.slack.posts().length - postsBefore).toBe(4);
   });
 
   it("runs as an executable through its shebang", async () => {

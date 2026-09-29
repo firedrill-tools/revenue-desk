@@ -1,6 +1,7 @@
-// The six integrations (docs/ARCHITECTURE.md §2, §5): their definitions,
-// which are available for a run, their connection status for the Connections
-// screen, and the connection snapshot a run starts with.
+// The six integrations (docs/ARCHITECTURE.md §2, §5; four through Composio,
+// HubSpot through MCP, Stripe through its API): their definitions, which are
+// available for a run, their connection status for the Connections screen,
+// and the connection snapshot a run starts with.
 //
 // Nothing here contacts a system except checkConnection()/checkConnections(),
 // which run each integration's read-only probe.
@@ -37,17 +38,14 @@ import { GOOGLE_CALENDAR_PROFILE } from "./google-calendar/profile.js";
 import { createHubSpotIntegration, type HubSpotIntegration } from "./hubspot/definition.js";
 import type { HubSpotProbeDeps } from "./hubspot/probe.js";
 import { HUBSPOT_PROFILE } from "./hubspot/profile.js";
-import {
-  createQuickBooksIntegration,
-  QUICKBOOKS_CREDENTIAL_RULES,
-} from "./quickbooks/definition.js";
+import { createQuickBooksIntegration } from "./quickbooks/definition.js";
 import { QUICKBOOKS_PROFILE } from "./quickbooks/profile.js";
 import type { ApiIntegration } from "./shared/definition.js";
 import { type CredentialRules, credentialFailure } from "./shared/errors.js";
 import type { HttpDeps } from "./shared/http.js";
 import { specOf } from "./shared/profile.js";
 import { listOf, sentence } from "./shared/text.js";
-import { createSlackIntegration, SLACK_CALL_CREDENTIAL_RULES } from "./slack/definition.js";
+import { createSlackIntegration } from "./slack/definition.js";
 import { SLACK_PROFILE } from "./slack/profile.js";
 import { createStripeIntegration, STRIPE_CALL_CREDENTIAL_RULES } from "./stripe/definition.js";
 import { STRIPE_PROFILE } from "./stripe/profile.js";
@@ -59,10 +57,10 @@ import { STRIPE_PROFILE } from "./stripe/profile.js";
 export type Integrations = {
   readonly gmail: ComposioIntegration<"gmail">;
   readonly google_calendar: ComposioIntegration<"google_calendar">;
+  readonly quickbooks: ComposioIntegration<"quickbooks">;
+  readonly slack: ComposioIntegration<"slack">;
   readonly hubspot: HubSpotIntegration;
   readonly stripe: ApiIntegration<"stripe">;
-  readonly quickbooks: ApiIntegration<"quickbooks">;
-  readonly slack: ApiIntegration<"slack">;
 };
 
 /**
@@ -97,10 +95,10 @@ export function createIntegrations(deps: IntegrationDeps = {}): Integrations {
   return {
     gmail: createGmailIntegration(connectors),
     google_calendar: createGoogleCalendarIntegration(connectors),
+    quickbooks: createQuickBooksIntegration(connectors),
+    slack: createSlackIntegration(connectors),
     hubspot: createHubSpotIntegration({ ...deps.hubspot, ...http }),
     stripe: createStripeIntegration(http),
-    quickbooks: createQuickBooksIntegration(http),
-    slack: createSlackIntegration(http),
   };
 }
 
@@ -240,12 +238,11 @@ function baseStatus(id: IntegrationId) {
 /**
  * The rules by which a failed call says its integration's credential is
  * dead (the ones its check uses, narrowed to failures that concern the whole
- * connection). Composio reports sign-in problems through its own check.
+ * connection). Composio (Gmail, Calendar, QuickBooks, Slack) reports sign-in
+ * problems through its own check.
  */
 const CALL_CREDENTIAL_RULES: { readonly [I in IntegrationId]?: CredentialRules } = {
   stripe: STRIPE_CALL_CREDENTIAL_RULES,
-  quickbooks: QUICKBOOKS_CREDENTIAL_RULES,
-  slack: SLACK_CALL_CREDENTIAL_RULES,
   hubspot: {
     variable: "HUBSPOT_ACCESS_TOKEN",
     credential: "the private-app token",

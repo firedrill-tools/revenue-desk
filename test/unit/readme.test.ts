@@ -20,7 +20,7 @@ const END = "<!-- env-table:end -->";
 const GROUP_LABEL: { readonly [G in EnvVarSpec["group"]]: string } = {
   model: "Model",
   runtime: "Runtime",
-  gmail: "Gmail, Google Calendar",
+  gmail: "Composio (Gmail, Google Calendar, QuickBooks, Slack)",
   google_calendar: INTEGRATIONS.google_calendar.label,
   hubspot: INTEGRATIONS.hubspot.label,
   stripe: INTEGRATIONS.stripe.label,

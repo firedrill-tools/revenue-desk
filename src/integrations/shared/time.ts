@@ -1,7 +1,6 @@
 // Timestamps for the model, in the workspace's time zone.
 //
-// Stripe returns Unix seconds and Slack a ts, both UTC; QuickBooks answers in
-// the company's own zone. A model that reads "2026-09-22T13:00:12Z" tends to
+// Stripe returns Unix seconds, in UTC. A model that reads "2026-09-22T13:00:12Z" tends to
 // tell a reader in New York "1:00 PM", or "13:00 ET". So every timestamp a
 // projection returns is written in the workspace time zone with its offset,
 // "2026-09-22T09:00:12-04:00": still exact ISO 8601, and its clock time is
@@ -81,21 +80,6 @@ export function zonedFromUnix(
 ): string | undefined {
   if (seconds === undefined || !Number.isFinite(seconds)) return undefined;
   return zonedIso(seconds * 1000, timeZone);
-}
-
-/**
- * An ISO 8601 date-time with a zone (…Z or …-07:00), re-expressed in
- * `timeZone`. Without a zone, a date alone, or text that does not parse, the
- * value is returned as it is.
- */
-export function zonedFromIso(
-  value: string | undefined,
-  timeZone: string | undefined,
-): string | undefined {
-  if (value === undefined || timeZone === undefined || !/T\d{2}:\d{2}/.test(value)) return value;
-  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return value;
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? value : zonedIso(ms, timeZone);
 }
 
 /**

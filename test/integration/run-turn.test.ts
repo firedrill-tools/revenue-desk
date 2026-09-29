@@ -565,9 +565,25 @@ describe("runTurn on the real Claude Agent SDK", () => {
     expect(denials.get("toolu_send")?.decision).toBe("policy_denied");
     expect(a.stripeCalls).toEqual([]);
     expect(a.store.rows.size).toBe(0);
-    // With outbound denied, the Composio session is created without send tools.
-    expect(a.composioRequests).toEqual([{ toolkits: ["gmail"], access: "draft" }]);
+    // Financial actions stay askable (QuickBooks invoices and payments are outbound-level
+    // Composio tools), so the session keeps outbound-level tools and the policy denies the send.
+    expect(a.composioRequests).toEqual([{ toolkits: ["gmail"], access: "outbound" }]);
   });
+
+  it(
+    "creates the Composio session without outbound-level tools when outbound and financial are denied",
+    TIMEOUT,
+    async () => {
+      const a = await agent({ responder: steps([text("Nothing to do.")]) });
+      await a.run(
+        a.input({
+          mode: "headless",
+          policy: { ...DEFAULT_POLICY, outbound: "deny", financial: "deny" },
+        }),
+      );
+      expect(a.composioRequests).toEqual([{ toolkits: ["gmail"], access: "draft" }]);
+    },
+  );
 
   it("times an approval out and carries on", TIMEOUT, async () => {
     const a = await agent({

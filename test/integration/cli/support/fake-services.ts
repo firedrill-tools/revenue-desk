@@ -221,13 +221,6 @@ export function fakeLoadConfig(
       apiBaseUrl: "http://127.0.0.1:4242",
       apiVersion: null,
     },
-    quickbooks: {
-      accessToken: null,
-      realmId: null,
-      apiBaseUrl: "https://sandbox-quickbooks.api.intuit.com",
-      minorVersion: null,
-    },
-    slack: { botToken: null, apiBaseUrl: "https://slack.com" },
   };
   return { ok: true, env };
 }

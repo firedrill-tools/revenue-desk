@@ -56,7 +56,6 @@
         "title": "Finance Manager"
       },
       "stripeCustomer": "cus_KAharborpine",
-      "quickbooksCustomer": "58",
       "hubspotCompany": "30011001",
       "hubspotContact": "51011001",
       "story": "J1/J2: charged twice for the September Growth plan on 2026-09-22; ch_KAhp_0922b is the duplicate."
@@ -71,7 +70,6 @@
         "title": "Office Manager"
       },
       "stripeCustomer": "cus_KAcopperleaf",
-      "quickbooksCustomer": "61",
       "hubspotCompany": "30011002",
       "hubspotContact": "51011002",
       "story": "J3: invoice 1043 ($3,600.00) was due 2026-07-20, 70 days overdue; one reminder on 2026-08-21, no reply."
@@ -86,7 +84,6 @@
         "title": "Controller"
       },
       "stripeCustomer": "cus_KAmeridian",
-      "quickbooksCustomer": "63",
       "hubspotCompany": "30011003",
       "hubspotContact": "51011003",
       "story": "J3: invoice 1051 ($1,980.00) shows overdue in QuickBooks, but Stripe charge ch_KAmer_0910 paid it on 2026-09-10 and was never recorded."
@@ -101,7 +98,6 @@
         "title": "Accounts Payable Specialist"
       },
       "stripeCustomer": "cus_KAtidewater",
-      "quickbooksCustomer": "64",
       "hubspotCompany": "30011004",
       "hubspotContact": "51011004",
       "story": "J3: invoice 1048 ($2,400.00) was due 2026-08-25, 34 days overdue; Omar asked for the PDF again."
@@ -116,7 +112,6 @@
         "title": "Practice Administrator"
       },
       "stripeCustomer": "cus_KAbluefin",
-      "quickbooksCustomer": "66",
       "hubspotCompany": "30011005",
       "hubspotContact": "51011005",
       "story": "J3: invoice 1055 ($1,500.00) is half paid (payment recorded); $750.00 is 8 days overdue."
@@ -127,7 +122,6 @@
       "domain": "orchardrow.test",
       "contact": { "name": "Ben Alvarez", "email": "hello@orchardrow.test", "title": "Owner" },
       "stripeCustomer": "cus_KAorchardrow",
-      "quickbooksCustomer": "67",
       "hubspotCompany": "30011006",
       "hubspotContact": "51011006",
       "story": "Open but not yet due: invoice 1057 ($298.00) is due 2026-10-10. Its Stripe subscription was canceled in July."
@@ -142,7 +136,6 @@
         "title": "Head of Operations"
       },
       "stripeCustomer": null,
-      "quickbooksCustomer": null,
       "hubspotCompany": "30011007",
       "hubspotContact": "51011007",
       "story": "J4: HubSpot deal 90011004 closed won on 2026-09-25 for the Enterprise annual plan ($18,000.00, Net 30); no QuickBooks customer or invoice yet."
@@ -157,7 +150,6 @@
         "title": "Director of IT"
       },
       "stripeCustomer": null,
-      "quickbooksCustomer": null,
       "hubspotCompany": "30011008",
       "hubspotContact": "51011008",
       "story": "J5: new deal this week (created 2026-09-23)."
@@ -172,7 +164,6 @@
         "title": "Operations Manager"
       },
       "stripeCustomer": null,
-      "quickbooksCustomer": null,
       "hubspotCompany": "30011009",
       "hubspotContact": "51011009",
       "story": "J5: new deal this week (created 2026-09-24)."
@@ -187,7 +178,6 @@
         "title": "Studio Manager"
       },
       "stripeCustomer": "cus_KAlumenyoga",
-      "quickbooksCustomer": null,
       "hubspotCompany": "30011010",
       "hubspotContact": null,
       "story": "J5: paid the September Starter plan on 2026-09-23; a $49.00 partial refund of August on 2026-09-24."
@@ -202,7 +192,6 @@
         "title": "Accounts Payable"
       },
       "stripeCustomer": "cus_KAnorthgate",
-      "quickbooksCustomer": null,
       "hubspotCompany": "30011011",
       "hubspotContact": null,
       "story": "J5: the September renewal charge was declined on 2026-09-25; the subscription is past due."

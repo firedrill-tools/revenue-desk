@@ -53,11 +53,11 @@ const RUN_STARTED: AgentEvent = {
     },
     {
       integration: "slack",
-      kind: "api",
-      profile: "slack-api",
+      kind: "composio",
+      profile: "composio",
       availability: "unavailable",
       state: "not_configured",
-      detail: "Not configured. Set SLACK_BOT_TOKEN.",
+      detail: "Not configured. Set COMPOSIO_API_KEY and COMPOSIO_USER_ID.",
       endpointLabel: null,
     },
     {
@@ -206,7 +206,8 @@ describe("UIStreamMapper: the approved refund (S1 sequence)", () => {
           code: "connection_unavailable",
           integration: "slack",
           // The notice names its system.
-          message: "Slack is not configured: set SLACK_BOT_TOKEN. Its tools are not offered.",
+          message:
+            "Slack is not configured: set COMPOSIO_API_KEY and COMPOSIO_USER_ID. Its tools are not offered.",
         },
       },
       {
@@ -653,13 +654,24 @@ describe("connection notices", () => {
     expect(
       noticeFor(
         connection(
-          "quickbooks",
-          "expired",
-          "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.\nQuickBooks said: 401",
+          "stripe",
+          "needs_auth",
+          "Stripe rejected the API key. Put a new STRIPE_SECRET_KEY in your configuration file and restart Revenue Desk.\nStripe said: Expired API Key provided",
         ),
       ).message,
     ).toBe(
-      "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.",
+      "Stripe rejected the API key. Put a new STRIPE_SECRET_KEY in your configuration file and restart Revenue Desk.",
+    );
+    expect(
+      noticeFor(
+        connection(
+          "quickbooks",
+          "expired",
+          "QuickBooks Online's Intuit sign-in expired. Click Connect in Connections to sign in again.",
+        ),
+      ).message,
+    ).toBe(
+      "QuickBooks Online's Intuit sign-in expired. Click Connect in Connections to sign in again.",
     );
     expect(noticeFor(connection("hubspot", "error", "could not connect")).message).toBe(
       "HubSpot: could not connect",
