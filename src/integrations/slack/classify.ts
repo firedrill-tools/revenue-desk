@@ -1,8 +1,10 @@
 // Classifies Slack calls (Composio, docs/ARCHITECTURE.md §2, §7). Posting to
 // a channel in allowedSlackChannels is internal_write; any other channel, a
-// direct message, a channel shared with another organisation, and any
-// message that notifies a whole channel or group, is outbound. Reactions are
-// internal_write.
+// direct message (a D… conversation, or a user id given as the channel), a
+// channel shared with another organisation, and any message that notifies a
+// whole channel or group, is outbound. A reaction is internal_write, except
+// in a direct message or a shared channel, where people outside the company
+// see it: outbound.
 //
 // SLACK_SEND_MESSAGE takes a channel name or id. A name is compared with the
 // allowlist directly; an id is allowed only when the allowlist lists that id
@@ -10,9 +12,10 @@
 // the id is an allowlisted channel. A channel whose name the run has not
 // read asks, and its card says so.
 //
-// Denied (null): a post with Block Kit `blocks` or without `markdown_text`
-// (the input rules in input-rules.ts reject both first, with a message): the
-// card must show exactly what is posted.
+// Denied (null): a post with Block Kit `blocks`, a `fallback_text` (Slack's
+// notification text, which the card would not show) or without
+// `markdown_text` (the input rules in input-rules.ts reject each first, with
+// a message): the card must show exactly what is posted.
 
 import type {
   ApprovalFact,
@@ -25,6 +28,7 @@ import { fromSpec, specOf } from "../shared/profile.js";
 import { multilinePreview } from "../shared/text.js";
 import {
   isChannelId,
+  isUserId,
   type KnownChannel,
   mentionsEveryone,
   NOTHING_KNOWN,
@@ -51,6 +55,16 @@ function allowlisted(settings: ClassifierSettings): Set<string> {
 function targetOf(channel: string, settings: ClassifierSettings, known: SlackKnown): Target {
   const allowed = allowlisted(settings);
   const normalised = normaliseChannel(channel);
+  if (isUserId(normalised)) {
+    // Slack delivers a post addressed to a person as a direct message.
+    return {
+      label: normalised,
+      fact: `${normalised} (a person: a direct message)`,
+      allowed: false,
+      direct: true,
+      externallyShared: false,
+    };
+  }
   if (isChannelId(normalised)) {
     const seen: KnownChannel | undefined = known.channelById(normalised);
     const name = seen?.name ?? null;
@@ -82,9 +96,11 @@ function classifyPost(
 ): Classification | null {
   const channel = str(input, "channel");
   const text = str(input, "markdown_text");
-  const blocks = field(input, "blocks");
   if (channel === undefined || text === undefined) return null;
-  if (blocks !== undefined && blocks !== null) return null;
+  for (const hidden of ["blocks", "fallback_text"]) {
+    const value = field(input, hidden);
+    if (value !== undefined && value !== null) return null;
+  }
   const target = targetOf(channel, settings, known);
   const threadTs = str(input, "thread_ts");
   const alsoInChannel = threadTs !== undefined && bool(input, "reply_broadcast") === true;
@@ -122,26 +138,41 @@ function classifyPost(
     : { ...common, actionClass: "outbound", details };
 }
 
-function classifyReaction(input: JsonObject, known: SlackKnown, settings: ClassifierSettings) {
+function classifyReaction(
+  input: JsonObject,
+  known: SlackKnown,
+  settings: ClassifierSettings,
+): Classification | null {
   const channel = str(input, "channel");
   const timestamp = str(input, "timestamp");
   const name = str(input, "name");
   if (channel === undefined || timestamp === undefined || name === undefined) return null;
   const target = targetOf(channel, settings, known);
+  const emoji = `:${name.replace(/^:|:$/g, "")}:`;
+  const facts: ApprovalFact[] = [
+    { label: "Channel", value: target.fact },
+    { label: "Message", value: timestamp },
+    { label: "Reaction", value: emoji },
+  ];
+  if (target.direct) facts.push({ label: "Direct message", value: "Yes" });
+  if (target.externallyShared) {
+    facts.push({
+      label: "Shared channel",
+      value: "Shared with another organisation: people outside the company see it",
+    });
+  }
+  // Seen by people outside the company in a direct message or a shared channel.
+  const outside = target.direct || target.externallyShared;
   return {
-    actionClass: "internal_write",
+    actionClass: outside ? "outbound" : "internal_write",
     operation: "slack.reactions.add",
     title: "Add reaction in Slack",
     details: {
-      consequence: `React with :${name.replace(/^:|:$/g, "")}: to a message in ${target.label}`,
-      facts: [
-        { label: "Channel", value: target.fact },
-        { label: "Message", value: timestamp },
-        { label: "Reaction", value: `:${name.replace(/^:|:$/g, "")}:` },
-      ],
+      consequence: `React with ${emoji} to a message in ${target.label}`,
+      facts,
       recordIds: [timestamp],
     },
-  } as const satisfies Classification;
+  };
 }
 
 /**

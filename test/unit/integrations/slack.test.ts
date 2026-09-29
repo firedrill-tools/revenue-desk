@@ -45,10 +45,22 @@ describe("Slack channels and mentions", () => {
       "hi <!here|here>",
       "@everyone look",
       "<!subteam^S01> ping",
+      // Markdown emphasis around a broadcast still notifies everyone.
+      "*@here* refunds are done",
+      "**@channel** please read",
+      "_@everyone_",
+      "`@here`",
+      "Heads up @here.",
     ]) {
       expect(mentionsEveryone(text), text).toBe(true);
     }
-    for (const text of ["mail maya@contoso.example", "<@U0MAYA0001> done", "channel is fine"]) {
+    for (const text of [
+      "mail maya@contoso.example",
+      "write to ap@here.example",
+      "<@U0MAYA0001> done",
+      "channel is fine",
+      "@heretic is not a broadcast",
+    ]) {
       expect(mentionsEveryone(text), text).toBe(false);
     }
   });
@@ -193,12 +205,63 @@ describe("classifySlack", () => {
     ).toBe("internal_write");
   });
 
-  it("denies unknown tools, Block Kit posts and posts without text", () => {
+  it("asks before a post addressed to a person, which Slack delivers as a direct message", () => {
+    for (const channel of ["U0MAYA0001", "W0MAYA0001"]) {
+      expect(post({ channel, markdown_text: "Refunded." }), channel).toMatchObject({
+        actionClass: "outbound",
+        title: `Post to ${channel} in Slack`,
+        details: {
+          facts: expect.arrayContaining([
+            { label: "Channel", value: `${channel} (a person: a direct message)` },
+            { label: "Direct message", value: "Yes" },
+          ]),
+          recipients: [channel],
+        },
+      });
+    }
+    // Even when the allowlist somehow names it.
+    expect(
+      classifySlack(
+        "SLACK_SEND_MESSAGE",
+        { channel: "U0MAYA0001", markdown_text: "x" },
+        { ...SETTINGS, allowedSlackChannels: ["U0MAYA0001"] },
+      )?.actionClass,
+    ).toBe("outbound");
+  });
+
+  it("asks before a post that notifies everyone through Markdown emphasis", () => {
+    expect(
+      post({ channel: "#billing", markdown_text: "**@here** refunds are done" }),
+    ).toMatchObject({
+      actionClass: "outbound",
+      details: { consequence: expect.stringContaining("notifying everyone") },
+    });
+  });
+
+  it("asks before a reaction in a direct message; internal channels keep it internal", () => {
+    const reaction = (channel: string) =>
+      classifySlack(
+        "SLACK_ADD_REACTION_TO_AN_ITEM",
+        { channel, timestamp: "1790604312.000200", name: "eyes" },
+        SETTINGS,
+      );
+    expect(reaction("D0MAYA00001")).toMatchObject({
+      actionClass: "outbound",
+      details: { facts: expect.arrayContaining([{ label: "Direct message", value: "Yes" }]) },
+    });
+    expect(reaction("C0BILLING01")?.actionClass).toBe("internal_write");
+  });
+
+  it("denies unknown tools, Block Kit posts, fallback text and posts without text", () => {
     expect(classifySlack("SLACK_DELETE_CHANNEL", { channel: "C0X12" }, SETTINGS)).toBeNull();
     expect(classifySlack("post_message", { channel: "#billing", text: "x" }, SETTINGS)).toBeNull();
     expect(post({ channel: "#billing" })).toBeNull();
     expect(
       post({ channel: "#billing", markdown_text: "x", blocks: [{ type: "divider" }] }),
+    ).toBeNull();
+    // Slack shows fallback_text in notifications; the card could not show it.
+    expect(
+      post({ channel: "#billing", markdown_text: "Refunded.", fallback_text: "Something else" }),
     ).toBeNull();
     expect(post({ markdown_text: "x" })).toBeNull();
     expect(
@@ -216,7 +279,7 @@ describe("Slack input rules", () => {
       issues({
         channel: "#revenue",
         markdown_text:
-          "# Weekly digest\n\n| Deal | Amount |\n|---|---|\n| Umbrella | $18,000 |\n\n**Owner:** <@U0MAYA0001>, mail maya@contoso.example <!here>",
+          "# Weekly digest\n\n| Deal | Amount |\n|---|---|\n| Customer C | $18,000 |\n\n**Owner:** <@U0MAYA0001>, mail maya@contoso.example <!here>",
       }),
     ).toEqual([]);
   });
@@ -224,6 +287,14 @@ describe("Slack input rules", () => {
   it("refuse mentions that notify nobody, before the post reaches Slack", () => {
     expect(issues({ channel: "#billing", markdown_text: "Thanks @Sam and <@71001>" })).toEqual([
       "/markdown_text mentions <@71001>, which is not a Slack user id (U… or W…): find the person with a Slack user search and use their id, or write their name without a mention",
+      "/markdown_text has a plain @Sam, which mentions nobody in Slack: find the person with a Slack user search and write <@USERID>, or write the name without @",
+    ]);
+    expect(issues({ channel: "#billing", markdown_text: "Owner: **@Sam.**" })).toEqual([
+      "/markdown_text has a plain @Sam, which mentions nobody in Slack: find the person with a Slack user search and write <@USERID>, or write the name without @",
+    ]);
+    // A broadcast at the end of a sentence is a broadcast (the classifier asks), not a plain mention.
+    expect(issues({ channel: "#billing", markdown_text: "Refunds are done, @here." })).toEqual([]);
+    expect(issues({ channel: "#billing", markdown_text: "_@channel_ and _@Sam_" })).toEqual([
       "/markdown_text has a plain @Sam, which mentions nobody in Slack: find the person with a Slack user search and write <@USERID>, or write the name without @",
     ]);
   });
@@ -236,6 +307,9 @@ describe("Slack input rules", () => {
       issues({ channel: "#billing", markdown_text: "x", blocks: [{ type: "section" }] }),
     ).toEqual([
       "/blocks is not used by Revenue Desk: write the message as Markdown in markdown_text and leave blocks and fallback_text out",
+    ]);
+    expect(issues({ channel: "#billing", markdown_text: "x", fallback_text: "y" })).toEqual([
+      "/fallback_text is not used by Revenue Desk: Slack would show it in notifications instead of the message; leave it out and write the message in markdown_text",
     ]);
     expect(checkSlackInput("SLACK_FIND_USERS", { search_query: "@Sam" })).toEqual([]);
   });
@@ -324,6 +398,39 @@ describe("Slack cards with what the run read (SlackRunMemory)", () => {
       title: "Find Slack user",
     } as const;
     expect(memory.refine("SLACK_FIND_USERS", { search_query: "maya" }, read)).toBe(read);
+  });
+
+  it("asks before a reaction in a channel shared with another organisation", () => {
+    const memory = new SlackRunMemory(SETTINGS);
+    memory.record("SLACK_LIST_ALL_CHANNELS", { limit: 200 }, CHANNELS, false);
+    const card = memory.refine(
+      "SLACK_ADD_REACTION_TO_AN_ITEM",
+      { channel: "C0PARTNERS1", timestamp: "1790604312.000300", name: "white_check_mark" },
+      { actionClass: "internal_write", operation: "slack.reactions.add", title: "x" },
+    );
+    expect(card).toMatchObject({
+      actionClass: "outbound",
+      details: {
+        consequence: "React with :white_check_mark: to a message in #partners-acme",
+        facts: expect.arrayContaining([
+          {
+            label: "Shared channel",
+            value: "Shared with another organisation: people outside the company see it",
+          },
+        ]),
+      },
+    });
+  });
+
+  it("learns nothing from a post addressed to a person", () => {
+    const memory = new SlackRunMemory(SETTINGS);
+    memory.record(
+      "SLACK_SEND_MESSAGE",
+      { channel: "U0MAYA0001", markdown_text: "x" },
+      ok({ ok: true, channel: "D0MAYA00001", ts: "1.2" }),
+      false,
+    );
+    expect(memory.channelById("D0MAYA00001")).toBeUndefined();
   });
 
   it("keeps a channel shared once it was seen shared", () => {

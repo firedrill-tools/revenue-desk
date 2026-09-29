@@ -4,7 +4,9 @@
 //
 // - The message is `markdown_text`: Slack renders standard Markdown there
 //   (headings, bold, lists, tables). Block Kit `blocks` can carry buttons and
-//   layouts the approval card cannot show as they appear, so they are refused.
+//   layouts the approval card cannot show as they appear, so they are refused,
+//   and so is `fallback_text`: Slack shows it in notifications and previews,
+//   and the card shows only the message.
 // - In the live runs the agent posted "@Sam" (plain text, which notifies
 //   nobody) and "<@71001>" (a HubSpot owner id in Slack's mention syntax,
 //   which renders as a broken mention). A mention must be <@U…> or <@W…>
@@ -14,11 +16,11 @@
 import type { JsonObject } from "../../contracts/json.js";
 import type { SchemaIssue } from "../../gateway/validate.js";
 import { field, str } from "../shared/json.js";
-import { SLACK_ID } from "./channels.js";
+import { MENTION_START, SLACK_ID } from "./channels.js";
 
 const MENTION = /<@([^>|]*)(?:\|[^>]*)?>/g;
-/** "@Sam" at the start or after a space or bracket: not an email address, not a broadcast. */
-const PLAIN_MENTION = /(?:^|[\s(])@([A-Za-z][\w.-]*)/g;
+/** "@Sam" or "*@Sam*", not inside a word or an email address; broadcasts are skipped below. */
+const PLAIN_MENTION = new RegExp(String.raw`${MENTION_START}([A-Za-z][\w.-]*)`, "g");
 const BROADCASTS = new Set(["channel", "here", "everyone"]);
 
 /** Issues of a Slack call that satisfies its schema; empty when the post renders as meant. */
@@ -31,6 +33,14 @@ export function checkSlackInput(tool: string, input: JsonObject): readonly Schem
       path: "/blocks",
       message:
         "is not used by Revenue Desk: write the message as Markdown in markdown_text and leave blocks and fallback_text out",
+    });
+  }
+  const fallback = field(input, "fallback_text");
+  if (fallback !== undefined && fallback !== null) {
+    issues.push({
+      path: "/fallback_text",
+      message:
+        "is not used by Revenue Desk: Slack would show it in notifications instead of the message; leave it out and write the message in markdown_text",
     });
   }
   const text = str(input, "markdown_text");
@@ -49,7 +59,9 @@ export function checkSlackInput(tool: string, input: JsonObject): readonly Schem
       });
     }
   }
-  for (const [, name = ""] of text.matchAll(PLAIN_MENTION)) {
+  for (const [, match = ""] of text.matchAll(PLAIN_MENTION)) {
+    // "@here." ends a sentence and "_@Sam_" is emphasis: the name stops before them.
+    const name = match.replace(/[._-]+$/, "");
     if (BROADCASTS.has(name.toLowerCase())) continue;
     issues.push({
       path: "/markdown_text",

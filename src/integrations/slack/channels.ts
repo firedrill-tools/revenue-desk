@@ -37,15 +37,29 @@ export function isChannelId(value: string): boolean {
   return SLACK_ID.channel.test(value.trim());
 }
 
-/** "#Billing", "billing" -> "billing"; ids keep their case. */
+/** A user id given as the channel: Slack delivers the post as a direct message. */
+export function isUserId(value: string): boolean {
+  return SLACK_ID.user.test(value.trim());
+}
+
+/** "#Billing", "billing" -> "billing"; channel and user ids keep their case. */
 export function normaliseChannel(channel: string): string {
   const trimmed = channel.trim();
-  if (isChannelId(trimmed)) return trimmed;
+  if (isChannelId(trimmed) || isUserId(trimmed)) return trimmed;
   return trimmed.replace(/^#/, "").toLowerCase();
 }
 
-const BROADCAST =
-  /<!(?:channel|here|everyone)(?:\|[^>]*)?>|<!subteam\^[^>]+>|(?:^|[\s(])@(?:channel|here|everyone)\b/i;
+/**
+ * A plain "@" that starts a mention: not inside a word, an email address
+ * ("ap@here.example") or Slack's own syntax ("<@U…>"), but after a space, a
+ * bracket or Markdown emphasis ("*@here*", "_@channel_", "`@everyone`").
+ */
+export const MENTION_START = "(?<![A-Za-z0-9.@+<-])@";
+
+const BROADCAST = new RegExp(
+  String.raw`<!(?:channel|here|everyone)(?:\|[^>]*)?>|<!subteam\^[^>]+>|${MENTION_START}(?:channel|here|everyone)(?![A-Za-z0-9])`,
+  "i",
+);
 
 /** True when a message would notify a whole channel, the workspace or a user group. */
 export function mentionsEveryone(text: string): boolean {
@@ -81,7 +95,13 @@ export function postedChannel(input: JsonObject, output: JsonValue): KnownChanne
   const data = resultData(output);
   const id = str(data, "channel") ?? str(obj(data, "message"), "channel");
   const given = str(input, "channel");
-  if (id === undefined || !isChannelId(id) || given === undefined || isChannelId(given)) {
+  if (
+    id === undefined ||
+    !isChannelId(id) ||
+    given === undefined ||
+    isChannelId(given) ||
+    isUserId(given)
+  ) {
     return null;
   }
   return { id, name: normaliseChannel(given), externallyShared: false };
