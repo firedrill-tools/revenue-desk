@@ -242,15 +242,15 @@ describe("buildSystemPrompt", () => {
           connection(
             "quickbooks",
             "unavailable",
-            "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.\nQuickBooks said: message=AuthenticationFailed; errorCode=003200",
+            "Composio rejected the API key. Put a new COMPOSIO_API_KEY in your configuration file and restart Revenue Desk.\nComposio said: Invalid API key: ak_**0000",
           ),
         ],
         mode: "interactive",
       })[2] ?? "";
     expect(dynamic).toContain(
-      "- QuickBooks Online: QuickBooks Online rejected the access token (it expires hourly).",
+      "- QuickBooks Online: Composio rejected the API key. Put a new COMPOSIO_API_KEY in your configuration file and restart Revenue Desk.",
     );
-    expect(dynamic).not.toContain("AuthenticationFailed");
+    expect(dynamic).not.toContain("Invalid API key");
   });
 
   it("never names a tool", () => {

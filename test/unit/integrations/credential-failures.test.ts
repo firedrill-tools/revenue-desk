@@ -13,28 +13,21 @@ const failure = (provider: string, status: number | null, code: string | null, m
 
 describe("a failed check", () => {
   it("says what to do first and keeps the provider's words on a second line", () => {
-    const expired = probeFailure(
-      "QuickBooks",
-      new ApiToolError(
-        "quickbooks",
-        "message=AuthenticationFailed; errorCode=003200; statusCode=401",
-        {
-          status: 401,
-        },
-      ),
+    const rejected = probeFailure(
+      "HubSpot",
+      new ApiToolError("hubspot", "Authentication credentials not found.", { status: 401 }),
       {
-        variable: "QBO_ACCESS_TOKEN",
-        credential: "the access token (it expires hourly)",
-        expired: (f) => f.status === 401,
+        variable: "HUBSPOT_ACCESS_TOKEN",
+        credential: "the private-app token",
       },
     );
-    expect(expired.state).toBe("expired");
-    expect(expired.detail.split("\n")).toEqual([
-      "QuickBooks rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.",
-      "QuickBooks said: message=AuthenticationFailed; errorCode=003200; statusCode=401",
+    expect(rejected.state).toBe("needs_auth");
+    expect(rejected.detail.split("\n")).toEqual([
+      "HubSpot rejected the private-app token. Put a new HUBSPOT_ACCESS_TOKEN in your configuration file and restart Revenue Desk.",
+      "HubSpot said: Authentication credentials not found.",
     ]);
 
-    const rejected = probeFailure(
+    const stripe = probeFailure(
       "Stripe",
       new ApiToolError("stripe", "Invalid API Key", { status: 401 }),
       {
@@ -42,20 +35,18 @@ describe("a failed check", () => {
         credential: "the API key",
       },
     );
-    expect(rejected).toMatchObject({ state: "needs_auth" });
-    expect(rejected.detail).toMatch(
+    expect(stripe).toMatchObject({ state: "needs_auth" });
+    expect(stripe.detail).toMatch(
       /^Stripe rejected the API key\. Put a new STRIPE_SECRET_KEY in your configuration file and restart Revenue Desk\.\n/,
     );
 
     const down = probeFailure(
-      "QuickBooks",
-      new ApiToolError("quickbooks", "An application error has occurred: System Failure Error", {
-        status: 500,
-      }),
+      "Stripe",
+      new ApiToolError("stripe", "An unexpected error occurred.", { status: 500 }),
     );
     expect(down.state).toBe("error");
     expect(down.detail.split("\n")[0]).toBe(
-      "QuickBooks did not answer the check (HTTP 500). Try Check again later.",
+      "Stripe did not answer the check (HTTP 500). Try Check again later.",
     );
   });
 });

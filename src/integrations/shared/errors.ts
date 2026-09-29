@@ -58,8 +58,6 @@ export function toToolFailure(error: unknown, provider: string | null = null): T
 
 /** How a provider's refusal of its credential is judged and explained. */
 export type CredentialRules = {
-  /** The failure says the credential expired. */
-  readonly expired?: (failure: ToolFailure) => boolean;
   /** The failure says the credential was refused. Default: HTTP 401 or 403. */
   readonly rejected?: (failure: ToolFailure) => boolean;
   /** The configuration variable that holds it, e.g. "STRIPE_SECRET_KEY". */
@@ -75,8 +73,7 @@ function providerLine(label: string, failure: ToolFailure): string {
 
 /**
  * A failed read-only check as a ProbeResult: rejected credentials make the
- * integration unavailable (needs_auth, or expired when the provider says so);
- * anything else is a transient error. The detail's first line is a plain
+ * integration unavailable (needs_auth); anything else is a transient error. The detail's first line is a plain
  * sentence with the next step; the provider's own text follows on a second
  * line (the Connections screen shows it muted).
  */
@@ -91,13 +88,6 @@ export function probeFailure(
     rules.variable === undefined
       ? "Update them in your configuration file and restart Revenue Desk."
       : `Put a new ${rules.variable} in your configuration file and restart Revenue Desk.`;
-  if (rules.expired?.(failure) === true) {
-    return {
-      state: "expired",
-      detail: `${label} rejected ${credential}. ${fix}${providerLine(label, failure)}`,
-      accountHint: null,
-    };
-  }
   const rejected = rules.rejected ?? ((f: ToolFailure) => f.status === 401 || f.status === 403);
   if (rejected(failure)) {
     return {
@@ -116,7 +106,7 @@ export function probeFailure(
 
 /**
  * What a failed tool call says about its connection: the provider refused
- * the credential itself (expired or rejected, by `rules`), so the
+ * the credential itself (by `rules`), so the
  * connection is recorded as a check would record it and the next run leaves
  * the integration out. Any other failure (a declined card, a missing record,
  * a 500) says nothing about the connection: null.

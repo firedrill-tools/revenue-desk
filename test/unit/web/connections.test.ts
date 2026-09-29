@@ -32,12 +32,12 @@ describe("connectionDetail", () => {
       connectionDetail({
         state: "expired",
         detail:
-          "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.\nQuickBooks said: message=AuthenticationFailed; errorCode=003200; statusCode=401",
+          "Composio rejected the API key. Put a new COMPOSIO_API_KEY in your configuration file and restart Revenue Desk.\nComposio said: Invalid API key: ak_**0000",
       }),
     ).toEqual({
       summary:
-        "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.",
-      provider: "QuickBooks said: message=AuthenticationFailed; errorCode=003200; statusCode=401",
+        "Composio rejected the API key. Put a new COMPOSIO_API_KEY in your configuration file and restart Revenue Desk.",
+      provider: "Composio said: Invalid API key: ak_**0000",
     });
     expect(connectionDetail({ state: "connected", detail: "Connected to Contoso." })).toEqual({
       summary: "Connected to Contoso.",
@@ -47,7 +47,10 @@ describe("connectionDetail", () => {
 
   it("tells a not-configured row what to do; the Missing column names the variables", () => {
     expect(
-      connectionDetail({ state: "not_configured", detail: "Not configured. Set SLACK_BOT_TOKEN." }),
+      connectionDetail({
+        state: "not_configured",
+        detail: "Not configured. Set HUBSPOT_ACCESS_TOKEN.",
+      }),
     ).toEqual({
       summary: "Add these to the file DOTENV_PATH names, then restart Revenue Desk.",
       provider: null,
