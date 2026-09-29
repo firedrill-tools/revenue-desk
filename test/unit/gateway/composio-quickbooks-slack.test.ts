@@ -64,7 +64,7 @@ const READ_RESULTS: Readonly<Record<string, unknown>> = {
         DocNumber: "1051",
         TotalAmt: 1980,
         Balance: 1980,
-        CustomerRef: { value: "63", name: "Initech" },
+        CustomerRef: { value: "63", name: "Customer A" },
       },
     ],
   },
@@ -207,7 +207,7 @@ describe("QuickBooks and Slack through the Composio session", () => {
     expect(payment.classify(input)).toMatchObject({
       actionClass: "financial",
       details: {
-        consequence: "Record a $1,980.00 payment from Initech against invoice 1051",
+        consequence: "Record a $1,980.00 payment from Customer A against invoice 1051",
         amount: { amountMinor: 198_000, currency: "USD" },
       },
     });

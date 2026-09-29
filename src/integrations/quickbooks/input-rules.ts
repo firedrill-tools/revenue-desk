@@ -10,11 +10,41 @@
 //   card. QUICKBOOKS_CREATE_PAYMENT would charge one through QuickBooks
 //   Payments with `process_payment: true` or `credit_card_payment`, so both
 //   are refused.
+// - Records are named by QuickBooks Id, a string of digits: `customer_id`
+//   and each linked transaction's `TxnId` must be one (a name or an invoice
+//   number is not), so the card can name the record and QuickBooks finds it.
 
 import type { JsonObject } from "../../contracts/json.js";
 import type { SchemaIssue } from "../../gateway/validate.js";
-import { arr, field, isObject } from "../shared/json.js";
-import { decimal } from "./records.js";
+import { arr, field, isObject, objects } from "../shared/json.js";
+import { decimal, qboId } from "./records.js";
+
+function customerIdIssues(input: JsonObject): SchemaIssue[] {
+  const value = field(input, "customer_id");
+  if (value === undefined || qboId(value) !== undefined) return [];
+  return [
+    {
+      path: "/customer_id",
+      message:
+        'is not a QuickBooks customer Id: use the Id (digits, e.g. "58") from a customer search or read, not the name',
+    },
+  ];
+}
+
+function linkedTxnIssues(input: JsonObject): SchemaIssue[] {
+  const issues: SchemaIssue[] = [];
+  objects(input, "lines").forEach((line, lineIndex) => {
+    objects(line, "LinkedTxn").forEach((linked, index) => {
+      if (qboId(field(linked, "TxnId")) !== undefined) return;
+      issues.push({
+        path: `/lines/${lineIndex}/LinkedTxn/${index}/TxnId`,
+        message:
+          "is not a QuickBooks transaction Id: use the invoice's Id (digits) from an invoice search or read, not its invoice number",
+      });
+    });
+  });
+  return issues;
+}
 
 function invoiceLineIssues(input: JsonObject): SchemaIssue[] {
   const lines = arr(input, "lines");
@@ -68,7 +98,11 @@ function paymentIssues(input: JsonObject): SchemaIssue[] {
 
 /** Issues of a QuickBooks call that satisfies its schema; empty when it may run. */
 export function checkQuickBooksInput(tool: string, input: JsonObject): readonly SchemaIssue[] {
-  if (tool === "QUICKBOOKS_CREATE_INVOICE") return invoiceLineIssues(input);
-  if (tool === "QUICKBOOKS_CREATE_PAYMENT") return paymentIssues(input);
+  if (tool === "QUICKBOOKS_CREATE_INVOICE") {
+    return [...customerIdIssues(input), ...invoiceLineIssues(input)];
+  }
+  if (tool === "QUICKBOOKS_CREATE_PAYMENT") {
+    return [...customerIdIssues(input), ...linkedTxnIssues(input), ...paymentIssues(input)];
+  }
   return [];
 }

@@ -65,7 +65,7 @@ const VALID: Readonly<Record<string, JsonObject>> = {
     metadata: { thread: "18c2f" },
   },
   mcp__stripe__cancel_subscription: {
-    subscription: "sub_KAcyberdyne",
+    subscription: "sub_KAsubscription1",
     prorate: true,
     comment: "Closing",
   },

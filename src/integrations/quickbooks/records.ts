@@ -166,6 +166,34 @@ export function appliedFrom(lines: readonly JsonObject[], currency: string): App
   return applied;
 }
 
+/** One application of a payment to a transaction other than an invoice (a credit memo), in minor units. */
+export type OtherApplication = {
+  readonly txnType: string;
+  readonly txnId: string;
+  readonly amountMinor: number;
+};
+
+/** The payment lines linked to anything but an invoice, e.g. a credit memo. */
+export function otherAppliedFrom(
+  lines: readonly JsonObject[],
+  currency: string,
+): OtherApplication[] {
+  const other: OtherApplication[] = [];
+  for (const line of lines) {
+    const amount = decimal(field(line, "Amount"));
+    if (amount === undefined) continue;
+    for (const linked of objects(line, "LinkedTxn")) {
+      const txnType = str(linked, "TxnType");
+      const txnId = str(linked, "TxnId")?.trim();
+      if (txnType === "Invoice" || txnType === undefined || txnId === undefined || txnId === "") {
+        continue;
+      }
+      other.push({ txnType, txnId, amountMinor: decimalToMinor(amount, currency) });
+    }
+  }
+  return other;
+}
+
 export function paymentFrom(record: JsonObject, fallbackCurrency: string): KnownPayment | null {
   const id = qboId(field(record, "Id")) ?? null;
   const own = currencyOf(record);

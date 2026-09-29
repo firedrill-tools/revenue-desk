@@ -37,6 +37,8 @@ import {
   decimal,
   type KnownCustomer,
   type KnownInvoice,
+  type OtherApplication,
+  otherAppliedFrom,
   qboId,
 } from "./records.js";
 
@@ -257,6 +259,12 @@ function createInvoice(
 
 // --- Payments ----------------------------------------------------------------
 
+/** "QuickBooks credit memo 12" for a payment line linked to anything but an invoice. */
+function otherLabel(other: OtherApplication): string {
+  const type = other.txnType === "CreditMemo" ? "credit memo" : preview(other.txnType, 40);
+  return `QuickBooks ${type} ${preview(other.txnId, 40)}`;
+}
+
 function appliedFact(
   applied: AppliedPayment,
   currency: string,
@@ -290,13 +298,23 @@ function createPayment(
   const currency = currencyOf(str(input, "currency_ref_value"), settings);
   const amount = money(decimalToMinor(totalDecimal, currency), currency);
   const formatted = formatMoney(amount);
-  const applied = appliedFrom(objects(input, "lines"), currency);
+  const lines = objects(input, "lines");
+  const applied = appliedFrom(lines, currency);
+  const others = otherAppliedFrom(lines, currency);
   const checks: ApprovalFact[] = [];
   const facts: ApprovalFact[] = [
     { label: "Amount", value: formatted },
     customerFact(customer, known),
   ];
-  if (applied.length === 0) facts.push({ label: "Applied to", value: "Unapplied" });
+  if (applied.length === 0 && others.length === 0) {
+    facts.push({ label: "Applied to", value: "Unapplied" });
+  }
+  for (const other of others) {
+    facts.push({
+      label: "Applied to",
+      value: `${formatMoney(money(other.amountMinor, currency))} to ${otherLabel(other)}`,
+    });
+  }
   for (const entry of applied) {
     facts.push(appliedFact(entry, currency, known));
     const seen = known.invoice(entry.invoiceId);
@@ -345,8 +363,8 @@ function createPayment(
       });
     }
   }
-  const appliedMinor = applied.reduce((sum, entry) => sum + entry.amountMinor, 0);
-  if (applied.length > 0 && appliedMinor < amount.amountMinor) {
+  const appliedMinor = [...applied, ...others].reduce((sum, entry) => sum + entry.amountMinor, 0);
+  if (applied.length + others.length > 0 && appliedMinor < amount.amountMinor) {
     facts.push({
       label: "Unapplied",
       value: formatMoney(money(amount.amountMinor - appliedMinor, currency)),
@@ -357,10 +375,11 @@ function createPayment(
   const reference = str(input, "payment_ref_num");
   if (reference !== undefined) facts.push({ label: "Reference", value: reference });
   const invoices = [...new Set(applied.map((entry) => entry.invoiceId))];
-  const against =
-    invoices.length === 0
-      ? ""
-      : ` against ${listOf(invoices.map((id) => invoiceLabel(id, known)))}`;
+  const targets = [
+    ...invoices.map((id) => invoiceLabel(id, known)),
+    ...new Set(others.map(otherLabel)),
+  ];
+  const against = targets.length === 0 ? "" : ` against ${listOf(targets)}`;
   return {
     actionClass: "financial",
     operation: "quickbooks.payments.create",
