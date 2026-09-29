@@ -60,6 +60,8 @@ type Connectable<I extends ComposioIntegrationId> = IntegrationDefinition<I> & {
       toolkit: ComposioToolkitSlug,
       callbackUrl: string,
     ): Promise<{ readonly redirectUrl: string }>;
+    /** Forgets cached Composio sessions, so the next run sees newly connected accounts. */
+    reset?(): void;
   };
 };
 
@@ -118,6 +120,7 @@ export class ConnectionService {
 
   /** Runs the read-only check of a configured integration and stores the result. */
   async check(integration: IntegrationId, signal?: AbortSignal): Promise<ConnectionView> {
+    const before = this.get(integration).state;
     const timeout = AbortSignal.timeout(this.#options.probeTimeoutMs ?? 20_000);
     const probeSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
     const status = await checkConnection(
@@ -137,7 +140,29 @@ export class ConnectionService {
           },
     );
     this.#save(view);
+    // A Composio account connected since the cached session was made (for example
+    // through Connect a moment ago): start the next run on a fresh session.
+    if (view.state === "connected" && before !== "connected") this.#resetComposio(integration);
     return view;
+  }
+
+  #resetComposio(integration: IntegrationId): void {
+    if (
+      integration !== "gmail" &&
+      integration !== "google_calendar" &&
+      integration !== "quickbooks" &&
+      integration !== "slack"
+    ) {
+      return;
+    }
+    const definition = this.#set[integration] as IntegrationDefinition<typeof integration>;
+    const resolution = definition.resolve(this.#options.env);
+    if (!connectable(definition) || resolution.status !== "configured") return;
+    try {
+      definition.connector(resolution.connection).reset?.();
+    } catch {
+      // Dropping a cache is best effort; the check's result stands either way.
+    }
   }
 
   /** Checks every configured integration (at boot); failures are recorded, never thrown. */

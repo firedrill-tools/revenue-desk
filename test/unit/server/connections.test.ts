@@ -176,6 +176,37 @@ describe("ConnectionService over the production integrations", () => {
     expect(stub.createSession).toHaveBeenCalledTimes(1);
   });
 
+  it("a check that finds a newly connected account starts the next use on a fresh Composio session", async () => {
+    const stub = composioClient();
+    const { connections } = service(stub.client);
+    await connections.check("google_calendar");
+    expect(connections.get("google_calendar").state).toBe("needs_auth");
+    expect(stub.createSession).toHaveBeenCalledTimes(1);
+
+    // Still not connected: the cached session is kept.
+    await connections.check("google_calendar");
+    expect(stub.createSession).toHaveBeenCalledTimes(1);
+
+    // The user connects Calendar through Composio; the next check sees it and drops the cache.
+    const connectedCalendar: ComposioToolkitState = {
+      slug: "googlecalendar",
+      isNoAuth: false,
+      connection: { isActive: true, connectedAccount: { id: "ca_cal_000333", status: "ACTIVE" } },
+    };
+    stub.toolkits.mockResolvedValue({
+      items: [CONNECTED_GMAIL, connectedCalendar, UNCONNECTED_QUICKBOOKS, CONNECTED_SLACK],
+    });
+    await connections.check("google_calendar");
+    expect(connections.get("google_calendar").state).toBe("connected");
+    expect(stub.createSession).toHaveBeenCalledTimes(1);
+
+    // The next use builds a fresh session, which then stays cached while nothing changes.
+    await connections.check("google_calendar");
+    expect(stub.createSession).toHaveBeenCalledTimes(2);
+    await connections.check("google_calendar");
+    expect(stub.createSession).toHaveBeenCalledTimes(2);
+  });
+
   it("connects QuickBooks and Slack through Composio like Gmail and Calendar", async () => {
     const stub = composioClient();
     const { connections } = service(stub.client);
