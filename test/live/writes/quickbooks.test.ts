@@ -2,9 +2,10 @@
  * Live write, QuickBooks through Composio, a sandbox company only: the agent
  * creates a customer (no opening balance) in the connected company.
  *
- * Refuses (skips with the reason) unless the connected QuickBooks account
- * uses Intuit's sandbox server (https://sandbox-quickbooks.api.intuit.com,
- * chosen when connecting); a real company is never written to. QuickBooks
+ * Refuses (skips with the reason) unless every active QuickBooks account of
+ * the Composio user has Intuit's sandbox server
+ * (https://sandbox-quickbooks.api.intuit.com) as its base URL
+ * (quickbooks-sandbox.ts); a real company is never written to. QuickBooks
  * does not delete customers and Composio's toolkit cannot make one inactive,
  * so the customer stays in the sandbox company, named with the test's marker.
  *
@@ -25,12 +26,12 @@ import {
   requireLiveWrites,
   unavailableReason,
 } from "../support.js";
+import { quickBooksWriteRefusal } from "./quickbooks-sandbox.js";
 import { composioTool, connectedAccounts, objectsMentioning } from "./support.js";
 
 requireLiveWrites();
 
 const BUDGET_USD = 0.5;
-const SANDBOX_HOST = "sandbox-quickbooks.api.intuit.com";
 /** A customer without an opening balance is an internal write; nothing else writes. */
 const CUSTOMER_POLICY: Policy = {
   read: "auto",
@@ -53,9 +54,8 @@ describe("live write: QuickBooks, in a sandbox company only", () => {
       console.log(`live write quickbooks: skipped. ${reason}`);
       context.skip(reason);
     }
-    const accounts = await connectedAccounts("quickbooks");
-    if (!accounts.some((account) => JSON.stringify(account).includes(SANDBOX_HOST))) {
-      const refusal = `Refused: the connected QuickBooks account does not use ${SANDBOX_HOST}, so it may be a real company.`;
+    const refusal = quickBooksWriteRefusal(await connectedAccounts("quickbooks"));
+    if (refusal !== null) {
       console.log(`live write quickbooks: skipped. ${refusal}`);
       context.skip(refusal);
     }
