@@ -2,10 +2,11 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
+import { E2E_PORT } from "./test/e2e-ui/port.js";
 
 // UI end-to-end tests of the real app (docs/ARCHITECTURE.md §11): the
 // production build (run `pnpm build` first), dist/server/main.js on
-// 127.0.0.1:4320, with the real configuration (DOTENV_PATH, default this
+// 127.0.0.1:4320 (or E2E_PORT, test/e2e-ui/port.ts), with the real configuration (DOTENV_PATH, default this
 // repository's git-ignored .env, when it exists) and a fresh state directory
 // in the system temp directory. Nothing is faked: the connections the pages
 // show are the ones the server checked, read-only, at start.
@@ -20,7 +21,7 @@ import { defineConfig, devices } from "@playwright/test";
 // it keeps no trace, screenshot or HTML report, and writes its artifacts
 // outside the repository. `pnpm test:e2e` never runs it.
 const LIVE = process.env.LIVE_UI === "1";
-const PORT = 4320;
+const PORT = E2E_PORT;
 const STATE_DIR = join(tmpdir(), LIVE ? "revenue-desk-e2e-ui-live" : "revenue-desk-e2e-ui");
 const DOTENV = resolve(process.env.DOTENV_PATH?.trim() || ".env");
 

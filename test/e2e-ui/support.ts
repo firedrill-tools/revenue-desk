@@ -6,9 +6,10 @@ import { AxeBuilder } from "@axe-core/playwright";
 import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
 import type { ConnectionView } from "../../src/contracts/api.js";
 import { ApiClient } from "../support/api-client.js";
+import { E2E_PORT } from "./port.js";
 
 /** The app that playwright.config.ts starts (dist/server/main.js with the real configuration). */
-export const APP_URL = "http://127.0.0.1:4320";
+export const APP_URL = `http://127.0.0.1:${E2E_PORT}`;
 
 export const APPROVAL = /^Approval needed: /;
 

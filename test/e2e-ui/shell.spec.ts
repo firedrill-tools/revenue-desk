@@ -7,6 +7,7 @@
 
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import {
+  APP_URL,
   appApi,
   expectAccessible,
   expectNoSideScroll,
@@ -228,6 +229,6 @@ test.describe("privacy", () => {
       await page.goto(path);
       await expect(page.getByRole("main")).toBeVisible();
     }
-    expect([...hosts]).toEqual(["127.0.0.1:4320"]);
+    expect([...hosts]).toEqual([new URL(APP_URL).host]);
   });
 });
