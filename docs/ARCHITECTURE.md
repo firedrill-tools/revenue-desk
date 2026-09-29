@@ -11,8 +11,8 @@ Slack moved to Composio; no mocking or simulation in the product or its
 tests** (Kiran's mapping: Composio for Gmail, Google Calendar, QuickBooks and
 Slack, MCP for HubSpot, API for Stripe; decisions log). `pnpm start` and
 `pnpm dev` serve the full `/api` and the app, and the CLI runs against the
-shared database. `pnpm verify` (typecheck, lint, 878 unit and integration
-tests, the build, 17 tests of the built CLI and 27 Playwright tests against
+shared database. `pnpm verify` (typecheck, lint, 900 unit and integration
+tests, the build, 18 tests of the built CLI and 29 Playwright tests against
 the real app with one skipped) is green. The live suites run against the
 real model and accounts: Gmail and Stripe (test mode) are read live;
 Calendar, QuickBooks and Slack are not connected in Composio for the
@@ -50,8 +50,8 @@ decisions log.
   `process.loadEnvFile(path)`). Secrets travel as `SecretValue`
   (`src/contracts/env.ts`), which serialises as `[redacted]`. A redactor (§5)
   scrubs every configured secret value and `Bearer …`, `sk_`, `rk_`,
-  `sk-ant-`, `xox`, `pat-` patterns from logs, database rows, SSE output and
-  stdout (`src/config/redact.ts`).
+  `sk-ant-`, `xox`, `pat-`, `ak_` (Composio) patterns from logs, database
+  rows, SSE output and stdout (`src/config/redact.ts`).
 - **Composio development rule.** Implementers and automated checks may create
   Composio sessions and make read-only toolkit, catalog and tool-listing calls
   with the configured key. They never execute a Composio tool that writes
@@ -108,7 +108,7 @@ a missing record or an unavailable integration.
 |---|---|---|
 | Gmail | **Composio** | Composio session MCP: `sessions.create(userId, {toolkits, tools:{<toolkit>:{enable:[…]}}, sessionPreset:'direct_tools', manageConnections:false, sandbox:{enable:false}, mcp:true})`. Composio manages the Google OAuth. |
 | Google Calendar | **Composio** | The same session, `googlecalendar` toolkit. |
-| QuickBooks Online | **Composio** | The same session, `quickbooks` toolkit. Composio-managed OAuth (Intuit); the connection's base URL is chosen at Connect (production by default, `https://sandbox-quickbooks.api.intuit.com` for a sandbox company). |
+| QuickBooks Online | **Composio** | The same session, `quickbooks` toolkit. Composio-managed OAuth (Intuit): the managed Intuit app connects a real or trial QuickBooks Online company. Composio's QuickBooks auth scheme has a Base URL field (production by default); an Intuit sandbox company needs an Intuit developer app with Development keys as a Composio auth config, which Revenue Desk does not select yet (§14). |
 | Slack | **Composio** | The same session, `slack` toolkit. Composio-managed OAuth with user scopes: posts appear as the person who connected. |
 | HubSpot | **MCP** | Default: `@hubspot/mcp-server` 0.4.0 over stdio with `HUBSPOT_ACCESS_TOKEN`. Alternative: any Streamable HTTP MCP via `HUBSPOT_MCP_URL`/`HUBSPOT_MCP_TOKEN`. |
 | Stripe | **API** | REST `https://api.stripe.com/v1/*`, form-encoded, `Authorization: Bearer sk_test_…`, `Idempotency-Key` on writes. |
@@ -283,15 +283,17 @@ company currency (numbers, or numeric strings from the create tools).
   outbound), and the prompt's QuickBooks line says so.
 - **Input rules** (`checkQuickBooksInput`): every invoice line needs a
   decimal `Amount` (the schema leaves lines open and the card shows the
-  total from them); a payment with `process_payment: true` or
+  total from them); an invoice's or payment's `customer_id` and each
+  payment line's `LinkedTxn[].TxnId` must be a QuickBooks Id (digits), not
+  a name or an invoice number; a payment with `process_payment: true` or
   `credit_card_payment` is refused, because Revenue Desk records payments
   received and never charges a card through QuickBooks Payments.
 - **Cards:** an invoice card shows the customer, the lines total before tax,
   up to five lines, due date, number, billing email and "Sent: No"; a
   payment card shows the amount, the customer, each invoice it is applied
-  to with its open balance, the unapplied remainder, a mismatch when an
-  invoice belongs to another customer and a check when a payment exceeds
-  the open balance.
+  to with its open balance, any other linked transaction (a credit memo),
+  the unapplied remainder, a mismatch when an invoice belongs to another
+  customer and a check when a payment exceeds the open balance.
 
 **Slack, profile `composio`** (toolkit `slack`, catalog version
 `20260915_00`, 168 tools; 7 offered). `SLACK_CHAT_POST_MESSAGE` is
@@ -304,13 +306,14 @@ deprecated in favour of `SLACK_SEND_MESSAGE`.
 | `SLACK_FETCH_CONVERSATION_HISTORY` | `slack.conversations.history` | read |
 | `SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION` | `slack.conversations.replies` | read |
 | `SLACK_FIND_USERS` | `slack.users.find` | read |
-| `SLACK_ADD_REACTION_TO_AN_ITEM` | `slack.reactions.add` | internal_write |
-| `SLACK_SEND_MESSAGE` | `slack.chat.post_message` | outbound; internal_write when the channel is in `allowedSlackChannels` (by name, or by an id the allowlist lists or the run's channel search named), is not a direct message or a channel shared with another organisation, and the text notifies no one broadly (`@channel`, `@here`, `@everyone`, `<!…>`, a user group) |
+| `SLACK_ADD_REACTION_TO_AN_ITEM` | `slack.reactions.add` | internal_write; outbound in a direct message or a channel the run saw shared with another organisation |
+| `SLACK_SEND_MESSAGE` | `slack.chat.post_message` | outbound; internal_write when the channel is in `allowedSlackChannels` (by name, or by an id the allowlist lists or the run's channel search named), is not a direct message (a `D…` id, or a user id `U…`/`W…` given as the channel) or a channel shared with another organisation, and the text notifies no one broadly (`@channel`, `@here`, `@everyone`, also inside Markdown emphasis such as `*@here*`, `<!…>`, a user group) |
 
 - A post is standard Markdown in `markdown_text`; Slack renders headings,
   bold, lists and tables there. The **input rule** (`checkSlackInput`)
-  refuses Block Kit `blocks` (the card must show exactly what is posted), a
-  missing `markdown_text`, a plain `@name` (notifies nobody) and a `<@X>`
+  refuses Block Kit `blocks` and `fallback_text` (Slack shows the latter in
+  notifications and previews; the card must show exactly what is posted),
+  a missing `markdown_text`, a plain `@name` (notifies nobody) and a `<@X>`
   mention whose X is not a Slack user id (`U…`/`W…`).
 - A channel id says nothing about which channel it is: `SlackRunMemory`
   learns id, name and Slack Connect sharing from channel searches and lists
@@ -851,8 +854,8 @@ only source of truth, and re-sending would replay side effects.
 | Action class | Default mode |
 |---|---|
 | `read` | auto |
-| `internal_write` (drafts, labels other than Trash and Spam, HubSpot records, a QuickBooks customer without an opening balance, Slack posts to allowlisted channels that notify no one broadly, Slack reactions, calendar events on an internal calendar whose attendees are all internal) | auto |
-| `outbound` (send or reply to email, calendar events with an external attendee or on a calendar that is not internal, an update of an event whose current guests the run has not read, other Slack posts: another channel, a direct message, a channel shared with another organisation, an id the run has not seen named, a broadcast) | ask |
+| `internal_write` (drafts, labels other than Trash and Spam, HubSpot records, a QuickBooks customer without an opening balance, Slack posts to allowlisted channels that notify no one broadly, Slack reactions outside direct messages and shared channels, calendar events on an internal calendar whose attendees are all internal) | auto |
+| `outbound` (send or reply to email, calendar events with an external attendee or on a calendar that is not internal, an update of an event whose current guests the run has not read, other Slack posts: another channel, a direct message, a channel shared with another organisation, an id the run has not seen named, a broadcast; a Slack reaction in a direct message or a shared channel) | ask |
 | `financial` (Stripe refund and subscription cancel; QuickBooks invoice create, payment record, customer with an opening balance) | ask |
 | `destructive` (`GMAIL_ADD_LABEL_TO_EMAIL` adding `TRASH` or `SPAM`) | deny |
 
@@ -1178,7 +1181,9 @@ and drives our own end-to-end tests.
   configuration, 124 timed out, 130 cancelled.
 - **Signals:** SIGINT or SIGTERM stops the run (interrupt), prints the summary
   with `--json`, and exits within 1.5 seconds; a second signal skips the
-  wait. While a write executes, the CLI says so on stderr and waits for its
+  wait. `main.ts` catches both before it loads the rest of the CLI
+  (`early-signals.ts`), so a signal during start-up reaches the run as
+  well instead of Node's default ending the process without a summary. While a write executes, the CLI says so on stderr and waits for its
   answer, at most `WRITE_DRAIN_MS` (70 s); a second signal stops waiting and
   the write is recorded `outcome_unknown` with its key. `--timeout-ms` ends
   the run `timed_out`. No work continues after the output is written.
@@ -1198,9 +1203,9 @@ The suites at HEAD (counted 2026-09-29):
 
 | Command | Suite | Tests |
 |---|---|---|
-| `pnpm test` | Vitest over `test/unit` and `test/integration`; no network, no model | 878 in 77 files |
-| `pnpm test:cli` | `test/cli`: the built CLI before a model call (`pnpm build` first) | 17 |
-| `pnpm test:e2e` | Playwright `test/e2e-ui`: the built app with the real configuration, no model call (`pnpm build` first), desktop and phone projects | 28 listed: 27 run, 1 skipped (touch targets run on the phone project only) |
+| `pnpm test` | Vitest over `test/unit` and `test/integration`; no network, no model | 900 in 79 files |
+| `pnpm test:cli` | `test/cli`: the built CLI before a model call (`pnpm build` first) | 18 |
+| `pnpm test:e2e` | Playwright `test/e2e-ui`: the built app with the real configuration, no model call (`pnpm build` first), desktop and phone projects | 30 listed: 29 run, 1 skipped (touch targets run on the phone project only) |
 | `LIVE_E2E=1 pnpm test:live` | `test/live/*.test.ts`: the real model and accounts, read-only | 16 |
 | `LIVE_E2E=1 pnpm test:live:ui` | `test/e2e-ui/*.live.spec.ts`: the chat in the browser with the real model | 2 |
 | `LIVE_E2E=1 LIVE_E2E_WRITES=1 pnpm test:live:writes` | `test/live/writes`: real changes on test-safe targets | 5 |
@@ -1393,6 +1398,7 @@ revenue-desk/
 | 2026-09-29 review: security, correctness and UX findings (decisions log) | done (`be448f8`…`4252a82`); `test/e2e-ui/review.spec.ts` covers the browser-side ones |
 | `pnpm verify` green | done at `8f30051` (1,205 + 8 + 49 tests, 1 skipped) |
 | Kiran's mapping (2026-09-29): QuickBooks and Slack through Composio; their REST and Web API integrations, variables, fakes and tests removed; captured Composio surface for four toolkits | done (Stage 1; typecheck, lint, 1,130 + 8 + 49 tests, 1 skipped, and 11 offline live-script checks green); not yet run against a connected QuickBooks or Slack account |
+| Stage 4 (2026-09-29): adversarial review of Stages 1 to 3 (decisions log) | done: `pnpm verify` green (900 + 18 + 29 tests, 1 skipped); the live suites were not rerun |
 | Stage 2 (2026-09-29): no mocking or simulation. The sandbox demo, the local fakes, the scripted Messages API, the fictional company, the scripted jobs and the full-stack suite over them removed, with `AGENT_SANDBOX`, `ANTHROPIC_BASE_URL`, `HUBSPOT_MCP_COMMAND`/`HUBSPOT_MCP_ARGS` and plain-HTTP loopback base URLs; unit tests kept for Revenue Desk's own logic; `pnpm test:cli` for the built CLI before a model call; Playwright against the real app; live read, browser and write suites against the real model and accounts (§11) | done: `pnpm verify` green (878 + 17 + 27 tests, 1 skipped); `pnpm test:live` 8 passed and 8 skipped for systems not yet connected or configured; `pnpm test:live:ui` 2 passed; the write suite not run |
 
 Milestones M1, M2 and M3 are met: `pnpm verify` is green and the live
@@ -1454,12 +1460,21 @@ and live read-only E2E has run.
   availability must come from the probe. The Composio logger is
   process-wide. Sessions created by the spikes and captures were not deleted
   (they expire). `session.authorize` always starts a new link flow, so it
-  runs only on a click. The project has no QuickBooks auth config yet and
-  its Slack auth config is Composio-managed with user scopes: Connect is
-  expected to create or use a Composio-managed auth config, which is
-  unverified until Kiran connects. Composio's QuickBooks connection asks for
-  a base URL (production by default); a sandbox company needs the sandbox
-  URL, and Composio's managed Intuit app may not reach sandbox companies.
+  runs only on a click. Each Connect creates a pending (`INITIALIZING`)
+  connection request, and on 2026-09-29 the session created Composio-managed
+  auth configs for QuickBooks and Slack on the first Connect (a second
+  managed Slack config beside an older one). Composio's QuickBooks auth
+  scheme has a Base URL connection field (production by default); whether
+  the hosted sign-in asks for it is unverified, and Composio's managed
+  Intuit app uses production keys, which cannot reach an Intuit sandbox
+  company. A sandbox needs an Intuit developer app with Development keys as
+  a Composio auth config (Composio's redirect
+  `https://backend.composio.dev/api/v1/auth-apps/add` added in the Intuit
+  app), a connection with the sandbox Base URL, and a Revenue Desk change:
+  `buildSessionConfig` pins no auth config (the SDK takes one per toolkit as
+  `authConfigs`) and `session.authorize` takes only a callback URL. Not
+  built; the QuickBooks live write test refuses anything but a sandbox
+  company.
 - **Composio tool drift.** Composio versions its toolkits (QuickBooks
   `20260721_00`, Slack `20260915_00` at capture) and has deprecated slugs
   before (`SLACK_CHAT_POST_MESSAGE`). Run memory reads outputs tolerantly
@@ -1467,8 +1482,9 @@ and live read-only E2E has run.
   re-checks the slugs and schemas.
 - **Live readiness (2026-09-29):** Gmail is connected in Composio and a
   Stripe test-mode key is configured; both are read by the live suites.
-  Calendar (its connection expired), QuickBooks and Slack need Connect, and
-  there is no HubSpot token, so the live suites skip them with that reason.
+  Calendar, QuickBooks and Slack have no active Composio connection for the
+  configured user and need Connect, and there is no HubSpot token, so the
+  live suites skip them with that reason.
   QuickBooks, Slack and HubSpot have therefore been exercised only through
   their captured schemas in unit tests, never with a real account; no write
   of any integration has run live yet (`pnpm test:live:writes`).
@@ -1936,6 +1952,54 @@ the record of what was built then.
   browser) and `pnpm test:live:writes` (test-safe writes only, a separate
   opt-in). A system that is not connected is skipped with the reason, never
   faked.
+
+**2026-09-29, Stage 4: review of the Composio rework.** An adversarial
+review of Stages 1 to 3 against the code; each item was fixed with tests.
+
+- **Slack approvals.** `fallback_text` is refused (input rule) and denied
+  (classifier): Slack shows it in notifications and previews, and the card
+  showed only `markdown_text`. A broadcast inside Markdown emphasis
+  (`*@here*`, `_@channel_`, `` `@everyone` ``) now counts as a broadcast
+  and asks; before, only one after a space or a bracket did, so such a post
+  to an allowlisted channel ran without asking. A user id given as the
+  channel (`U…`, `W…`) is a direct message and asks, instead of reading as
+  a channel name. A reaction in a direct message or a channel the run saw
+  shared with another organisation is outbound. "@here." at the end of a
+  sentence is no longer refused as a plain mention.
+- **QuickBooks approvals.** A payment line linked to a credit memo is shown
+  on the card instead of reading as unapplied; `customer_id` and
+  `LinkedTxn[].TxnId` must be QuickBooks Ids, refused with a message
+  instead of the generic "could not determine what this call would do".
+- **Composio errors.** A refused `COMPOSIO_API_KEY` made every Composio row
+  `error` with Composio's raw JSON, and runs kept trying. The check now
+  says `needs_auth`, "Composio rejected the API key. Put a new
+  COMPOSIO_API_KEY in your configuration file and restart Revenue Desk.",
+  with Composio's own words on the second line (checked against Composio
+  with an invalid key); other failures say "did not answer the check" with
+  the HTTP status. Errors of the connection listing are redacted too, and
+  the redactor knows Composio's `ak_` key shape.
+- **CLI signals.** `main.ts` installed the SIGINT and SIGTERM handlers only
+  after loading the CLI, so a signal in that first moment ended the process
+  without the `--json` summary (exit code null; `pnpm test:cli` flaked
+  once). Measured on the build: SIGINT 60 to 300 ms after start killed the
+  process every time (20 of 20). The handlers are now installed first and a
+  kept signal reaches the run: 20 of 20 exit 130 with the summary, and
+  `pnpm test:cli` checks it 150 ms after start.
+- **Settings.** A fresh workspace showed "Enter the company name." before
+  anything was edited; a section's checks now show once it has unsaved
+  changes, and the server's always. On touch screens each approval-mode
+  option is now a 44px target (the group was 44px, each option 38px); the
+  Playwright check had passed only when it measured before the policy
+  loaded, and now waits for the options.
+- **Live write guard.** The QuickBooks write test ran when any active
+  QuickBooks account's JSON mentioned the sandbox host; it now needs every
+  active account's base URL to be the sandbox server.
+- **Leftovers.** Unit tests still carried the removed QuickBooks REST and
+  Slack Web API messages (`QBO_ACCESS_TOKEN`, `SLACK_BOT_TOKEN`) and the
+  unused "expired credential" rule they needed; both removed. Pop-culture
+  company names in the new unit tests became neutral placeholders. The
+  README and this document no longer say Connect asks which QuickBooks
+  server to use, or that QuickBooks writes carry an idempotency key.
 
 **Open items.**
 

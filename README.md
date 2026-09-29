@@ -46,7 +46,7 @@ process: the Claude CLI child process receives none of them.
 |---|---|---|---|
 | Gmail | Composio | fetch emails, read a thread, list threads and labels; create a draft, add a label; send a draft, reply to a thread | Composio holds the Google OAuth grant, so Revenue Desk never stores Google tokens. One Composio session per run serves all four Composio integrations, with the `direct_tools` preset and an explicit tool allowlist per toolkit. |
 | Google Calendar | Composio | list events, find free slots, find an event; create and update events | The same Composio session and OAuth handling as Gmail. |
-| QuickBooks Online | Composio | company info; query and read customers; query and read invoices (overdue included); query payments; query products and services; the AR aging report; create a customer; create an invoice; record a payment | Composio holds the Intuit OAuth grant (Composio-managed OAuth; Connect asks which QuickBooks server: the default is real company data, `https://sandbox-quickbooks.api.intuit.com` a sandbox company). Composio's QuickBooks toolkit has no tool that emails or voids an invoice, so an invoice is emailed from Gmail. Amounts are decimals in the company currency. |
+| QuickBooks Online | Composio | company info; query and read customers; query and read invoices (overdue included); query payments; query products and services; the AR aging report; create a customer; create an invoice; record a payment | Composio holds the Intuit OAuth grant (Composio-managed OAuth, which connects a real or trial QuickBooks Online company; an Intuit sandbox company is not supported yet, see [Setup](#setup)). Composio's QuickBooks toolkit has no tool that emails or voids an invoice, so an invoice is emailed from Gmail. Amounts are decimals in the company currency. |
 | Slack | Composio | find and list channels, read a channel's history or a thread, find users; post a message (Markdown), add a reaction | Composio holds the Slack OAuth grant (Composio-managed OAuth, user scopes: posts appear as the Slack user who connected). |
 | HubSpot | MCP | account details; list, search and batch-read objects; associations and properties; batch-create and batch-update objects (notes and tasks are created with their associations in one call); list owners, to name who a record is assigned to | HubSpot publishes an official MCP server, `@hubspot/mcp-server` 0.4.0, which Revenue Desk runs over stdio. Any Streamable HTTP MCP server can replace it. 10 of its 21 tools are offered. The owners lookup is Revenue Desk's own read-only tool against HubSpot's REST API with the same token, because the MCP server has none; it is offered with the stdio server only, so HubSpot has 11 tools over stdio and 10 with `HUBSPOT_MCP_URL`. |
 | Stripe | API | find customers by exact email or by name (Stripe's customer search), get a customer; list charges, payment intents, invoices, subscriptions and refunds; get an invoice; get the balance; create a refund; cancel a subscription | Direct REST: test-mode keys, idempotency keys on writes and documented error envelopes. |
@@ -63,13 +63,16 @@ fix:
 - **HubSpot:** creating a note, task, call, meeting or email needs
   `hs_timestamp` (for a task, its due time).
 - **Slack:** a post is standard Markdown in `markdown_text` (Slack renders
-  headings, bold, lists and tables there); Block Kit `blocks` are refused, so
-  the approval card shows exactly what is posted. A plain `@name` (which
+  headings, bold, lists and tables there); Block Kit `blocks` and
+  `fallback_text` (which Slack shows in notifications) are refused, so the
+  approval card shows exactly what is posted. A plain `@name` (which
   notifies nobody) or a `<@…>` mention that is not a Slack user id is
   refused; mention people as `<@U…>` with the id from a user search.
 - **QuickBooks:** every invoice line needs its `Amount` (the card shows the
-  total from them), and recording a payment never charges a card
-  (`process_payment` and `credit_card_payment` are refused).
+  total from them); customers and linked invoices are named by their
+  QuickBooks Id (digits), not by name or invoice number; and recording a
+  payment never charges a card (`process_payment` and
+  `credit_card_payment` are refused).
 - **Any tool:** an empty value is refused with "pass a value a system or
   the user gave you, or leave the field out".
 
@@ -118,10 +121,13 @@ Times the Stripe tools return are written in the workspace time zone
      open **Connections** and click **Connect** for each of the four:
      Composio's hosted sign-in opens in a new tab (Google, Intuit or Slack).
      Use **Check** afterwards. Revenue Desk starts a Composio sign-in only
-     from that click. QuickBooks asks which server to use: keep the default
-     for real company data, or choose
-     `https://sandbox-quickbooks.api.intuit.com` for a sandbox company. Slack
-     connects with user scopes, so posts appear as the person who connected.
+     from that click, and each click starts a new sign-in request in
+     Composio. QuickBooks connects through Composio's own Intuit app, which
+     reaches a real or trial QuickBooks Online company; an Intuit sandbox
+     company needs your own Intuit developer app as a Composio auth config,
+     which Revenue Desk does not select yet. Slack connects with user scopes,
+     so posts appear as the person who connected; use a workspace you
+     administer (an admin may need to approve Composio's app).
    - **Stripe.** `STRIPE_SECRET_KEY`, a test-mode `sk_test_` or restricted
      `rk_test_` key. Live keys are refused (see
      [Approvals and safety](#approvals-and-safety)).
@@ -213,7 +219,8 @@ configuration error it carries the run and conversation ids the invocation
 had reserved; nothing was written under them.
 
 SIGINT or SIGTERM interrupts the run, prints the summary with `--json` and
-exits within about 1.5 seconds; a second signal skips the wait. The exception
+exits within about 1.5 seconds, also when it arrives while the CLI is still
+starting; a second signal skips the wait. The exception
 is a write that is already executing (a refund, invoice, payment or post):
 the CLI says so on stderr and waits for its answer, at most about 70 seconds,
 because it may already be applied; a second signal stops waiting, and the
@@ -245,8 +252,8 @@ and the class's mode decides what happens:
 | Action class | Examples | Default |
 |---|---|---|
 | `read` | Any lookup, search or list | automatic |
-| `internal_write` | Gmail drafts and labels (other than Trash and Spam), HubSpot notes, tasks and other CRM records, Slack posts to allowlisted channels that do not notify everyone (`@channel`, `@here`, `@everyone`, a user group), Slack reactions, calendar events on an internal calendar (your primary one, one whose id is an internal address, or a listed company calendar) whose attendees are all internal, creating a QuickBooks customer without an opening balance | automatic |
-| `outbound` | Sending or replying to email, calendar events with an external attendee or on a calendar that is not internal, an update of an event whose current guests the run has not read (an update replaces the guest list), Slack posts to any other channel, a direct message, a channel shared with another organisation, a channel id the run has not seen named, or a post that notifies everyone | asks |
+| `internal_write` | Gmail drafts and labels (other than Trash and Spam), HubSpot notes, tasks and other CRM records, Slack posts to allowlisted channels that do not notify everyone (`@channel`, `@here`, `@everyone`, also inside Markdown emphasis such as `*@here*`, or a user group), Slack reactions outside direct messages and shared channels, calendar events on an internal calendar (your primary one, one whose id is an internal address, or a listed company calendar) whose attendees are all internal, creating a QuickBooks customer without an opening balance | automatic |
+| `outbound` | Sending or replying to email, calendar events with an external attendee or on a calendar that is not internal, an update of an event whose current guests the run has not read (an update replaces the guest list), Slack posts to any other channel, a direct message (including a post addressed to a person's user id), a channel shared with another organisation, a channel id the run has not seen named, or a post that notifies everyone; a Slack reaction in a direct message or a shared channel | asks |
 | `financial` | Stripe refunds and subscription cancellations; creating a QuickBooks invoice, recording a QuickBooks payment, and creating a QuickBooks customer with an opening balance | asks |
 | `destructive` | Adding the Trash or Spam label to a Gmail message | denied |
 
@@ -265,8 +272,8 @@ and the class's mode decides what happens:
     subject, thread and body of the draft the run created (a draft the run
     did not create says its recipients could not be confirmed);
   - "Record a $1,980.00 payment from <customer> against invoice 1051",
-    flagged when it exceeds the invoice's open balance or the invoice
-    belongs to another customer;
+    with any credit memo it applies, flagged when it exceeds the invoice's
+    open balance or the invoice belongs to another customer;
   - "Create a $18,000.00 invoice for <customer> (not sent)",
     with each line, the due date and the billing email;
   - a calendar event with its weekday and time in the event's zone, who is
@@ -307,7 +314,7 @@ and the class's mode decides what happens:
   integration credential, in an explicit environment rather than a copy of
   Revenue Desk's. A redactor removes configured
   secret values and token shapes (`Bearer …`, `sk_`, `rk_`, `sk-ant-`,
-  `xox…`, `pat-`) from logs, stored rows, streamed output and CLI output.
+  `xox…`, `pat-`, Composio's `ak_`) from logs, stored rows, streamed output and CLI output.
 - **Local only, single user.** The server binds to 127.0.0.1 and refuses
   requests whose `Host` is not loopback. It assumes a single-user machine:
   loopback, `Origin` and CSRF checks stop other websites, not other programs
@@ -367,7 +374,7 @@ Tables:
 | `conversations` | Title, source (`ui` or `cli`), status, SDK session id, cost and token totals. |
 | `messages` | The rendered chat messages of each conversation. |
 | `runs` | One row per turn: source, mode, status, model, effort, usage and cost (its own requests only, even in a resumed session), stop and terminal reasons, error, snapshots of the policy and the connections it used, the owning process (pid and start time) and the SDK session. |
-| `tool_calls` | The action log: one row per tool call with its connection type, operation, class, decision, redacted input, compacted output, error, the provider's HTTP status (successes included) and, for a Stripe or QuickBooks write, the idempotency key it sent. |
+| `tool_calls` | The action log: one row per tool call with its connection type, operation, class, decision, redacted input, compacted output, error, the provider's HTTP status (successes included) and, for a Stripe write, the idempotency key it sent. |
 | `approvals` | One row per approval request with its facts, status, who decided, reason and expiry. |
 
 Migrations (`src/db/migrations`, `0000` to `0006`) are applied when the
@@ -397,9 +404,9 @@ in the opt-in live suites.
 
 | Command | What it covers | Tests (2026-09-29) |
 |---|---|---|
-| `pnpm test` | Vitest, no network and no model: configuration and redaction; contracts and the database schema; the policy engine and the approval gate; the classifiers and the approval cards they build; input rules and schema validation (every captured HubSpot and Composio schema compiles); Stripe form encoding and error normalisation; the event-to-stream mapping; security guards; database repositories, run ownership and recovery on a real SQLite file; the web client's libraries; the CLI's arguments, settings and output. Where a unit needs a caller or an answer, its test gives it the smallest one in place: an in-process stub of the agent core or of an integration definition, a `fetch` that answers what the test says, or a minimal MCP server in memory. None is shared between tests or copies a vendor's service. It also starts the real `@hubspot/mcp-server` over stdio (with the network blocked), the real Vite dev server, and the CLI's run start against a real database. | 878 in 77 files |
-| `pnpm test:cli` | The built CLI (`dist/cli/main.js`) as a separate process, for everything it decides before a model call: the shebang, help and version; usage errors (exit 2, nothing on stdout); configuration errors (exit 3, one `--json` summary, no database written); `DOTENV_PATH`; an unknown conversation and one whose run belongs to another live process; SIGTERM, SIGINT and `--timeout-ms` before a run starts; no key in any output. Run `pnpm build` first. | 17 |
-| `pnpm test:e2e` | Playwright against the built app with the real configuration (`DOTENV_PATH`, default `.env`) and a fresh database in the system temp directory, in the installed Google Chrome on desktop and phone viewports. The new chat; every screen in light and dark; phone touch targets; reduced motion; the conversation rail; Runs; that the browser loads nothing from another host; Connections showing exactly the states the server checked, with Connect and Check where they apply (Check is clicked; Connect is not, because it starts a real sign-in); Settings saved and read back; and a second, unconfigured server that says it cannot run and offers no job. Every screen is checked with axe, and on the phone for sideways scrolling. No test starts a job. Run `pnpm build` first; port 4320 must be free. | 27, plus 1 skipped (touch targets run on the phone only) |
+| `pnpm test` | Vitest, no network and no model: configuration and redaction; contracts and the database schema; the policy engine and the approval gate; the classifiers and the approval cards they build; input rules and schema validation (every captured HubSpot and Composio schema compiles); Stripe form encoding and error normalisation; the event-to-stream mapping; security guards; database repositories, run ownership and recovery on a real SQLite file; the web client's libraries; the CLI's arguments, settings and output. Where a unit needs a caller or an answer, its test gives it the smallest one in place: an in-process stub of the agent core or of an integration definition, a `fetch` that answers what the test says, or a minimal MCP server in memory. None is shared between tests or copies a vendor's service. It also starts the real `@hubspot/mcp-server` over stdio (with the network blocked), the real Vite dev server, and the CLI's run start against a real database. | 900 in 79 files |
+| `pnpm test:cli` | The built CLI (`dist/cli/main.js`) as a separate process, for everything it decides before a model call: the shebang, help and version; usage errors (exit 2, nothing on stdout); configuration errors (exit 3, one `--json` summary, no database written); `DOTENV_PATH`; an unknown conversation and one whose run belongs to another live process; SIGTERM, SIGINT and `--timeout-ms` before a run starts, including a SIGINT while the CLI is still loading; no key in any output. Run `pnpm build` first. | 18 |
+| `pnpm test:e2e` | Playwright against the built app with the real configuration (`DOTENV_PATH`, default `.env`) and a fresh database in the system temp directory, in the installed Google Chrome on desktop and phone viewports. The new chat; every screen in light and dark; phone touch targets; reduced motion; the conversation rail; Runs; that the browser loads nothing from another host; Connections showing exactly the states the server checked, with Connect and Check where they apply (Check is clicked; Connect is not, because it starts a real sign-in); Settings saved and read back, with an empty company name flagged only once the profile is edited; and a second, unconfigured server that says it cannot run and offers no job. Every screen is checked with axe, and on the phone for sideways scrolling. No test starts a job. Run `pnpm build` first; port 4320 must be free. | 29, plus 1 skipped (touch targets run on the phone only) |
 | `pnpm typecheck`, `pnpm lint` | TypeScript and Biome. | |
 | `pnpm verify` | Typecheck, lint, `pnpm test`, the build, `pnpm test:cli` and `pnpm test:e2e`. | |
 | `LIVE_E2E=1 pnpm test:live` | The real model and the real accounts, read-only: see [Live tests](#live-tests). | 16 |
@@ -475,9 +482,11 @@ where the API allows:
   variable is not set.
 - **HubSpot**: only when HubSpot reports the account as a developer test
   account or a sandbox; a task, deleted afterwards.
-- **QuickBooks**: only when the connected account uses
-  `https://sandbox-quickbooks.api.intuit.com`; a customer, which stays in the
-  sandbox company (QuickBooks does not delete customers).
+- **QuickBooks**: only when every active QuickBooks account of the Composio
+  user has `https://sandbox-quickbooks.api.intuit.com` as its base URL; a
+  customer, which stays in the sandbox company (QuickBooks does not delete
+  customers). With Composio's own Intuit app (a real or trial company) the
+  test refuses.
 
 Last run (2026-09-29): `pnpm test:live` 8 passed and 8 skipped (Google
 Calendar, QuickBooks and Slack need sign-in; HubSpot is not configured), with
@@ -529,7 +538,8 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | An integration shows **Not configured** | Connections lists the missing variable names. Add them to the file `DOTENV_PATH` names and restart the server: configuration is read only at start. |
 | Stripe shows **Invalid configuration** | A live key (`sk_live_`, `rk_live_`) is configured. Use a test key. |
 | Gmail, Google Calendar, QuickBooks or Slack needs sign-in or has expired | Click **Connect** in Connections, finish the Composio sign-in, then **Check**. Until then its tools are not offered and the agent says so. |
-| QuickBooks shows another company's data, or none | Composio's QuickBooks connection asks which server to use when you connect: the default is real company data; a sandbox company needs `https://sandbox-quickbooks.api.intuit.com`. Connect again and choose the one you mean. |
+| QuickBooks shows another company's data, or none | Composio uses the QuickBooks company chosen when you connected. Connect again and pick the company you mean. Composio's own Intuit app reaches real and trial companies, not an Intuit sandbox company. |
+| Gmail, Google Calendar, QuickBooks and Slack all say "Composio rejected the API key" | `COMPOSIO_API_KEY` is wrong or was revoked. Put a current Composio project key in the file `DOTENV_PATH` names and restart Revenue Desk. |
 | HubSpot is unavailable at the start of a run | The stdio MCP server could not start or rejected the token, or `HUBSPOT_MCP_URL` is unreachable. Check `HUBSPOT_ACCESS_TOKEN`, or the URL and `HUBSPOT_MCP_TOKEN`, then **Check** in Connections. |
 | A run fails with `model_error` | The model id is wrong or unavailable to your key, or the API failed. Revenue Desk never switches models; set `AGENT_MODEL` or `--model`. |
 | A run fails with `max_turns` or `budget_exceeded` | Raise `AGENT_MAX_TURNS` or `AGENT_MAX_BUDGET_USD`, or `--max-turns` and `--max-budget-usd` for one CLI run. |
