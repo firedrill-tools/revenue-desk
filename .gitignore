@@ -1,28 +1,59 @@
 # Dependencies
 node_modules/
+.pnpm-store/
 
 # Build output
 dist/
 *.tsbuildinfo
 
-# Local state (SQLite databases, per-run state, CLAUDE_CONFIG_DIR, work dirs)
+# Local state: SQLite databases, per-run state, CLAUDE_CONFIG_DIR and work dirs
+# (the default AGENT_STATE_DIR is ./data; database files are ignored anywhere).
 data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
 
-# Environment files: real values never enter the repository.
+# Environment files and credentials: real values never enter the repository.
 .env
 .env.*
 !.env.example
+.envrc
+*.pem
+*.key
+*.p12
 
-# Test artifacts
+# Test artifacts (live-test transcripts are written outside the repository)
 coverage/
+.nyc_output/
 test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
 
+# Caches
+.cache/
+.vite/
+.eslintcache
+.turbo/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
 # Editors and OS
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
-*.log
+*.swp
+*~
+
+# Local Claude Code settings
+.claude/settings.local.json
+CLAUDE.local.md
