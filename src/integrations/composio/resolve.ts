@@ -5,7 +5,7 @@
 import type { AgentEnv, ConfigProblem, EnvVarName, SecretValue } from "../../contracts/env.js";
 import { hasSecret, hasValue, secretProblem } from "../shared/resolve.js";
 import { hostOf } from "../shared/url.js";
-import { COMPOSIO_API_BASE_URL } from "../shared/vendors.js";
+import { COMPOSIO_API_ORIGIN } from "../shared/vendors.js";
 
 export type ComposioConfig =
   | {
@@ -37,5 +37,5 @@ export function resolveComposioConfig(env: AgentEnv): ComposioConfig {
   }
 
   if (problems.length > 0) return { status: "invalid", problems };
-  return { status: "configured", apiKey, userId, host: hostOf(COMPOSIO_API_BASE_URL) };
+  return { status: "configured", apiKey, userId, host: hostOf(COMPOSIO_API_ORIGIN) };
 }

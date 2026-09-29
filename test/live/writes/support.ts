@@ -11,9 +11,9 @@
 import { Composio } from "@composio/core";
 import type { JsonObject, JsonValue } from "../../../src/contracts/json.js";
 import {
-  COMPOSIO_API_BASE_URL,
-  HUBSPOT_API_BASE_URL,
-  STRIPE_API_BASE_URL,
+  COMPOSIO_API_ORIGIN,
+  HUBSPOT_API_ORIGIN,
+  STRIPE_API_ORIGIN,
 } from "../../../src/integrations/shared/vendors.js";
 import { liveValue } from "../support.js";
 
@@ -28,7 +28,7 @@ function composioClient(): Composio {
   if (apiKey === null) throw new Error("COMPOSIO_API_KEY is not set in the live env file.");
   composio ??= new Composio({
     apiKey,
-    baseURL: COMPOSIO_API_BASE_URL,
+    baseURL: COMPOSIO_API_ORIGIN,
     disableVersionCheck: true,
     allowTracking: false,
   });
@@ -122,7 +122,7 @@ export async function stripeApi(
 ): Promise<JsonObject> {
   const key = stripeTestKey();
   if (key === null) throw new Error("Refusing: STRIPE_SECRET_KEY is not a test-mode key.");
-  const base = STRIPE_API_BASE_URL;
+  const base = STRIPE_API_ORIGIN;
   const body = new URLSearchParams(form).toString();
   const url = method === "GET" && body !== "" ? `${base}${path}?${body}` : `${base}${path}`;
   const response = await fetch(url, {
@@ -160,7 +160,7 @@ export async function hubspotApi(
 ): Promise<JsonObject | null> {
   const token = liveValue("HUBSPOT_ACCESS_TOKEN");
   if (token === null) throw new Error("HUBSPOT_ACCESS_TOKEN is not set in the live env file.");
-  const base = HUBSPOT_API_BASE_URL;
+  const base = HUBSPOT_API_ORIGIN;
   const response = await fetch(`${base}${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

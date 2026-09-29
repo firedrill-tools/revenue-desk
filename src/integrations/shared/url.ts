@@ -85,20 +85,31 @@ function ipv6Groups(host: string): number[] | null {
 /**
  * True for an IPv6 address that is not on the public internet: unspecified
  * and loopback, link-local (fe80::/10), site-local (fec0::/10), unique local
- * (fc00::/7), multicast (ff00::/8), and an IPv4 address carried inside IPv6
- * (mapped ::ffff:0:0/96, compatible ::/96, NAT64 64:ff9b::/96) whose IPv4
- * address is not public.
+ * (fc00::/7), multicast (ff00::/8), local-use NAT64 (64:ff9b:1::/48), and an
+ * IPv4 address carried inside IPv6 (mapped ::ffff:0:0/96, translated
+ * ::ffff:0:0:0/96, compatible ::/96, NAT64 64:ff9b::/96, 6to4 2002::/16)
+ * whose IPv4 address is not public.
  */
 function isNonPublicIpv6(groups: readonly number[]): boolean {
   const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = groups;
   const embedded = [g6 >> 8, g6 & 0xff, g7 >> 8, g7 & 0xff];
-  const firstFive = [g0, g1, g2, g3, g4].every((group) => group === 0);
-  if (firstFive && (g5 === 0 || g5 === 0xffff)) {
+  const firstFour = [g0, g1, g2, g3].every((group) => group === 0);
+  if (firstFour && g4 === 0 && (g5 === 0 || g5 === 0xffff)) {
     // ::, ::1, ::a.b.c.d and ::ffff:a.b.c.d
     return g5 === 0 && g6 === 0 ? true : isNonPublicIpv4(embedded);
   }
-  if (g0 === 0x64 && g1 === 0xff9b && [g2, g3, g4, g5].every((group) => group === 0)) {
+  if (firstFour && g4 === 0xffff && g5 === 0) {
+    // ::ffff:0:a.b.c.d (IPv4-translated)
     return isNonPublicIpv4(embedded);
+  }
+  if (g0 === 0x64 && g1 === 0xff9b) {
+    // 64:ff9b:1::/48 is NAT64 for a local network (RFC 8215): never public.
+    if (g2 === 1) return true;
+    if ([g2, g3, g4, g5].every((group) => group === 0)) return isNonPublicIpv4(embedded);
+  }
+  if (g0 === 0x2002) {
+    // 6to4: the IPv4 address sits in the second and third groups.
+    return isNonPublicIpv4([g1 >> 8, g1 & 0xff, g2 >> 8, g2 & 0xff]);
   }
   return (
     (g0 & 0xffc0) === 0xfe80 ||

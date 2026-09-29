@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import { configuredSecrets, loadAgentEnv, withDotenvFile } from "../../../src/config/env.js";
@@ -198,6 +200,29 @@ describe("variables that could point Revenue Desk somewhere other than the real 
     const env = ok({ ...configured, ...REMOVED });
     expect(env).toEqual(ok(configured));
     expect(configuredSecrets(env)).not.toContain(REMOVED.HUBSPOT_MCP_TOKEN);
+  });
+
+  it("appear nowhere in the product source, nor do the switches that honoured them", () => {
+    // HubSpot's server reads BASE_URL_OVERRIDE; allowLoopbackHttp was the
+    // plain-HTTP exception of the removed base URL check.
+    const names = [...Object.keys(REMOVED), "BASE_URL_OVERRIDE", "allowLoopbackHttp"];
+    const root = resolve(import.meta.dirname, "../../..");
+    const files = [
+      join(root, ".env.example"),
+      ...["src", "web/src"].flatMap((dir) =>
+        readdirSync(join(root, dir), { recursive: true, withFileTypes: true })
+          .filter((entry) => entry.isFile() && /\.(ts|tsx|js|mjs|css|html)$/.test(entry.name))
+          .map((entry) => join(entry.parentPath, entry.name)),
+      ),
+    ];
+    expect(files.length).toBeGreaterThan(50);
+    const found = files.flatMap((file) => {
+      const text = readFileSync(file, "utf8");
+      return names
+        .filter((name) => text.includes(name))
+        .map((name) => `${relative(root, file)}: ${name}`);
+    });
+    expect(found).toEqual([]);
   });
 });
 

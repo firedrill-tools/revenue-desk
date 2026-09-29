@@ -26,17 +26,17 @@ import {
   joinUrl,
 } from "../../../src/integrations/shared/url.js";
 import {
-  COMPOSIO_API_BASE_URL,
-  HUBSPOT_API_BASE_URL,
+  COMPOSIO_API_ORIGIN,
+  HUBSPOT_API_ORIGIN,
   HUBSPOT_MCP_SERVER_API_HOST,
-  STRIPE_API_BASE_URL,
+  STRIPE_API_ORIGIN,
 } from "../../../src/integrations/shared/vendors.js";
 
 describe("URLs", () => {
   it("pins every vendor endpoint to the vendor's own HTTPS host", () => {
-    expect(COMPOSIO_API_BASE_URL).toBe("https://backend.composio.dev");
-    expect(STRIPE_API_BASE_URL).toBe("https://api.stripe.com");
-    expect(HUBSPOT_API_BASE_URL).toBe("https://api.hubapi.com");
+    expect(COMPOSIO_API_ORIGIN).toBe("https://backend.composio.dev");
+    expect(STRIPE_API_ORIGIN).toBe("https://api.stripe.com");
+    expect(HUBSPOT_API_ORIGIN).toBe("https://api.hubapi.com");
     expect(HUBSPOT_MCP_SERVER_API_HOST).toBe("api.hubspot.com");
   });
 
@@ -84,6 +84,10 @@ describe("URLs", () => {
       "https://[::ffff:127.0.0.1]/",
       "https://[::ffff:10.0.0.1]/",
       "https://[64:ff9b::192.168.0.1]/",
+      "https://[64:ff9b:1::808:808]/",
+      "https://[::ffff:0:127.0.0.1]/",
+      "https://[2002:7f00:1::]/",
+      "https://[2002:c0a8:101::1]/",
       "https://[fe80::1]/",
       "https://[fc00::1]/",
       "https://[fd12:3456::1]/",
@@ -103,6 +107,9 @@ describe("URLs", () => {
       "https://192.169.0.1/",
       "https://[2606:4700::1111]/",
       "https://[::ffff:8.8.8.8]/",
+      "https://[::ffff:0:8.8.8.8]/",
+      "https://[64:ff9b::8.8.8.8]/",
+      "https://[2002:808:808::1]/",
       "https://localhost.evil.test/",
     ]) {
       expect(isPrivateNetworkHost(hostname(url)), url).toBe(false);

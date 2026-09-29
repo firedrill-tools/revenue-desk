@@ -4,7 +4,7 @@
 //
 // Always the pinned @hubspot/mcp-server over stdio through launch.ts
 // (process.execPath plus the resolved bin, an explicit child environment
-// without BASE_URL_OVERRIDE, dotenv pointed at the null device).
+// without the server's base-URL override, dotenv pointed at the null device).
 
 import type { HubSpotConnection } from "../../contracts/integration.js";
 import type { UpstreamConfig } from "../../gateway/mcp-proxy.js";

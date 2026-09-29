@@ -8,11 +8,12 @@
  *   and the only argument is the package's absolute `bin` file. There is no
  *   `npx`, no shell, no PATH lookup and no network fetch at startup.
  * - The child gets an explicit, minimal environment: the token, plus two
- *   dotenv settings, and never `BASE_URL_OVERRIDE`, so the server calls
+ *   dotenv settings, and never the server's base-URL override variable
+ *   (named in docs/ARCHITECTURE.md §3), so the server calls
  *   HubSpot's own default host (`https://api.hubspot.com`). 0.4.0 runs
  *   `import 'dotenv/config'`, which would otherwise read a `.env` from its
  *   working directory and could pick up Revenue Desk's own secrets or a
- *   `BASE_URL_OVERRIDE` that redirects the token to another host.
+ *   base-URL override that redirects the token to another host.
  *   `DOTENV_CONFIG_PATH` points dotenv at the null device and the working
  *   directory is the package directory.
  * - The MCP SDK's `StdioClientTransport` adds only its safe default variables
@@ -220,7 +221,7 @@ function childEnvironment(options: HubSpotStdioLaunchOptions): Record<string, st
     );
   }
 
-  // Exactly these three: no BASE_URL_OVERRIDE, so the server keeps HubSpot's host.
+  // Exactly these three: no base-URL override, so the server keeps HubSpot's host.
   return {
     PRIVATE_APP_ACCESS_TOKEN: token,
     DOTENV_CONFIG_PATH: devNull,

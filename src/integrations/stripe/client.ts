@@ -18,7 +18,7 @@ import { type HttpDeps, type HttpMethod, sendHttp, TransportError } from "../sha
 import { asObject, obj, str } from "../shared/json.js";
 import { scrub } from "../shared/text.js";
 import { joinUrl } from "../shared/url.js";
-import { STRIPE_API_BASE_URL } from "../shared/vendors.js";
+import { STRIPE_API_ORIGIN } from "../shared/vendors.js";
 import { encodeForm, type FormParams } from "./form.js";
 
 export const STRIPE_PROVIDER = "stripe";
@@ -108,7 +108,7 @@ export class StripeClient {
     }
     const encoded = encodeForm(params);
     const inQuery = method !== "POST";
-    const base = joinUrl(STRIPE_API_BASE_URL, path);
+    const base = joinUrl(STRIPE_API_ORIGIN, path);
     const url = inQuery && encoded !== "" ? `${base}?${encoded}` : base;
     const secret = this.#secretKey.reveal();
     const headers: Record<string, string> = {

@@ -1,7 +1,7 @@
 import { format } from "node:util";
 import { Composio, type ComposioLogger, type ToolRouterCreateSessionConfig } from "@composio/core";
 import { checkVendorUrl } from "../shared/url.js";
-import { COMPOSIO_API_BASE_URL } from "../shared/vendors.js";
+import { COMPOSIO_API_ORIGIN } from "../shared/vendors.js";
 
 // ---------------------------------------------------------------------------
 // Composio session for Gmail, Google Calendar, QuickBooks and Slack.
@@ -20,9 +20,10 @@ import { COMPOSIO_API_BASE_URL } from "../shared/vendors.js";
 // It never executes a Composio tool. Tool calls travel over the session's MCP
 // endpoint through the gateway, where the approval policy applies.
 //
-// The Composio API host is pinned (COMPOSIO_API_BASE_URL): the client is
-// always given it, so neither COMPOSIO_BASE_URL in the environment nor the
-// Composio CLI's user config file can redirect the SDK. As defence in depth,
+// The Composio API host is pinned (COMPOSIO_API_ORIGIN): the client is
+// always given it, so neither the SDK's own base-URL environment variable
+// nor the Composio CLI's user config file can redirect it (the variable is
+// named in docs/ARCHITECTURE.md §3). As defence in depth,
 // the session MCP endpoint and every Connect sign-in link Composio returns
 // must be HTTPS on a public host: one on this machine (loopback,
 // *.localhost) or a private network is refused before anything connects to
@@ -244,9 +245,9 @@ export interface ComposioClientOptions {
 }
 
 /**
- * The real Composio client, always at COMPOSIO_API_BASE_URL: the SDK would
- * otherwise read COMPOSIO_BASE_URL from the environment or a base URL from
- * its user config file. The npm version check is disabled (it would fetch
+ * The real Composio client, always at COMPOSIO_API_ORIGIN: the SDK would
+ * otherwise read a base URL from its own environment variable or from its
+ * user config file. The npm version check is disabled (it would fetch
  * the registry and could print an upgrade banner through the logger) and
  * anonymous usage analytics are off.
  */
@@ -254,7 +255,7 @@ export function createComposioClient(options: ComposioClientOptions): ComposioCl
   if (!options.apiKey) throw new ComposioSessionError("config", "COMPOSIO_API_KEY is not set");
   const composio = new Composio({
     apiKey: options.apiKey,
-    baseURL: COMPOSIO_API_BASE_URL,
+    baseURL: COMPOSIO_API_ORIGIN,
     disableVersionCheck: true,
     allowTracking: false,
     logger: options.logger ?? stderrComposioLogger,

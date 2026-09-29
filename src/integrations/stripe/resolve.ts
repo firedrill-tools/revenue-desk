@@ -6,7 +6,7 @@ import type { AgentEnv, ConfigProblem } from "../../contracts/env.js";
 import type { ConnectionResolution } from "../../contracts/integration.js";
 import { hasSecret, hasValue, secretProblem } from "../shared/resolve.js";
 import { hostOf } from "../shared/url.js";
-import { STRIPE_API_BASE_URL } from "../shared/vendors.js";
+import { STRIPE_API_ORIGIN } from "../shared/vendors.js";
 
 const TEST_KEY = /^(?:sk|rk)_test_/;
 const LIVE_KEY = /^(?:sk|rk)_live_/;
@@ -51,7 +51,7 @@ export function resolveStripe(env: AgentEnv): ConnectionResolution<"stripe"> {
       integration: "stripe",
       kind: "api",
       profile: "stripe-api",
-      endpointLabel: hostOf(STRIPE_API_BASE_URL),
+      endpointLabel: hostOf(STRIPE_API_ORIGIN),
       api: { secretKey, keyMode, apiVersion: version },
     },
   };

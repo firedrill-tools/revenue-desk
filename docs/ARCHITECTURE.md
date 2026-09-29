@@ -378,8 +378,12 @@ unit test keeps them equal. The config layer (`src/config/env.ts`, W1) reads
   anything connects to it or the browser is sent to it (`checkVendorUrl`,
   `src/integrations/shared/url.ts`): loopback, `*.localhost`, `*.local`,
   `*.internal`, a single-label name, or a private, shared, link-local or
-  otherwise non-public IPv4 or IPv6 address (IPv4 inside IPv6 included). It
-  judges the host as written and does not resolve names.
+  otherwise non-public IPv4 or IPv6 address, including local-use NAT64
+  (`64:ff9b:1::/48`) and a non-public IPv4 address carried inside IPv6
+  (mapped, translated, compatible, NAT64 `64:ff9b::/96` and 6to4). It
+  judges the host as written and does not resolve names. The session MCP
+  URL is further held to Composio's API origin by the SDK itself (`mcp:
+  true` makes any other origin an error).
 - **Removed on 2026-09-29 (vendor hosts pinned):** `COMPOSIO_BASE_URL`,
   `STRIPE_API_BASE_URL`, `HUBSPOT_API_BASE_URL`, `HUBSPOT_MCP_URL` and
   `HUBSPOT_MCP_TOKEN` (with HubSpot's Streamable HTTP transport and the

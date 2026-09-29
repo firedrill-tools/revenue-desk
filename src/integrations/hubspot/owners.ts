@@ -21,7 +21,7 @@ import { arr, asObject, bool, compact, isObject, obj, objects, str } from "../sh
 import { identifier } from "../shared/schema.js";
 import { scrub } from "../shared/text.js";
 import { joinUrl } from "../shared/url.js";
-import { HUBSPOT_API_BASE_URL } from "../shared/vendors.js";
+import { HUBSPOT_API_ORIGIN } from "../shared/vendors.js";
 
 export const HUBSPOT_PROVIDER = "hubspot";
 
@@ -85,7 +85,7 @@ async function getJson(
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, value);
   const search = params.toString();
-  const url = `${joinUrl(HUBSPOT_API_BASE_URL, path)}${search === "" ? "" : `?${search}`}`;
+  const url = `${joinUrl(HUBSPOT_API_ORIGIN, path)}${search === "" ? "" : `?${search}`}`;
   const secret = token.reveal();
   let response: Awaited<ReturnType<typeof sendHttp>>;
   try {

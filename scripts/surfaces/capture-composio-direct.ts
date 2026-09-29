@@ -48,7 +48,7 @@ import {
   describeEndpoint,
   stderrComposioLogger,
 } from "../../src/integrations/composio/session.js";
-import { COMPOSIO_API_BASE_URL } from "../../src/integrations/shared/vendors.js";
+import { COMPOSIO_API_ORIGIN } from "../../src/integrations/shared/vendors.js";
 
 const log = (message: string) => process.stderr.write(`${message}\n`);
 
@@ -182,7 +182,7 @@ async function main(): Promise<void> {
   // 1. Catalog check (read-only).
   const catalogClient = new Composio({
     apiKey,
-    baseURL: COMPOSIO_API_BASE_URL,
+    baseURL: COMPOSIO_API_ORIGIN,
     disableVersionCheck: true,
     allowTracking: false,
     logger,
