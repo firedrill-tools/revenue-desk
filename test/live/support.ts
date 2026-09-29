@@ -9,7 +9,8 @@
  *   variables a run receives, so a run reaches only the systems under test.
  * - A test checks the connections read-only first, as the app's Check does,
  *   and skips with the reason when its integration is not connected or not
- *   configured. It never fakes one.
+ *   configured, unless LIVE_REQUIRE names it: then it fails with the reason
+ *   (require.ts). It never fakes one.
  * - Replies and tool outputs hold real data. Tests print counts, tool names
  *   and states only. With LIVE_OUT_DIR (outside the repository) each run's
  *   state directory, summary and stderr are kept there for review;
@@ -23,6 +24,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 import Database from "better-sqlite3";
+import type { TestContext } from "vitest";
 import { loadAgentEnv } from "../../src/config/env.js";
 import type { SettingsUpdate } from "../../src/contracts/api.js";
 import type { RunSummary, RunSummaryToolCall } from "../../src/contracts/cli.js";
@@ -45,6 +47,7 @@ import { updateSettings } from "../../src/db/repos/settings.js";
 import { seedDatabase } from "../../src/db/seed.js";
 import { checkConnections, integrations } from "../../src/integrations/registry.js";
 import { REPOSITORY_ROOT } from "../support/repository.js";
+import { requiredFailure, requiredIntegrations } from "./require.js";
 
 // ---------------------------------------------------------------------------
 // Opt-in
@@ -56,6 +59,8 @@ export function requireLive(): void {
       "Live tests call the real model and real accounts and cost money: run them with LIVE_E2E=1.",
     );
   }
+  // A LIVE_REQUIRE that names no integration fails the suite before anything runs.
+  requiredIntegrations();
 }
 
 export function requireLiveWrites(): void {
@@ -181,6 +186,26 @@ export function unavailableReason(
     default:
       return `${label} is ${status.state}: ${status.detail}`;
   }
+}
+
+/**
+ * The test cannot exercise `integration`, for `reason`: it fails with the
+ * reason when LIVE_REQUIRE names the integration, and skips otherwise. Logs
+ * the outcome under `label` either way.
+ */
+export function cannotTest(
+  context: Pick<TestContext, "skip">,
+  label: string,
+  integration: IntegrationId,
+  reason: string,
+): never {
+  const failure = requiredFailure(integration, reason);
+  if (failure !== null) {
+    console.log(`${label}: failed. ${failure.message}`);
+    throw failure;
+  }
+  console.log(`${label}: skipped. ${reason}`);
+  return context.skip(reason);
 }
 
 /** One line per integration: "gmail connected, stripe not_configured, …". */

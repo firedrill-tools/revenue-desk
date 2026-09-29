@@ -2,7 +2,8 @@
  * Live write, QuickBooks through Composio, a sandbox company only: the agent
  * creates a customer (no opening balance) in the connected company.
  *
- * Refuses (skips with the reason) unless every active QuickBooks account of
+ * Refuses (skips with the reason, or fails when LIVE_REQUIRE names
+ * quickbooks) unless every active QuickBooks account of
  * the Composio user has Intuit's sandbox server
  * (https://sandbox-quickbooks.api.intuit.com) as its base URL
  * (quickbooks-sandbox.ts); a real company is never written to. QuickBooks
@@ -15,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentEnvOf,
   askJson,
+  cannotTest,
   checkLive,
   describeRun,
   liveEnvironment,
@@ -50,15 +52,9 @@ describe("live write: QuickBooks, in a sandbox company only", () => {
     });
     const connections = await checkLive(agentEnvOf(environment));
     const reason = unavailableReason(connections, "quickbooks");
-    if (reason !== null) {
-      console.log(`live write quickbooks: skipped. ${reason}`);
-      context.skip(reason);
-    }
+    if (reason !== null) cannotTest(context, "live write quickbooks", "quickbooks", reason);
     const refusal = quickBooksWriteRefusal(await connectedAccounts("quickbooks"));
-    if (refusal !== null) {
-      console.log(`live write quickbooks: skipped. ${refusal}`);
-      context.skip(refusal);
-    }
+    if (refusal !== null) cannotTest(context, "live write quickbooks", "quickbooks", refusal);
     prepareWorkspace(state.dir, connections);
 
     const name = `Revenue Desk live test ${liveMarker()}`;

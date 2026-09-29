@@ -8,8 +8,9 @@
  * auto, confirms the refund with Stripe, and deletes the customer afterwards.
  * Stripe keeps test-mode payments and refunds; they cannot be deleted.
  *
- * Refuses (skips with the reason) unless STRIPE_SECRET_KEY is an sk_test_ or
- * rk_test_ key and Stripe reports test mode.
+ * Refuses (skips with the reason, or fails when LIVE_REQUIRE names stripe)
+ * unless STRIPE_SECRET_KEY is an sk_test_ or rk_test_ key and Stripe reports
+ * test mode.
  *
  * Runs only under `LIVE_E2E=1 LIVE_E2E_WRITES=1 pnpm test:live:writes`.
  */
@@ -17,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentEnvOf,
   askJson,
+  cannotTest,
   checkLive,
   describeRun,
   liveEnvironment,
@@ -46,14 +48,19 @@ const REFUND_POLICY: Policy = {
 
 describe("live write: Stripe test mode", () => {
   it("refunds a test-mode charge, exactly once, with an idempotency key", async (context) => {
+    const label = "live write stripe";
     if (stripeTestKey() === null) {
       const reason = "Refused: STRIPE_SECRET_KEY is not set or is not a test-mode key.";
-      console.log(`live write stripe: skipped. ${reason}`);
-      context.skip(reason);
+      cannotTest(context, label, "stripe", reason);
     }
     const balance = await stripeApi("GET", "/v1/balance");
     if (balance.livemode !== false) {
-      context.skip("Refused: Stripe did not report test mode for this key.");
+      cannotTest(
+        context,
+        label,
+        "stripe",
+        "Refused: Stripe did not report test mode for this key.",
+      );
     }
 
     const state = liveStateDir("write-stripe");
@@ -63,7 +70,7 @@ describe("live write: Stripe test mode", () => {
     });
     const connections = await checkLive(agentEnvOf(environment));
     const reason = unavailableReason(connections, "stripe");
-    if (reason !== null) context.skip(reason);
+    if (reason !== null) cannotTest(context, label, "stripe", reason);
     prepareWorkspace(state.dir, connections);
 
     const marker = liveMarker();

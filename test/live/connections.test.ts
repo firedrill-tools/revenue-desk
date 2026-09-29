@@ -5,8 +5,9 @@
  * opened with a read-only policy (so Composio offers read tools only).
  *
  * An integration that is not connected or not configured is reported with
- * the reason and its read is skipped; nothing stands in for it. Results hold
- * real data, so only their size is printed.
+ * the reason and its read is skipped, or fails when LIVE_REQUIRE names it;
+ * nothing stands in for it. Results hold real data, so only their size is
+ * printed.
  *
  * Runs only under `LIVE_E2E=1 pnpm test:live`.
  */
@@ -28,6 +29,7 @@ import {
 import { callWithMeta, connectClient } from "../helpers/mcp-client.js";
 import {
   agentEnvOf,
+  cannotTest,
   checkLive,
   describeConnections,
   type LiveConnections,
@@ -116,10 +118,7 @@ describe("live: the app's Check", () => {
 describe("live: one read per connected integration, through the run gateway", () => {
   test.for(READS)("%s answers %s", async ([integration, tool, args], context) => {
     const reason = unavailableReason(connections, integration);
-    if (reason !== null) {
-      console.log(`live gateway ${integration}: skipped. ${reason}`);
-      context.skip(reason);
-    }
+    if (reason !== null) cannotTest(context, `live gateway ${integration}`, integration, reason);
     const connection = gateway.connections.find((entry) => entry.integration === integration);
     expect(connection?.availability, connection?.detail ?? "").toBe("ready");
 

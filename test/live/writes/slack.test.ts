@@ -9,7 +9,7 @@
  * message by its marker and deletes it.
  *
  * Skips with the reason when LIVE_SLACK_TEST_CHANNEL is not set or Slack is
- * not connected.
+ * not connected, or fails with it when LIVE_REQUIRE names slack.
  *
  * Runs only under `LIVE_E2E=1 LIVE_E2E_WRITES=1 pnpm test:live:writes`.
  */
@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentEnvOf,
   askJson,
+  cannotTest,
   checkLive,
   describeRun,
   liveEnvironment,
@@ -49,11 +50,11 @@ const POST_POLICY: Policy = {
 
 describe("live write: one Slack post to the test channel", () => {
   it("posts only to LIVE_SLACK_TEST_CHANNEL", async (context) => {
+    const label = "live write slack";
     const raw = process.env.LIVE_SLACK_TEST_CHANNEL?.trim() ?? "";
     if (raw === "") {
       const reason = "LIVE_SLACK_TEST_CHANNEL is not set: name a channel the test may post to.";
-      console.log(`live write slack: skipped. ${reason}`);
-      context.skip(reason);
+      cannotTest(context, label, "slack", reason);
     }
     const channel = `#${raw.replace(/^#/, "").toLowerCase()}`;
     const state = liveStateDir("write-slack");
@@ -63,10 +64,7 @@ describe("live write: one Slack post to the test channel", () => {
     });
     const connections = await checkLive(agentEnvOf(environment));
     const reason = unavailableReason(connections, "slack");
-    if (reason !== null) {
-      console.log(`live write slack: skipped. ${reason}`);
-      context.skip(reason);
-    }
+    if (reason !== null) cannotTest(context, label, "slack", reason);
     prepareWorkspace(state.dir, connections, {
       allowedSlackChannels: [channel],
       notifySlackChannel: channel,

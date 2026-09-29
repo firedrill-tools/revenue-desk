@@ -10,10 +10,12 @@
 //   ask): the card names the recipient, is reached and denied with the
 //   keyboard alone, and nothing is created.
 //
-// Both skip, with the reason, when Gmail is not connected.
+// Both skip, with the reason, when Gmail is not connected; with gmail (or
+// all) in LIVE_REQUIRE they fail with it instead (test/live/require.ts).
 
 import { expect, type Page, test } from "@playwright/test";
 import { DEFAULT_POLICY } from "../../src/contracts/integration.js";
+import { requiredFailure, requiredIntegrations } from "../live/require.js";
 import {
   APPROVAL,
   appApi,
@@ -30,16 +32,18 @@ test.beforeAll(() => {
   if (process.env.LIVE_E2E !== "1") {
     throw new Error("The live chat calls the real model and reads a real mailbox: set LIVE_E2E=1.");
   }
+  requiredIntegrations();
 });
 
 test.beforeEach(async () => {
   const gmail = (await checkedConnections(await appApi())).find(
     (view) => view.integration === "gmail",
   );
-  test.skip(
-    gmail?.state !== "connected",
-    `Gmail is ${gmail?.state ?? "missing"}: click Connect in Connections to sign in.`,
-  );
+  if (gmail?.state === "connected") return;
+  const reason = `Gmail is ${gmail?.state ?? "missing"}: click Connect in Connections to sign in.`;
+  const failure = requiredFailure("gmail", reason);
+  if (failure !== null) throw failure;
+  test.skip(true, reason);
 });
 
 test.afterEach(async () => {

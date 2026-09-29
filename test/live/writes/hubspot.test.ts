@@ -2,7 +2,8 @@
  * Live write, HubSpot over MCP, a test account only: the agent creates a
  * task through the official HubSpot MCP server.
  *
- * Refuses (skips with the reason) unless HUBSPOT_ACCESS_TOKEN is set and
+ * Refuses (skips with the reason, or fails when LIVE_REQUIRE names hubspot)
+ * unless HUBSPOT_ACCESS_TOKEN is set and
  * HubSpot reports the account as a developer test account or a sandbox; a
  * standard account is never written to. Internal writes run without asking;
  * nothing else that writes does. The test finds the task by its subject and
@@ -14,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentEnvOf,
   askJson,
+  cannotTest,
   checkLive,
   describeRun,
   liveEnvironment,
@@ -53,17 +55,16 @@ async function tasksWithSubject(subject: string): Promise<string[]> {
 
 describe("live write: HubSpot, on a test account only", () => {
   it("creates a task through the MCP server", async (context) => {
+    const label = "live write hubspot";
     if (liveValue("HUBSPOT_ACCESS_TOKEN") === null) {
       const reason = "HUBSPOT_ACCESS_TOKEN is not set: the account type cannot be checked.";
-      console.log(`live write hubspot: skipped. ${reason}`);
-      context.skip(reason);
+      cannotTest(context, label, "hubspot", reason);
     }
     const account = await hubspotApi("GET", "/account-info/v3/details");
     const accountType = String(account?.accountType ?? "unknown");
     if (!HUBSPOT_TEST_ACCOUNT_TYPES.has(accountType)) {
       const reason = `Refused: the HubSpot account type is ${accountType}, not a developer test account or a sandbox.`;
-      console.log(`live write hubspot: skipped. ${reason}`);
-      context.skip(reason);
+      cannotTest(context, label, "hubspot", reason);
     }
 
     const state = liveStateDir("write-hubspot");
@@ -73,7 +74,7 @@ describe("live write: HubSpot, on a test account only", () => {
     });
     const connections = await checkLive(agentEnvOf(environment));
     const reason = unavailableReason(connections, "hubspot");
-    if (reason !== null) context.skip(reason);
+    if (reason !== null) cannotTest(context, label, "hubspot", reason);
     prepareWorkspace(state.dir, connections);
 
     const subject = `Revenue Desk live test ${liveMarker()}`;

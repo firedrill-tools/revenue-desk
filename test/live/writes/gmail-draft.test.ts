@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentEnvOf,
   askJson,
+  cannotTest,
   checkLive,
   describeRun,
   liveEnvironment,
@@ -47,10 +48,7 @@ describe("live write: a Gmail draft to the account's own address", () => {
     });
     const connections = await checkLive(agentEnvOf(environment));
     const reason = unavailableReason(connections, "gmail");
-    if (reason !== null) {
-      console.log(`live write gmail: skipped. ${reason}`);
-      context.skip(reason);
-    }
+    if (reason !== null) cannotTest(context, "live write gmail", "gmail", reason);
     const own = findString(await composioTool("GMAIL_GET_PROFILE", {}), [
       "emailAddress",
       "email_address",

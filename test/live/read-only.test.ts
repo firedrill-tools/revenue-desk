@@ -10,7 +10,8 @@
  *   write is refused before it reaches a system. Each run is capped at $0.50.
  * - The connections are checked read-only first, as the app's Check does. A
  *   system that is not connected or not configured is skipped with the reason
- *   (Connect it in Connections, or set its variables); nothing stands in for it.
+ *   (Connect it in Connections, or set its variables), or fails when
+ *   LIVE_REQUIRE names it; nothing stands in for it.
  * - Replies and tool outputs hold real data: the log line carries counts and
  *   tool names only (see support.ts for LIVE_OUT_DIR).
  *
@@ -21,6 +22,7 @@ import type { IntegrationId } from "../../src/contracts/integration.js";
 import {
   agentEnvOf,
   askJson,
+  cannotTest,
   checkLive,
   describeRun,
   liveEnvironment,
@@ -93,10 +95,7 @@ describe("live: the model reads each connected system, and changes nothing", () 
     });
     const connections = await checkLive(agentEnvOf(environment));
     const reason = unavailableReason(connections, integration);
-    if (reason !== null) {
-      console.log(`live read ${integration}: skipped. ${reason}`);
-      context.skip(reason);
-    }
+    if (reason !== null) cannotTest(context, `live read ${integration}`, integration, reason);
     prepareWorkspace(state.dir, connections);
 
     const { run, summary } = await askJson({
