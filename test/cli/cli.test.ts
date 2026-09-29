@@ -13,7 +13,7 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CLI_EXIT_CODES, type RunSummary } from "../../src/contracts/cli.js";
 import { DEFAULT_POLICY } from "../../src/contracts/integration.js";
@@ -62,14 +62,22 @@ function onlySummary(stdout: string): RunSummary {
 }
 
 describe("the executable", () => {
-  it("starts with a shebang, is executable and imports only the stdout guard first", () => {
+  it("starts with a shebang, is executable and first imports only the stdout guard and the signal buffer", () => {
     const source = readFileSync(BUILT_CLI, "utf8");
     expect(source.startsWith("#!/usr/bin/env node\n")).toBe(true);
     expect(statSync(BUILT_CLI).mode & 0o111).not.toBe(0);
-    const staticImports = [...source.matchAll(/^import .* from "(.+)";$/gm)].map(
-      (match) => match[1],
-    );
-    expect(staticImports).toEqual(["./stdout-guard.js"]);
+    const importsOf = (text: string) =>
+      [...text.matchAll(/^import .* from "(.+)";$/gm)].map((match) => match[1] ?? "");
+    const staticImports = importsOf(source);
+    expect(staticImports).toEqual(["./early-signals.js", "./stdout-guard.js"]);
+    // Neither loads anything but Node's own modules, so nothing prints before the guard.
+    for (const module of staticImports) {
+      const imported = readFileSync(join(dirname(BUILT_CLI), module), "utf8");
+      expect(
+        importsOf(imported).filter((name) => !name.startsWith("node:")),
+        module,
+      ).toEqual([]);
+    }
   });
 
   it("runs through its shebang and prints the package version", async () => {
@@ -257,6 +265,24 @@ describe("stopping before a run starts", () => {
       expect(rowCounts(dir)).toBeNull();
     },
   );
+
+  it("SIGINT while the CLI is still loading: kept for the run, cancelled, exit 130", async () => {
+    // Loading the CLI takes longer than this; Node's default handler used to
+    // end the process here without a summary (exit code null).
+    const dir = stateDir("stop-loading");
+    const result = await runBuiltCli(["ask", "--json", "-"], {
+      env: childEnv(dir, { ANTHROPIC_API_KEY: UNUSED_MODEL_KEY }),
+      stdin: { open: true },
+      stop: { signal: "SIGINT", afterMs: 150 },
+    });
+    expect(result.signal).toBeNull();
+    expect(result.code).toBe(CLI_EXIT_CODES.cancelled);
+    expect(onlySummary(result.stdout)).toMatchObject({
+      status: "cancelled",
+      error: { code: "cancelled" },
+    });
+    expect(rowCounts(dir)).toBeNull();
+  });
 
   it("--timeout-ms while the prompt is still being read: timed out, exit 124", async () => {
     const dir = stateDir("timeout");
