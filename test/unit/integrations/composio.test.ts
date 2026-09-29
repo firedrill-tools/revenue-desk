@@ -275,6 +275,37 @@ describe("ComposioConnector", () => {
     const failed = await probeComposio(broken, "gmail", new AbortController().signal);
     expect(failed.state).toBe("error");
     expect(failed.detail).not.toContain(API_KEY);
+    expect(failed.detail.split("\n")).toEqual([
+      "Composio did not answer the check. Try Check again later.",
+      "Composio said: denied for [REDACTED]",
+    ]);
+    expect(result.detail).not.toContain(API_KEY);
+  });
+
+  it("says a refused API key is the key to replace, and leaves the integration out", async () => {
+    const refusing: ComposioClientLike = {
+      createSession: async () => {
+        throw Object.assign(
+          new Error(
+            '401 {"error":{"message":"Invalid API key: ak_**6789","code":801,"status":401}}',
+          ),
+          { status: 401 },
+        );
+      },
+    };
+    const connector = new ComposioConnector(
+      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
+      { client: refusing },
+    );
+    for (const toolkit of ["gmail", "quickbooks", "slack"] as const) {
+      const result = await probeComposio(connector, toolkit, new AbortController().signal);
+      expect(result).toEqual({
+        state: "needs_auth",
+        detail:
+          "Composio rejected the API key. Put a new COMPOSIO_API_KEY in your configuration file and restart Revenue Desk.\nComposio said: Invalid API key: ak_**6789",
+        accountHint: null,
+      });
+    }
   });
 
   it("starts a sign-in only through authorize, with the given callback", async () => {

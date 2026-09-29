@@ -27,6 +27,7 @@ import {
   type ComposioClientLike,
   ComposioSessionError,
   ComposioSessionManager,
+  composioErrorParts,
   describeEndpoint,
   type ToolkitConnectionStatus,
 } from "./session.js";
@@ -144,6 +145,31 @@ export class ComposioConnectors {
   }
 }
 
+/**
+ * A failed Composio check as a ProbeResult. Composio refusing the API key
+ * (HTTP 401 or 403) is needs_auth, so runs leave the integration out, with
+ * the variable to replace; anything else is a transient error. The first
+ * line is the plain sentence; Composio's own words follow on a second line.
+ */
+export function composioCheckFailure(error: unknown): ProbeResult {
+  const status = error instanceof ComposioSessionError ? error.status : null;
+  const said =
+    error instanceof ComposioSessionError ? error.said : composioErrorParts(error).message;
+  if (status === 401 || status === 403) {
+    return {
+      state: "needs_auth",
+      detail: `Composio rejected the API key. Put a new COMPOSIO_API_KEY in your configuration file and restart Revenue Desk.\nComposio said: ${said}`,
+      accountHint: null,
+    };
+  }
+  const http = status === null ? "" : ` (HTTP ${status})`;
+  return {
+    state: "error",
+    detail: `Composio did not answer the check${http}. Try Check again later.\nComposio said: ${said}`,
+    accountHint: null,
+  };
+}
+
 /** A toolkit's Composio state as a ProbeResult; failures are errors, never secrets. */
 export async function probeComposio(
   connector: ComposioConnector,
@@ -154,7 +180,6 @@ export async function probeComposio(
     const status = await connector.status(toolkit, signal);
     return { state: status.state, detail: status.detail, accountHint: status.accountHint };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { state: "error", detail: `Composio check failed: ${message}`, accountHint: null };
+    return composioCheckFailure(error);
   }
 }

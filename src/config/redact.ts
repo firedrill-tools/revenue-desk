@@ -3,8 +3,8 @@
 // logged, stored, streamed or printed.
 //
 // Token shapes: `Bearer <8+ token characters>` (the scheme is kept), Stripe `sk_`/`rk_` keys,
-// Slack `xox?-` tokens, HubSpot `pat-` private-app tokens and Anthropic
-// `sk-ant-` keys. Configured values are replaced wherever they occur, longest
+// Slack `xox?-` tokens, HubSpot `pat-` private-app tokens, Composio `ak_`
+// project keys and Anthropic `sk-ant-` keys. Configured values are replaced wherever they occur, longest
 // first; values shorter than MIN_SECRET_LENGTH are skipped, because replacing
 // a very short string would destroy ordinary text (real keys are far longer).
 
@@ -21,6 +21,7 @@ const TOKEN_PATTERNS: readonly RegExp[] = [
   /\bsk-ant-[A-Za-z0-9_-]{8,}/g,
   /\bxox[a-z]-[A-Za-z0-9-]{6,}/g,
   /\bpat-[a-z]{2,4}\d?-[A-Za-z0-9-]{8,}/g,
+  /\bak_[A-Za-z0-9_-]{16,}/g,
 ];
 const BEARER = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 

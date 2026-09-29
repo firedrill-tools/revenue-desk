@@ -27,6 +27,7 @@ describe("the redactor", () => {
       ["slack xoxp-1234-5678-abcdef", `slack ${REDACTED}`],
       ["hubspot pat-na1-11111111-2222-3333-4444-555555555555", `hubspot ${REDACTED}`],
       ["anthropic sk-ant-api03-abcdefghijkl", `anthropic ${REDACTED}`],
+      ["composio ak_0123456789abcdefghij", `composio ${REDACTED}`],
     ];
     for (const [input, output] of cases) expect(redact(input)).toBe(output);
   });
@@ -34,7 +35,7 @@ describe("the redactor", () => {
   it("leaves ordinary words and ids alone", () => {
     const redact = createRedactorFor([]);
     const text =
-      "task_123 desk_notes work_dir ch_3Pabc re_1 cus_ABC in_1 pat-down bearer of news, sk_ alone";
+      "task_123 desk_notes work_dir ch_3Pabc re_1 cus_ABC in_1 pat-down bearer of news, sk_ alone, ak_ alone, Composio's mask ak_**0000";
     expect(redact(text)).toBe(text);
     expect(createRedactorFor([]).json({ id: "ch_1", amount: 4900 })).toEqual({
       id: "ch_1",

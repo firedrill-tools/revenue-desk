@@ -274,6 +274,39 @@ describe("ComposioSessionManager", () => {
     expect(createSession).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps Composio's status and own words from an SDK error, never its JSON or the key", async () => {
+    const { client } = stubClient(() => {
+      const error = new Error(
+        `401 {"error":{"message":"Invalid API key: ak_**6789","code":801,"slug":"APIKey_InvalidAPIKey","status":401,"suggested_fix":"Check ${API_KEY}"}}`,
+      );
+      throw Object.assign(error, { status: 401 });
+    });
+    const error = await manager(client)
+      .getSession()
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ComposioSessionError);
+    expect(error).toMatchObject({
+      code: "upstream",
+      status: 401,
+      message: "Composio session creation failed (HTTP 401): Invalid API key: ak_**6789",
+    });
+  });
+
+  it("reports a failed connection listing with its status, the key redacted", async () => {
+    const session = stubSession("s0");
+    session.toolkits.mockRejectedValueOnce(
+      Object.assign(new Error(`503 upstream for ${API_KEY}`), { status: 503 }),
+    );
+    const { client } = stubClient(() => session);
+    const error = await manager(client)
+      .connectionStatus()
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({
+      status: 503,
+      message: "Composio did not list the connections (HTTP 503): 503 upstream for [REDACTED]",
+    });
+  });
+
   it("reports an MCP destination rejection distinctly", async () => {
     const { client } = stubClient(() => {
       const error = new Error("The session MCP endpoint origin does not match the API origin");

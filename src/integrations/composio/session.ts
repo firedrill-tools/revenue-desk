@@ -262,13 +262,53 @@ export type ComposioSessionErrorCode = "config" | "destination" | "upstream" | "
 
 export class ComposioSessionError extends Error {
   override readonly name = "ComposioSessionError";
+  /** Composio's HTTP status, when it answered with one. */
+  readonly status: number | null;
+  /** Composio's own words (redacted), or this error's message when there are none. */
+  readonly said: string;
   constructor(
     readonly code: ComposioSessionErrorCode,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; status?: number | null; said?: string },
   ) {
-    super(message, options);
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
+    this.status = options?.status ?? null;
+    this.said = options?.said ?? message;
   }
+}
+
+/**
+ * The HTTP status and Composio's own words in an error of the Composio SDK,
+ * whose message reads `401 {"error":{"message":"Invalid API key: …",…}}`.
+ */
+export function composioErrorParts(error: unknown): {
+  readonly status: number | null;
+  readonly message: string;
+} {
+  const raw = error instanceof Error ? error.message : String(error);
+  const field = typeof error === "object" && error !== null ? Reflect.get(error, "status") : null;
+  let status = typeof field === "number" && Number.isInteger(field) ? field : null;
+  let message = raw.trim();
+  const match = /^(\d{3})\s+(\{[\s\S]*\})\s*$/.exec(message);
+  if (match !== null) {
+    status ??= Number(match[1]);
+    try {
+      const body: unknown = JSON.parse(match[2] ?? "");
+      const words = wordsOf(body);
+      if (words !== null) message = words;
+    } catch {
+      // Not JSON after all: keep the message as it was.
+    }
+  }
+  return { status, message };
+}
+
+function wordsOf(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const inner = Reflect.get(body, "error");
+  const holder = typeof inner === "object" && inner !== null ? inner : body;
+  const message = Reflect.get(holder, "message");
+  return typeof message === "string" && message.trim() !== "" ? message.trim() : null;
 }
 
 // --- Connection status -------------------------------------------------------
@@ -466,12 +506,25 @@ export class ComposioSessionManager {
       return await this.client.createSession(this.userId, config);
     } catch (error) {
       const name = error instanceof Error ? error.name : "";
-      const message = this.redact(error instanceof Error ? error.message : String(error));
       const code = name === "ComposioMCPDestinationError" ? "destination" : "upstream";
-      throw new ComposioSessionError(code, `Composio session creation failed: ${message}`, {
-        cause: error,
-      });
+      throw this.failure(code, "Composio session creation failed", error);
     }
+  }
+
+  /** A ComposioSessionError for an SDK failure: its status, Composio's words, never the key. */
+  private failure(
+    code: ComposioSessionErrorCode,
+    what: string,
+    error: unknown,
+  ): ComposioSessionError {
+    const { status, message } = composioErrorParts(error);
+    const said = this.redact(message);
+    const http = status === null ? "" : ` (HTTP ${status})`;
+    return new ComposioSessionError(code, `${what}${http}: ${said}`, {
+      cause: error,
+      status,
+      said,
+    });
   }
 
   /** The hosted MCP endpoint of the session. The headers carry the credential. */
@@ -505,10 +558,15 @@ export class ComposioSessionManager {
     const states = new Map<string, ComposioToolkitState>();
     let cursor: string | undefined;
     for (let page = 0; page < 10; page += 1) {
-      const result = await session.toolkits({
-        toolkits: [...toolkits],
-        ...(cursor ? { cursor } : {}),
-      });
+      let result: Awaited<ReturnType<ComposioSessionLike["toolkits"]>>;
+      try {
+        result = await session.toolkits({
+          toolkits: [...toolkits],
+          ...(cursor ? { cursor } : {}),
+        });
+      } catch (error) {
+        throw this.failure("upstream", "Composio did not list the connections", error);
+      }
       for (const item of result.items) states.set(item.slug, item);
       cursor = result.cursor || undefined;
       if (!cursor) break;
