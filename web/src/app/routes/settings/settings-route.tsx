@@ -46,6 +46,7 @@ import {
   type SettingsDraft,
   settingsPatch,
   validateDraft,
+  visibleErrors,
 } from "@/lib/settings-form";
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,8 @@ function SaveBar({
 
 type SectionKey = "profile" | "slack" | "email";
 
+const SECTION_KEYS: readonly SectionKey[] = ["profile", "slack", "email"];
+
 const SECTION_FIELDS: Record<SectionKey, readonly (keyof SettingsDraft)[]> = {
   profile: [
     "companyName",
@@ -178,8 +181,14 @@ function useSettingsForm(
   const [draft, setDraft] = useState<SettingsDraft>(() => draftFromSettings(original));
   const [saving, setSaving] = useState<SectionKey | null>(null);
   const [serverErrors, setServerErrors] = useState<FieldErrors>({});
-  const errors = { ...validateDraft(draft), ...serverErrors };
+  const clientErrors = validateDraft(draft);
+  const allErrors = { ...clientErrors, ...serverErrors };
   const patch = settingsPatch(original, draft);
+  // A section's checks show once it has unsaved changes; the server's always.
+  const editing = SECTION_KEYS.filter(
+    (key) => !isEmptyPatch(pickPatch(patch, SECTION_FIELDS[key])),
+  ).flatMap((key) => SECTION_FIELDS[key]);
+  const errors = visibleErrors(clientErrors, serverErrors, editing);
 
   const update = <K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -193,7 +202,7 @@ function useSettingsForm(
   const section = (key: SectionKey) => {
     const fields = SECTION_FIELDS[key];
     const sectionPatch = pickPatch(patch, fields);
-    const sectionErrors = pickErrors(errors, fields);
+    const sectionErrors = pickErrors(allErrors, fields);
     return {
       dirty: !isEmptyPatch(sectionPatch),
       invalid: !isEmptyPatch(sectionErrors),

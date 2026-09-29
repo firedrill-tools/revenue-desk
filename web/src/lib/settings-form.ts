@@ -105,6 +105,25 @@ export function validateDraft(draft: SettingsDraft): FieldErrors {
   return errors;
 }
 
+/**
+ * The field errors to show. A field's own check shows once its section has
+ * unsaved changes, so a fresh workspace's empty company name is not flagged
+ * before anyone edits it (saving that section still needs it); what the
+ * server refused always shows.
+ */
+export function visibleErrors(
+  client: FieldErrors,
+  server: FieldErrors,
+  editing: readonly (keyof SettingsDraft)[],
+): FieldErrors {
+  const shown: FieldErrors = {};
+  for (const key of editing) {
+    const error = client[key];
+    if (error !== undefined) shown[key] = error;
+  }
+  return { ...shown, ...server };
+}
+
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
 }

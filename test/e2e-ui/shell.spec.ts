@@ -125,6 +125,8 @@ test.describe("phone ergonomics", () => {
 
     await page.goto("/settings");
     const financial = page.getByRole("group", { name: "Financial actions" });
+    // Measured once the policy has loaded: an empty list would pass unmeasured.
+    await expect(financial.locator("label")).toHaveCount(3);
     await expectTouchTargets(await financial.locator("label").all());
   });
 });

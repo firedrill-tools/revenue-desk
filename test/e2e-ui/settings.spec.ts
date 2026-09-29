@@ -55,3 +55,23 @@ test("the company profile is saved and read back", async ({ page }) => {
   await expect(page.getByLabel("Company name")).toHaveValue(company);
   await api.expect("PATCH /api/settings", { body: { companyName: before.companyName } });
 });
+
+test("an empty company name is flagged only once the profile is edited", async ({ page }) => {
+  const api = await appApi();
+  const before = (await api.expect("GET /api/settings")).settings;
+  await api.expect("PATCH /api/settings", { body: { companyName: "" } });
+  try {
+    await page.goto("/settings");
+    await expect(page.getByLabel("Company name")).toHaveValue("");
+    // A workspace nobody has filled in yet shows no error.
+    await expect(page.getByText("Enter the company name.")).toHaveCount(0);
+    // Saving the profile needs it, so editing another profile field says so.
+    await page.getByLabel("Agent name").fill(`${before.agentName} edited`);
+    await expect(page.getByText("Enter the company name.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    await page.getByRole("button", { name: "Discard" }).click();
+    await expect(page.getByText("Enter the company name.")).toHaveCount(0);
+  } finally {
+    await api.expect("PATCH /api/settings", { body: { companyName: before.companyName } });
+  }
+});

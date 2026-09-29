@@ -28,7 +28,8 @@ export function SegmentedControl<T extends string>({
     <fieldset
       disabled={disabled}
       className={cn(
-        "inline-flex h-8 shrink-0 items-center self-start rounded-md border bg-surface-subtle p-0.5 sm:self-auto pointer-coarse:h-11",
+        // On touch screens each option (not only the group) is a 44px target.
+        "inline-flex h-8 shrink-0 items-center self-start rounded-md border bg-surface-subtle p-0.5 sm:self-auto pointer-coarse:h-auto",
         disabled && "opacity-60",
       )}
     >
@@ -40,7 +41,7 @@ export function SegmentedControl<T extends string>({
           <label
             key={option.value}
             className={cn(
-              "relative flex h-full min-w-14 cursor-pointer items-center justify-center rounded-[5px] px-3 font-medium text-body-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:disabled]:cursor-not-allowed",
+              "relative flex h-full min-w-14 cursor-pointer items-center justify-center rounded-[5px] px-3 font-medium text-body-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:disabled]:cursor-not-allowed pointer-coarse:h-11",
               selected
                 ? "bg-background text-foreground ring-1 ring-border"
                 : "text-muted-foreground hover:text-foreground",

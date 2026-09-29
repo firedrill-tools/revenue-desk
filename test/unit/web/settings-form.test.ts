@@ -12,6 +12,7 @@ import {
   policiesPatch,
   settingsPatch,
   validateDraft,
+  visibleErrors,
 } from "../../../web/src/lib/settings-form.js";
 
 const SETTINGS: WorkspaceSettings = {
@@ -62,6 +63,26 @@ describe("validateDraft", () => {
     expect(Object.keys(errors).sort()).toEqual(
       ["companyName", "currency", "defaultEffort", "notifySlackChannel", "timezone"].sort(),
     );
+  });
+});
+
+describe("visibleErrors", () => {
+  it("shows a field's own check only while its section is being edited", () => {
+    const fresh = { ...draftFromSettings(SETTINGS), companyName: "" };
+    const client = validateDraft(fresh);
+    expect(client.companyName).toBe("Enter the company name.");
+    // A fresh workspace: nothing edited yet, so nothing is flagged.
+    expect(visibleErrors(client, {}, [])).toEqual({});
+    // Editing the profile section: saving it needs the company name.
+    expect(visibleErrors(client, {}, ["companyName", "agentName"])).toEqual({
+      companyName: "Enter the company name.",
+    });
+  });
+
+  it("always shows what the server refused", () => {
+    expect(visibleErrors({}, { timezone: "Unknown time zone." }, [])).toEqual({
+      timezone: "Unknown time zone.",
+    });
   });
 });
 
