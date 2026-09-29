@@ -7,15 +7,18 @@ and the code disagree, the code is the current state and this document is the
 target; implementation status is tracked in §13, not implied by the text.
 
 Current state (2026-09-29): **integrated; milestone M3 met; QuickBooks and
-Slack moved to Composio** (Kiran's mapping: Composio for Gmail, Google
-Calendar, QuickBooks and Slack, MCP for HubSpot, API for Stripe; decisions
-log). `pnpm start` and `pnpm dev` serve the full `/api` and the app, and the
-CLI runs against the shared database. `pnpm verify` (typecheck, lint, 1,130
-unit, integration and full-stack tests, the build, 8 CLI end-to-end tests
-and 49 Playwright tests with one skipped) is green. QuickBooks and Slack
-are not yet connected in Composio for the configured user, so they have
-not run against a connected account. §13 has the status; open items and
-Kiran's open questions follow the decisions log.
+Slack moved to Composio; no mocking or simulation in the product or its
+tests** (Kiran's mapping: Composio for Gmail, Google Calendar, QuickBooks and
+Slack, MCP for HubSpot, API for Stripe; decisions log). `pnpm start` and
+`pnpm dev` serve the full `/api` and the app, and the CLI runs against the
+shared database. `pnpm verify` (typecheck, lint, 878 unit and integration
+tests, the build, 17 tests of the built CLI and 27 Playwright tests against
+the real app with one skipped) is green. The live suites run against the
+real model and accounts: Gmail and Stripe (test mode) are read live;
+Calendar, QuickBooks and Slack are not connected in Composio for the
+configured user and HubSpot has no token, so they have not run against a real
+account. §13 has the status; open items and Kiran's open questions follow the
+decisions log.
 
 ## 0. Ground rules
 
@@ -57,10 +60,13 @@ Kiran's open questions follow the decisions log.
   click on Connect (§9).
 - **No silent fallbacks.** An unconfigured integration is `not_configured`,
   and a Composio integration nobody connected is `needs_auth`; their tools
-  are not offered and the UI says so. There is no fallback to fakes, sample
-  data or another model. Local fakes exist only in tests and in the
-  explicitly launched, visibly labelled sandbox demo mode (§11); QuickBooks
-  and Slack have no local fake.
+  are not offered and the UI says so. There is no fallback to sample data or
+  another model.
+- **Real services only (Kiran, 2026-09-29).** Nothing in the product or in its
+  tests stands in for a service, the model or a business: no local fakes, no
+  scripted model, no fictional company, no sandbox demo mode. Unit tests check
+  Revenue Desk's own logic; everything that talks to a service or the model
+  is tested against the real one in the opt-in live suites (§11).
 
 ## 1. Product story
 
@@ -124,8 +130,8 @@ MCP and API for one or two others. Why each kind:
   idempotency keys on writes and documented error envelopes.
 
 The QuickBooks REST and Slack Web API integrations of the first build were
-removed on 2026-09-29 with their variables (`QBO_*`, `SLACK_*`), clients,
-fakes and tests (decisions log).
+removed on 2026-09-29 with their variables (`QBO_*`, `SLACK_*`), clients and
+tests (decisions log).
 
 ### Tool surfaces
 
@@ -314,13 +320,12 @@ deprecated in favour of `SLACK_SEND_MESSAGE`.
 ## 3. Environment and configuration contract
 
 The source of truth is `src/contracts/env.ts`: `ENV_VARS` (every name, its
-group, whether it is a secret, product or test scope) and the `AgentEnv`
+group and whether it is a secret) and the `AgentEnv`
 snapshot type. `.env.example` lists exactly those names in the same order; a
 unit test keeps them equal. The config layer (`src/config/env.ts`, W1) reads
 `process.env` once at start into an immutable `AgentEnv` and never mutates it.
 
-- **Model:** `ANTHROPIC_API_KEY` (required to run), `ANTHROPIC_BASE_URL`
-  (optional; tests point it at the scripted API), `AGENT_MODEL` (default
+- **Model:** `ANTHROPIC_API_KEY` (required to run), `AGENT_MODEL` (default
   **`claude-sonnet-5`**), `AGENT_EFFORT` (default **`medium`**; low, medium,
   high, xhigh, max), `AGENT_THINKING_DISPLAY` (`summarized` in the UI,
   `omitted` in the CLI when unset), `AGENT_MAX_TURNS` (30),
@@ -335,8 +340,7 @@ unit test keeps them equal. The config layer (`src/config/env.ts`, W1) reads
   `AGENT_POLICY` (JSON modes per action class; those classes are locked in the
   app), `AGENT_BUSINESS_DATE` (YYYY-MM-DD the agent treats as today; default
   today in the workspace time zone; useful for reproducible tests and demos),
-  `AGENT_APPROVAL_TIMEOUT_MS` (900000), `AGENT_SANDBOX` (set only by
-  `pnpm dev:sandbox`, §11), `DOTENV_PATH`.
+  `AGENT_APPROVAL_TIMEOUT_MS` (900000), `DOTENV_PATH`.
 - **Composio:** `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID` (from configuration
   only; **there is no default user id in code**), `COMPOSIO_BASE_URL`
   (default `https://backend.composio.dev`). Missing key or user id make Gmail,
@@ -346,9 +350,8 @@ unit test keeps them equal. The config layer (`src/config/env.ts`, W1) reads
 - **HubSpot:** `HUBSPOT_MCP_URL` (+ optional `HUBSPOT_MCP_TOKEN`) selects any
   Streamable HTTP MCP server. Otherwise stdio: `HUBSPOT_ACCESS_TOKEN` is passed
   to the child as `PRIVATE_APP_ACCESS_TOKEN` in an explicit child environment,
-  and `HUBSPOT_API_BASE_URL` becomes its `BASE_URL_OVERRIDE`.
-  `HUBSPOT_MCP_COMMAND`/`HUBSPOT_MCP_ARGS` (JSON array) replace the command for
-  tests. The default command is `process.execPath` plus the resolved
+  and `HUBSPOT_API_BASE_URL` becomes its `BASE_URL_OVERRIDE`. The command is
+  always `process.execPath` plus the resolved
   `@hubspot/mcp-server` bin; never `npx` at runtime. The owners lookup
   (§2) sends the same token to `HUBSPOT_API_BASE_URL` (default
   `https://api.hubspot.com`) and exists only with the stdio server.
@@ -357,11 +360,16 @@ unit test keeps them equal. The config layer (`src/config/env.ts`, W1) reads
   (`https://api.stripe.com`), `STRIPE_API_VERSION`.
 - **QuickBooks and Slack** have no variables of their own: they are Composio
   toolkits (the `QBO_*` and `SLACK_*` variables were removed on 2026-09-29).
-- **Base URLs** may contain a path prefix; clients join paths without dropping
-  it.
-- **Passthrough (tests):** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and
+- **Base URLs** must be HTTPS and may contain a path prefix; clients join
+  paths without dropping it. The one exception is `HUBSPOT_MCP_URL`, which may
+  be plain HTTP on a loopback host (an MCP server run on this machine).
+- **Passthrough:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and
   `CLAUDE_CODE_MAX_RETRIES` are forwarded to the Claude CLI child when set
   (`SDK_CHILD_PASSTHROUGH_VARS`); they are not app configuration.
+- **Removed on 2026-09-29 (Stage 2):** `ANTHROPIC_BASE_URL`, `AGENT_SANDBOX`,
+  `HUBSPOT_MCP_COMMAND` and `HUBSPOT_MCP_ARGS`, which existed only for the
+  scripted model, the sandbox demo and local fakes, together with plain-HTTP
+  loopback base URLs for Composio, HubSpot's API and Stripe.
 - **Missing or refused configuration.** `IntegrationDefinition.resolve(env)`
   returns `configured`, `not_configured` (with the missing variable *names*) or
   `invalid` (with problems that never contain values). Only configured
@@ -517,7 +525,7 @@ no tools.
     subject, thread, body), for `GMAIL_SEND_DRAFT`.
   - Stripe (`StripeRunMemory`): customers, charges (amount, currency, local
     date, description, amount refunded) and subscriptions. A refund names the
-    customer and charge ("Refund $490.00 to Harbor & Pine Outfitters on
+    customer and charge ("Refund $490.00 to <customer> on
     Stripe charge ch_…") in the charge's own currency (the workspace currency
     when the run did not read the charge), counts the run's own refunds and a
     complete `list_refunds` in "Already refunded", lists "Refunded in this
@@ -529,7 +537,7 @@ no tools.
     wherever each tool puts them (`data.Invoice[]`,
     `data.QueryResponse.Customer[]`, `data.Customer`, or the record itself)
     with decimals given as numbers or numeric strings. Invoice and payment
-    cards name the customer ("Meridian Labs (QuickBooks customer 63)") and
+    cards name the customer ("<customer> (QuickBooks customer 63)") and
     the invoice number; a payment card flags a payment above the open
     balance or against another customer's invoice. The run's own payments
     lower balances; one sent without an answer shows "May already be
@@ -630,7 +638,7 @@ persist from the events.
 - `resume`, `abortController`.
 - `env`, an explicit **allowlist** that replaces the child environment:
   `PATH`, `HOME=<state>/home`, `CLAUDE_CONFIG_DIR=<state>/claude`,
-  `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL?`, the passthrough variables when
+  `ANTHROPIC_API_KEY`, the passthrough variables when
   set, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, `DISABLE_TELEMETRY=1`,
   `DISABLE_ERROR_REPORTING=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
   `ENABLE_TOOL_SEARCH=false`, `CLAUDE_AGENT_SDK_CLIENT_APP=revenue-desk/<version>`.
@@ -659,8 +667,9 @@ persist from the events.
 working rules (`STABLE_RULES`) are identical for every workspace and run and
 come first, for prompt caching; the SDK's dynamic boundary follows, then the
 workspace profile, the systems of this run, the mode and the business date.
-It never names tools. The rules name no sandbox company, id or amount (a test
-checks the fixed text against the fixtures). In summary:
+It never names tools. The rules name no company, record id, address, domain
+or amount other than the money-unit example (a unit test checks the fixed
+text). In summary:
 
 - Look before acting; cross-check across systems. Before reporting
   accounting invoices as open, overdue or in aging, look for payments against
@@ -999,7 +1008,7 @@ not foreign keys: the gate writes the approval row from `canUseTool` while the
 event consumer may not yet have written the tool-call row. A tool_use id is
 unique only within its run (migration `0001`), and every tool-call write is
 keyed by run and tool_use id, so one run's events can never change another
-run's rows (a scripted model repeats ids).
+run's rows (a replayed transcript can repeat ids).
 
 `pnpm db:seed` (idempotent, W3) writes only the default workspace settings
 (company name blank, which Settings prompts for) and `DEFAULT_POLICY`. There
@@ -1034,8 +1043,7 @@ bridged to Tailwind and shadcn in `web/src/styles/globals.css`.
 ### Shell
 
 - 56px app bar: product name, a connections-health popover (dot plus label per
-  integration), the model label, a theme toggle and, only in sandbox demo mode
-  (`SessionInfo.mode === 'sandbox'`), a persistent "Local sandbox" label.
+  integration), the model label and a theme toggle.
   Without `ANTHROPIC_API_KEY` (`SessionInfo.modelConfigured` false) the app
   says so, disables the jobs and Send, and the run error says how to fix it.
 - Left rail 264px: search, New chat (`POST /api/conversations`), conversations
@@ -1084,7 +1092,7 @@ bridged to Tailwind and shadcn in `web/src/styles/globals.css`.
   pending approval reads "Waits for your decision above", with no timer. On
   phones a row puts its title on its own line.
 - `Confirmation`: patched for #484 (done in S1); renders a facts table and
-  names the consequence ("Refund $490.00 to Harbor & Pine Outfitters on
+  names the consequence ("Refund $490.00 to <customer> on
   Stripe charge ch_…", §5 "Run memory"); financial and destructive
   approvals use the danger colour on the primary action (restate the sizing
   classes when passing `className` to `ConfirmationAction`); shows a pending
@@ -1175,180 +1183,141 @@ and drives our own end-to-end tests.
   the write is recorded `outcome_unknown` with its key. `--timeout-ms` ends
   the run `timed_out`. No work continues after the output is written.
 
-## 11. Testing, fakes and the sandbox demo mode
+## 11. Testing
+
+Kiran's direction (2026-09-29): real integrations only, no mocking or
+simulation, and tests that prove real behaviour. So nothing in the tests
+stands in for a service, the model or a business. The local fakes of Stripe,
+HubSpot and Composio, the scripted Messages API, the fictional company, the
+scripted jobs, the full-stack suite over the fakes and the sandbox demo mode
+were removed in Stage 2 (decisions log). Unit tests check Revenue Desk's own
+logic; everything that talks to a service or to the model runs against the
+real one, in opt-in live suites.
 
 The suites at HEAD (counted 2026-09-29):
 
 | Command | Suite | Tests |
 |---|---|---|
-| `pnpm test` | Vitest over `test/unit` and `test/integration` (the full-stack E2E is `test/integration/e2e`); no network | 1,130 in 107 files |
-| `pnpm test:e2e-cli` | `test/e2e-cli`: the built CLI (`pnpm build` first) | 8 |
-| `pnpm test:e2e` | Playwright `test/e2e-ui`: the built app in the sandbox (`pnpm build` first), desktop and phone projects | 50 listed: 49 run, 1 skipped (the touch-target check runs on the phone project only) |
-| `LIVE_E2E=1 pnpm test:live` | `test/live`: real services, opt-in, never part of `pnpm verify` | 1 live Gmail test and 11 offline checks of the live script |
+| `pnpm test` | Vitest over `test/unit` and `test/integration`; no network, no model | 878 in 77 files |
+| `pnpm test:cli` | `test/cli`: the built CLI before a model call (`pnpm build` first) | 17 |
+| `pnpm test:e2e` | Playwright `test/e2e-ui`: the built app with the real configuration, no model call (`pnpm build` first), desktop and phone projects | 28 listed: 27 run, 1 skipped (touch targets run on the phone project only) |
+| `LIVE_E2E=1 pnpm test:live` | `test/live/*.test.ts`: the real model and accounts, read-only | 16 |
+| `LIVE_E2E=1 pnpm test:live:ui` | `test/e2e-ui/*.live.spec.ts`: the chat in the browser with the real model | 2 |
+| `LIVE_E2E=1 LIVE_E2E_WRITES=1 pnpm test:live:writes` | `test/live/writes`: real changes on test-safe targets | 5 |
 
 **`pnpm verify`** runs typecheck, lint, `pnpm test`, the build, then
-`pnpm test:e2e-cli` and `pnpm test:e2e`.
+`pnpm test:cli` and `pnpm test:e2e`. The live suites are never part of it.
 
-**Unit (Vitest, no network):** contracts (`contracts.test.ts`) and schema
-(`db-schema.test.ts`); env resolution for every integration (configured,
-`not_configured`, `invalid`, live-key refusal); path joining with prefixed
-base URLs; Stripe bracket form encoding; idempotency key derivation; error
-normalisation; zoned timestamps; classifier tables and run memories for
-every profile, QuickBooks and Slack from inputs shaped by the captured
-Composio schemas and results shaped by Composio's output schemas
-(`quickbooks-classify.test.ts`, `slack.test.ts`); the HubSpot, QuickBooks
-and Slack input rules; QuickBooks and Slack through the gateway's Composio
-path with the production classifiers and run memory
-(`gateway/composio-quickbooks-slack.test.ts`); every Composio profile tool
-present in the captured surface with a schema the gateway compiles and
-Composio's read-only hint (`gateway/catalog-fit.test.ts`); the owners
-lookup; credential failures that mark a connection; policy decisions;
-redactor; the system prompt (no fixture names in its fixed text) and SDK
-options; AgentEvent to UIMessageChunk mapping with golden sequences from the
-real SDK against the mock; `readUIMessageStream` proving the approval
-sequences render; the SSE heartbeat; security guards and headers;
+**Unit (Vitest, no network, no model):** contracts and schema; env
+resolution for every integration (configured, `not_configured`, `invalid`,
+live-key refusal, HTTPS-only base URLs, the variables that no longer exist);
+path joining with prefixed base URLs; Stripe bracket form encoding;
+idempotency key derivation; error normalisation; zoned timestamps;
+classifier tables, approval cards and run memories for every profile
+(QuickBooks and Slack from inputs shaped by the captured Composio schemas);
+input rules; every captured HubSpot 0.4.0 and Composio schema compiled by the
+gateway's validator, and every Composio profile tool present in the captured
+surface; the gateway's routing, classification, policy exposure and run
+memory; the owners lookup; credential failures that mark a connection; the
+policy engine and approval gate; the redactor; the system prompt (no record
+id, amount, address or domain in its fixed text) and SDK options, including
+the child's explicit environment; AgentEvent to UIMessageChunk mapping and
+`readUIMessageStream`; the SSE heartbeat; security guards and headers;
 conversation titles; database repositories, run ownership, orphan recovery
-and usage baselines; the web client's libraries (API client, chat, tool
-model, formatting, Markdown without images, table alignment); the README's
-generated configuration table, CLI flags and exit codes.
+and usage baselines on a real SQLite file; the web client's libraries; the
+CLI's arguments, settings, stop logic and output; the README's generated
+configuration table, CLI flags and exit codes.
 
-**Contract-faithful local fakes** (`test/support/fakes`): stateful, loopback
-ephemeral ports, dated fixtures, never reachable from product code paths.
-Stripe REST (form-only with 415 on JSON, Bearer-only, idempotency replay, error
-envelope, 402 decline, 429, customer search with the query-language subset
-the tool uses and 400 on a query Stripe would refuse); HubSpot MCP
-(Streamable HTTP and stdio, the profile's tools, schemas from the 0.4.0
-capture) with the CRM REST routes, owners filtered by email as HubSpot does;
-Composio (a local Composio API fake that creates sessions whose MCP endpoint
-is a loopback MCP fake serving the captured schemas of all four toolkits,
-reached through `COMPOSIO_BASE_URL`, plus a hosted sign-in page; W2 allows
-an `http:` session MCP URL only for loopback hosts). The Composio fake runs
-Gmail and Calendar on a local mailbox and calendar; it has no QuickBooks or
-Slack data, reports both without a connected account and fails their calls
-as Composio does. The QuickBooks REST and Slack Web API fakes were removed
-with those integrations (Kiran: no new mocking or simulation). Fixtures (`test/fixtures/business`)
-describe one coherent fictional company, Kestrel Analytics, on `*.test`
-domains, and agree with each other (`business-fixtures.test.ts`).
+Where a unit needs a caller or an answer, its test supplies the smallest one
+in place, local to the test: an in-process stub at an injected port (the
+agent core's `runTurn` for the server's routes and streams, integration
+definitions for connection checks, a Composio client for the session
+manager), a `fetch` that answers what the test says (the Stripe and HubSpot
+REST clients), or a minimal MCP server in memory or on loopback (the
+gateway's MCP proxy). None is shared between tests or copies a vendor's
+service, and none carries business data.
 
-**Scripted Messages API:** `test/support/mock-anthropic.ts` and
-`sdk-gate-support.ts` (adapted with provenance headers, plus thinking blocks).
-The real SDK runs as a subprocess with `ANTHROPIC_BASE_URL` pointed at the
-mock, a dummy key, `HTTP(S)_PROXY` pointed at the mock with
-`NO_PROXY=127.0.0.1,localhost` (any non-loopback CONNECT gets 403 and fails the
-test) and `CLAUDE_CODE_MAX_RETRIES=0`. Scripted scenarios and their fake
-checks are in `test/scenarios` (J1–J5, failures, and variants from the live
-runs).
+**Integration (Vitest, no network):** the real `@hubspot/mcp-server` 0.4.0
+over stdio through `launch.ts`, with `test/support/deny-network.mjs`
+preloaded: it lists exactly the captured surface without a network attempt,
+a non-loopback call is blocked, and a `.env` in its working directory is
+ignored (a loopback recorder that answers 404 shows where a call would go).
+The Vite dev server's CORS and file lockdown. The CLI's run start against a
+real database whose conversation another live process owns.
 
-**Integration and full-stack E2E** (real SDK, mock model, fakes; every run's
-`runs`, `tool_calls` and `approvals` rows read with plain SQL and compared
-with what each fake recorded): J1 reads across all three kinds with the draft
-automatic and the send approved; sending a draft the run did not create
-(recipients not confirmed); J2 refund approved (exactly one refund with the
-expected Idempotency-Key and a HubSpot note; the reply says Slack is not
-connected); J2 by company name with a note refused for `hs_timestamp`
-before HubSpot and the corrected note after it; J4 without QuickBooks and
-Slack (nothing created, sent or posted; both unavailable after their boot
-check); the owners lookup against HubSpot's API; J2 refund denied; Stop while an approval is pending (run and approval
-cancelled, no refund, no extra model request); Stop at J3's invite with the
-queued HubSpot task stopped; Stop while an approved refund is at Stripe (the
-refund finishes and is recorded once with its key); approval timeout; J3
-with reminder drafts and an external calendar invite that asks for
-approval; failures (Stripe 402 and 429, HubSpot MCP down at start, Composio
-session failure, an invalid refund rejected before approval, model 529 with
-`x-should-retry:false`); a Stripe key revoked mid-session (401) marking the
-connection for the next run;
-multi-turn resume; per-run usage over two turns of one session; HTTP layer
-(SSE order, reconnect replay, disconnect does not stop a run,
-approvals 404/409, foreign `Origin` 403, non-loopback `Host` refused, missing
-cookie or CSRF 403, one active run per conversation); the Vite dev server's
-CORS and file lockdown.
+**CLI (`test/cli`, the built `dist/cli/main.js`, no model):** the shebang
+and executable bit, help and version; usage errors exit 2 with nothing on
+stdout; configuration errors exit 3 with one `--json` summary and no database
+written; `DOTENV_PATH` read and refused; an unknown conversation and one whose
+run another live process owns exit 2; SIGTERM, SIGINT and `--timeout-ms`
+while the prompt is read end the invocation within 1.5 seconds; no key in any
+output. Every child gets an explicit environment without integration
+configuration.
 
-**CLI E2E** (the built `dist/cli/main.js` against the fakes and the scripted
-model): human mode prints the reply and a status line and the app, opened on
-the same state directory, shows the run with source `cli`; `--json` prints
-exactly one `RunSummary` with outbound actions denied in headless mode;
-missing or refused configuration exits 3 and records nothing; SIGTERM stops
-a run in flight with exit 130 within 2 seconds; a CLI killed with SIGKILL
-does not block its conversation (the app's next turn, and the next CLI
-invocation, recover it); four runs at once with isolated `--state-dir`; the
-executable runs through its shebang.
+**Playwright (`test/e2e-ui`, no model):** `pnpm build` first; the suite
+starts `dist/server/main.js` on 127.0.0.1:4320 (a server already there is
+never reused) with the real configuration (`DOTENV_PATH`, default `.env`) and
+a fresh state directory in the system temp directory. The installed Chrome
+(`channel: 'chrome'`), desktop 1440×900 and phone 390×844 with touch. Screens
+are checked with axe (no serious or critical violations) and for sideways
+scrolling at 390px.
 
-**Playwright UI E2E** (`test/e2e-ui`; the sandbox on the production build,
-`scripts/dev-sandbox.ts --built --model scripted`, started by the suite on
-port 4320, which must be free: a server already there is never reused). The
-installed Chrome (`channel: 'chrome'`), desktop 1440×900 and phone 390×844
-with touch. Every flow checks axe (no serious or critical violations) and no
-side scroll at 390px; screenshots are artifacts, not pixel-gated.
+- `shell.spec.ts`: the new chat (jobs enabled exactly when a model key is
+  set); dark mode on every screen and after a reload; 44px touch targets on
+  the phone; reduced motion; rail search and archiving; the empty Runs
+  screen; every screen loads from Revenue Desk alone under its CSP.
+- `connections.spec.ts`: the page shows exactly what `GET /api/connections`
+  says once the start-up check has finished: each state in words, missing
+  variables, Connect where Composio can sign in (never clicked: it starts a
+  real sign-in), Check where there is something to check (clicked: a
+  read-only probe), and the app bar's count.
+- `settings.spec.ts`: the approval policy and the company profile are saved
+  and read back after a reload.
+- `unconfigured.spec.ts`: a second server from the same build with no
+  configuration at all says it cannot run, offers no job and shows every
+  integration as not configured.
 
-- `chat.spec.ts`: the empty chat; a billing inquiry through tool rows, the
-  approval card naming the recipient, approve and the answer; a reload while
-  the approval waits keeps the card actionable; Stop while it waits; a
-  suggestion names the conversation (also in an empty conversation); a typed
-  prompt is named by the server; keyboard-only approval; the inspector's
-  calls by connection kind and the run's cost.
-- `connections.spec.ts`: every state reads plainly (connected, needs sign-in,
-  not configured, error); Check runs the probe again; Connect signs in in a
-  new tab that comes back and confirms, and the first tab and the app bar
-  follow.
-- `policy.spec.ts`: financial set to deny in Settings; the next refund is
-  refused with a plain reason and a link back to the policy.
-- `review.spec.ts`: a whole job makes the browser contact no other host; a
-  waiting approval shows in the tab title, on the new chat and on the phone's
-  menu; a refund Stripe declines after approval reads "Approved, then
-  failed" and counts in Runs; a server without `ANTHROPIC_API_KEY` says so
-  and offers no job.
-- `shell.spec.ts`: dark mode everywhere and after a reload; 44px touch
-  targets and the phone app bar; the Thinking shimmer and reduced motion;
-  rail search and archiving; the Runs list and detail; numeric table columns
-  aligned right.
+**Live (opt-in).** Each live suite refuses to start without `LIVE_E2E=1`
+(the write suite also without `LIVE_E2E_WRITES=1`). Keys come from the file
+`DOTENV_PATH` names (default the git-ignored `.env`), are passed to each run
+in an explicit environment holding only the model key and the variables of
+the systems under test, and are never printed. Before each test the
+connections are checked read-only as Check does; a system that is not
+connected or not configured is skipped with the reason and what to do,
+never faked. Output carries states, counts, tool names and cost only;
+`LIVE_OUT_DIR` (outside the repository) keeps state directories, summaries,
+stderr and the browser suite's artifacts for review.
 
-**Sandbox demo mode (`pnpm dev:sandbox`).** Ships as an explicit, clearly
-labelled demo: `scripts/dev-sandbox.ts` starts the fakes, then the server and
-UI with `AGENT_SANDBOX=1` and every integration pointed at the fakes through
-the ordinary §3 variables, in an explicit environment (no `DOTENV_PATH`, no
-inherited keys). QuickBooks and Slack reach the Composio fake too, which
-reports them not connected, so the scripted jobs run without them. The model is the scripted one unless `ANTHROPIC_API_KEY` is
-set in the script's own environment (never read from a file); `--model
-scripted|real` makes the choice explicit. Options: `--hubspot stdio|http`,
-`--state-dir`, `--no-web`, `--built` (the production build, which serves the
-app on 4320, no Vite). With `AGENT_SANDBOX=1` the server refuses to start if
-any configured endpoint is not loopback, and the app bar and Connections
-screen show "Local sandbox" for the whole session. It is only ever entered
-by running that script; no product code path selects fakes on its own, and
-a missing configuration in normal mode is never replaced by sandbox data.
+- `test/live/connections.test.ts` (no model): every check ends in a definite
+  state, and each connected integration answers one read through the run
+  gateway, opened with a read-only policy (so the Composio session offers
+  read tools only).
+- `test/live/read-only.test.ts`: per system, the model answers a question
+  from the headless CLI with every class except `read` denied and a $0.50
+  cap; only reads of that system ran, the database agrees, the cost stayed
+  under the cap.
+- `test/live/cli.test.ts` (model only): the reply and status line; `--json`
+  resuming the conversation; the app listing both runs as the CLI's;
+  SIGTERM mid-run (exit 130 within 2 seconds); a CLI killed with SIGKILL
+  whose conversation the next invocation recovers (`server_restart`).
+- `test/e2e-ui/chat.live.spec.ts` (`pnpm test:live:ui`, desktop): a
+  read-only Gmail question in the browser, and an approval card for a Gmail
+  draft denied with the keyboard, so nothing is created. No trace,
+  screenshot or HTML report; artifacts outside the repository.
+- `test/live/writes` (`pnpm test:live:writes`): Stripe test mode only (a
+  customer and a PaymentIntent confirmed with `pm_card_visa` made through
+  Stripe's API, refunded by the agent with financial actions auto, one
+  refund with its idempotency key checked, the customer deleted); a Gmail
+  draft to the account's own address (deleted); one Slack post to
+  `LIVE_SLACK_TEST_CHANNEL`, the only allowlisted channel (deleted); a
+  HubSpot task only on a developer test or sandbox account (deleted); a
+  QuickBooks customer only when the connected account uses
+  `https://sandbox-quickbooks.api.intuit.com` (QuickBooks keeps customers).
 
-**Live E2E (opt-in).** Both entry points refuse to start without
-`LIVE_E2E=1`, because they call the real Anthropic API and cost money. Keys
-are read at run time from files outside the tracked tree and never printed.
-
-- `LIVE_E2E=1 pnpm test:live` (`test/live`): the headless CLI, from source,
-  summarises the three most recent emails of the connected Gmail inbox
-  through Composio, **read-only**: every class but `read` is denied (so the
-  Composio session is created with access `read` and offers no write tool),
-  with `AGENT_MAX_BUDGET_USD=0.50`. It first checks the connections read-only
-  and stores them, as Check does, then asserts that the run completed, only
-  Gmail reads ran, nothing was drafted, sent or labelled, and the cost stayed
-  under the cap. `COMPOSIO_API_KEY` and `COMPOSIO_USER_ID` come from
-  `DOTENV_PATH` (default `../gmail-agent/.env`), `ANTHROPIC_API_KEY` from
-  `LIVE_MODEL_ENV` (default the git-ignored `.env`). It prints counts and
-  tool names only; `LIVE_OUT_DIR` keeps the state directory for review.
-- `LIVE_E2E=1 node --import tsx scripts/live-e2e.ts --out <dir>`: the real
-  model plays J1–J5 against the sandbox fakes through the HTTP API of the
-  production build, then three headless CLI runs (QuickBooks and Slack are
-  not connected there: they have no local fake). Each approval is decided by the job's rules (approve the
-  correct refund, invoice or call; deny a wrong charge, a premature promise
-  to a customer, an email the user asked only to draft, or a payment nobody
-  asked to record), and every card is checked against the call's input.
-  Options: `--key-file` (default `.env`), `--jobs`, `--no-cli`,
-  `--budget-usd` (default 8, tracked across invocations in
-  `<dir>/spend.json`), `--run-cap-usd` (at most 2; enforced through
-  `AGENT_MAX_BUDGET_USD` and `--max-budget-usd`). `<dir>` must be outside the
-  repository, and the script checks that nothing it wrote contains a key.
-  Its findings drove the 2026-09-29 decisions below.
-
-Live tests of QuickBooks and Slack need Kiran to connect them in Composio
-(Connect); Stripe and HubSpot live tests need a Stripe `sk_test_` key and a
-HubSpot token ("Open questions"). They would be read-only by default.
+Last live run (2026-09-29): `pnpm test:live` 8 passed and 8 skipped (Google
+Calendar, QuickBooks and Slack need sign-in; HubSpot is not configured), with
+Gmail and Stripe (test mode) read by the model; `pnpm test:live:ui` 2
+passed. The write suite has not been run.
 
 ## 12. Repository layout
 
@@ -1362,7 +1331,7 @@ probes live in each integration's `definition.ts`.
 revenue-desk/
   src/
     contracts/     json.ts integration.ts env.ts events.ts api.ts cli.ts   (lead)
-    config/        env.ts (AgentEnv snapshot)  secret.ts (SecretValue)  redact.ts  loopback.ts  run-settings.ts
+    config/        env.ts (AgentEnv snapshot)  secret.ts (SecretValue)  redact.ts  run-settings.ts
     integrations/  registry.ts (catalog, checks, connection snapshots, connectionFromFailure)
                    shared/ (http.ts, errors.ts, api-tool.ts, time.ts, money.ts, schema.ts, …)
                    composio/ (session.ts, connector.ts, integration.ts, resolve.ts)
@@ -1388,13 +1357,12 @@ revenue-desk/
          lib/ (api.ts, chat.ts, markdown.ts, tables.ts, tool-model.ts, suggestions.ts, …)  hooks/
          components/ai-elements/*  components/ui/*  components/app/*  styles/{globals,tokens}.css
   test/
-    unit/  integration/ (e2e/, cli/, fakes/, harness/, sandbox/, scenarios/)  e2e-cli/  e2e-ui/  live/
-    helpers/ (core test helpers)
-    support/ mock-anthropic.ts  sdk-gate-support.ts  harness.ts  api-client.ts
-             fakes/{core,stripe,hubspot,composio}/  web-stub/
-    fixtures/ business/*.json  surfaces/{hubspot-mcp-0.4.0,composio-direct}.json (dated, with source)
-    scenarios/ j1–j5, failures, script.ts, run-in-core.ts, run-over-http.ts
-  scripts/ dev-sandbox.ts  live-e2e.ts  surfaces/capture-*.ts (read-only)
+    unit/  integration/ (cli/, hubspot-mcp-stdio, vite-dev-server)  cli/  e2e-ui/ (*.spec.ts, *.live.spec.ts)
+    live/ (support.ts, connections, read-only, cli; writes/)
+    helpers/ (in-process test helpers)
+    support/ api-client.ts  repository.ts  deny-network.mjs
+    fixtures/ surfaces/{hubspot-mcp-0.4.0,composio-direct}.json (captured, dated, with source)
+  scripts/ surfaces/capture-*.ts (read-only)
   data/ (git-ignored)
 ```
 
@@ -1412,19 +1380,20 @@ revenue-desk/
 | W2 six integrations and the registry | done (`d3797c3`…`73569a5`) |
 | W3 repositories, seed, boot recovery, `/api` routes, run registry, stream mapping | done (`50f9f1b`, `be1224b`) |
 | W4 web app: chat, approvals, runs, connections, settings | done (`e5ce069`, `80db8c5`) |
-| W5 fakes, fixtures, scripted J1–J5 and failure scenarios, harness, `pnpm dev:sandbox` | done (`7555ce0`…`ec67453`) |
+| W5 fakes, fixtures, scripted J1–J5 and failure scenarios, harness, `pnpm dev:sandbox` | done (`7555ce0`…`ec67453`); all removed in Stage 2 (2026-09-29) |
 | W6 `revenue-desk ask` CLI and README | done (`dc6c6a8`, `46af4ac`) |
 | Integration: server entry point and CLI composition root wired; spike leftovers removed | done (`3462c6c`, `7427bc1`) |
 | Integration fixes: run-scoped tool_use ids, plain reason for stopped calls, rejected known tools keep their integration, MCP connect error cause, composer dimming | done (`95a23ac`, `d2c99e9`, `a283b65`, `e89d965`, `9ea3b02`) |
 | Full-stack E2E (jobs, decisions, failures, resume, HTTP layer) and CLI E2E | done (`e0f07ff`, `7427bc1`, `ef92456`) |
 | Integration follow-ups: run ownership and orphan recovery (`0002`), SSE heartbeat, action-log statuses and keys, send-draft recipients, one Connections rule, conversation titles, per-run usage from the database (`0003`) | done (`a6ef613`, `2a58e9b`, `c3c537d`, `265583f`, `0a91166`, `e3c7bff`, `983ac7f`) |
 | UI polish: 44px touch targets, one chat column with grouped calls and attached approvals, plain policy blocks, sign-in confirmation, Runs by conversation, numeric columns, quieter idle states | done (`81f6c9f`…`f018101`) |
-| Playwright UI E2E: every §11 flow (chat, connections, policy, review, shell), desktop and phone | done (`8097654`, `650ffed`, `113b0a9`, `94a199b`, `b641000`, `0844201`, `4252a82`): 49 run, 1 skipped |
-| Live E2E: `scripts/live-e2e.ts` (real model against the sandbox) and `pnpm test:live` (read-only Gmail) | built (`9ffb02b`, `4b28b1b`) and run (the real-model sandbox runs and the read-only Gmail test, 2026-09-29) |
+| Playwright UI E2E: every flow of the time (chat, connections, policy, review, shell), desktop and phone, in the sandbox | done (`8097654`, `650ffed`, `113b0a9`, `94a199b`, `b641000`, `0844201`, `4252a82`): 49 run, 1 skipped; replaced in Stage 2 by the suite against the real app (§11) |
+| Live E2E: `scripts/live-e2e.ts` (real model against the sandbox) and `pnpm test:live` (read-only Gmail) | built (`9ffb02b`, `4b28b1b`) and run (2026-09-29); the script was removed in Stage 2 and `pnpm test:live` replaced |
 | Findings from the real-model runs: Stripe customer search, zoned timestamps, Slack mrkdwn and mention rules, cards that name records, HubSpot `hs_timestamp` and empty-value rules, the owners lookup, prompt working rules | done (`7c4496e`…`bb96208`; decisions log) |
 | 2026-09-29 review: security, correctness and UX findings (decisions log) | done (`be448f8`…`4252a82`); `test/e2e-ui/review.spec.ts` covers the browser-side ones |
 | `pnpm verify` green | done at `8f30051` (1,205 + 8 + 49 tests, 1 skipped) |
 | Kiran's mapping (2026-09-29): QuickBooks and Slack through Composio; their REST and Web API integrations, variables, fakes and tests removed; captured Composio surface for four toolkits | done (Stage 1; typecheck, lint, 1,130 + 8 + 49 tests, 1 skipped, and 11 offline live-script checks green); not yet run against a connected QuickBooks or Slack account |
+| Stage 2 (2026-09-29): no mocking or simulation. The sandbox demo, the local fakes, the scripted Messages API, the fictional company, the scripted jobs and the full-stack suite over them removed, with `AGENT_SANDBOX`, `ANTHROPIC_BASE_URL`, `HUBSPOT_MCP_COMMAND`/`HUBSPOT_MCP_ARGS` and plain-HTTP loopback base URLs; unit tests kept for Revenue Desk's own logic; `pnpm test:cli` for the built CLI before a model call; Playwright against the real app; live read, browser and write suites against the real model and accounts (§11) | done: `pnpm verify` green (878 + 17 + 27 tests, 1 skipped); `pnpm test:live` 8 passed and 8 skipped for systems not yet connected or configured; `pnpm test:live:ui` 2 passed; the write suite not run |
 
 Milestones M1, M2 and M3 are met: `pnpm verify` is green and the live
 read-only E2E has run. What is still open is under "Open items" in the
@@ -1443,8 +1412,8 @@ there (a dependency, a script, a column) asks the lead.
 | W2 integrations | `src/integrations/**` | `IntegrationDefinition`, `ToolProfile` (§2 tables), `Classification`, `ResolvedConnection`, `ProbeResult` |
 | W3 database and server | `src/db/{repos,seed,recover}`, `src/server/**` | `ApiEndpoints`, `ChatUIMessage`, `AgentEvent`, `ApprovalGate`, schema |
 | W4 web UI | `web/src/**` | `ApiEndpoints`, `ChatUIMessage`, `ToolMetadata`, `ApprovalDescriptor`, `SessionInfo` |
-| W5 test infrastructure | `test/support/**`, `test/fixtures/business`, `test/scenarios`, `test/e2e-ui`, `scripts/dev-sandbox.ts` | §2 tables, §11, `RunTurn` |
-| W6 CLI and README | `src/cli/**`, `test/e2e-cli`, `README.md` | `src/contracts/cli.ts`, `RunTurn`, repositories |
+| W5 test infrastructure | `test/support/**`, `test/cli`, `test/e2e-ui`, `test/live` | §2 tables, §11, `RunTurn` |
+| W6 CLI and README | `src/cli/**`, `test/cli`, `README.md` | `src/contracts/cli.ts`, `RunTurn`, repositories |
 
 The S1 spike routes, the spike page, its Playwright spec and the duplicated
 stream types are gone; the server and the web client share `src/contracts`.
@@ -1496,11 +1465,13 @@ and live read-only E2E has run.
   before (`SLACK_CHAT_POST_MESSAGE`). Run memory reads outputs tolerantly
   and the fixture is dated; `scripts/surfaces/capture-composio-direct.ts`
   re-checks the slugs and schemas.
-- **Live readiness:** only Gmail is connected in Composio; Calendar,
-  QuickBooks and Slack need Connect; there are no HubSpot or Stripe
-  credentials. QuickBooks and Slack through Composio have been exercised
-  only through their captured schemas (unit and gateway tests), never with
-  a connected account; HubSpot and Stripe only against the local fakes.
+- **Live readiness (2026-09-29):** Gmail is connected in Composio and a
+  Stripe test-mode key is configured; both are read by the live suites.
+  Calendar (its connection expired), QuickBooks and Slack need Connect, and
+  there is no HubSpot token, so the live suites skip them with that reason.
+  QuickBooks, Slack and HubSpot have therefore been exercised only through
+  their captured schemas in unit tests, never with a real account; no write
+  of any integration has run live yet (`pnpm test:live:writes`).
 - **Business date:** the SDK injects the wall-clock date into a system
   reminder, which can disagree with `AGENT_BUSINESS_DATE` in aging
   calculations; the prompt states the business date and its weekday
@@ -1526,10 +1497,11 @@ and live read-only E2E has run.
   tool deferral leak into runs. The Sonnet 5 / medium default keeps test and
   demo runs affordable; both are configurable.
 - **Vendor churn** (Composio 0.19-0.21 shipped breaking changes within four
-  days) requires exact pins and dated fixtures; fakes can drift from vendors.
+  days) requires exact pins and dated captures; the live suites catch drift
+  only for the systems that are connected.
 - **Native Claude CLI binaries** are optional per-platform dependencies; an
-  install with optional dependencies omitted leaves no binary, and the test gate
-  fails rather than skips. The lockfile records all eight platform packages.
+  install with optional dependencies omitted leaves no binary, and every run
+  fails. The lockfile records all eight platform packages.
 - **TypeScript 7** has no JavaScript compiler API; tools that import it
   (typescript-eslint, ts-morph against the project compiler, Vitest typecheck
   mode) will not work. Type assertions in tests are checked by `pnpm
@@ -1930,6 +1902,41 @@ applied it:
   without a connected account, so the scripted jobs say what they could not
   do; no new fake was built for them.
 
+**2026-09-29, Stage 2: no mocking or simulation in the product or its
+tests.** Kiran's direction above, applied to testing. It supersedes every
+earlier entry that describes the sandbox demo, local fakes, the scripted
+Messages API, the fictional company or the scripted jobs; those entries are
+the record of what was built then.
+
+- **Removed:** `scripts/dev-sandbox.ts` and `pnpm dev:sandbox`;
+  `AGENT_SANDBOX`, the loopback-only rule, `SessionInfo.mode` and the "Local
+  sandbox" label; the fakes of Stripe, HubSpot and Composio
+  (`test/support/fakes`), the fixture company and its data
+  (`test/fixtures/business`), the scripted Messages API
+  (`mock-anthropic.ts`, `sdk-gate-support.ts`), the scenarios and harness,
+  the web stub, the full-stack suite over the fakes (`test/integration/e2e`,
+  the scenario, harness, sandbox, run-turn and gateway-SDK tests), the CLI
+  suites that ran against a scripted core or the fakes, and
+  `scripts/live-e2e.ts`, which played the jobs against the fakes.
+- **Product code paths that existed only for them:** `ANTHROPIC_BASE_URL`
+  (only the scripted API used it), `HUBSPOT_MCP_COMMAND`/`HUBSPOT_MCP_ARGS`
+  (the command override for tests; any other MCP server is reached through
+  `HUBSPOT_MCP_URL`), and plain HTTP to loopback for `COMPOSIO_BASE_URL`,
+  Composio's session MCP URL, `HUBSPOT_API_BASE_URL`, `STRIPE_API_BASE_URL`
+  and Composio sign-in links. `HUBSPOT_MCP_URL` keeps plain HTTP on loopback
+  for an MCP server the user runs locally.
+- **Kept:** unit tests of Revenue Desk's own logic (§11), with neutral
+  placeholder values and, where a unit needs a caller or an answer, the
+  smallest stub in place, local to its test; the shared upstream MCP test
+  server was replaced by minimal servers inside the tests that need one.
+- **Added:** `pnpm test:cli` (the built CLI before a model call); Playwright
+  against the built app with the real configuration and no model call;
+  `pnpm test:live` (the gateway's reads, the model reading each connected
+  system, the CLI with the model), `pnpm test:live:ui` (the chat in the
+  browser) and `pnpm test:live:writes` (test-safe writes only, a separate
+  opt-in). A system that is not connected is skipped with the reason, never
+  faked.
+
 **Open items.**
 
 - **Other local users and programs.** Loopback, `Origin`, CSRF and the
@@ -1939,9 +1946,8 @@ applied it:
   fix is a per-boot launch-token capability: the server prints a launch URL
   with a random token (kept `0600` in the state directory so `tsx watch`
   restarts keep it), the SPA exchanges it for the cookie, and `/api/session`
-  answers only a caller holding the cookie or the token. It needs the test
-  harness, the Playwright sandbox and the live script to carry the token;
-  not built yet.
+  answers only a caller holding the cookie or the token. It needs the
+  Playwright and live suites to carry the token; not built yet.
 - **Approval-parked runs and the run limit** (Kiran). A run waiting on an
   approval (up to 15 minutes) holds one of the `MAX_CONCURRENT_RUNS` (4)
   slots; the app's limit message names those approvals. Whether parked runs
@@ -1979,9 +1985,10 @@ applied it:
 
 ## Open questions (Kiran's)
 
-- **Credentials** for live runs beyond Gmail: a Stripe `sk_test_` key; a
-  HubSpot developer test-account private-app token or Service Key (with the
-  owners read scope).
+- **Credentials** for live runs beyond Gmail and Stripe (a test-mode key is
+  configured): a HubSpot developer test-account private-app token or Service
+  Key (with the owners read scope). For the live Slack write, the name of a
+  channel it may post to (`LIVE_SLACK_TEST_CHANNEL`).
 - **Connect in Composio:** Google Calendar, QuickBooks and Slack are
   `needs_auth` for the configured user, so they are left out of every run
   until Kiran clicks Connect for each. For QuickBooks: a sandbox company

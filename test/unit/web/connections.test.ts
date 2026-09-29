@@ -39,8 +39,8 @@ describe("connectionDetail", () => {
         "QuickBooks Online rejected the access token (it expires hourly). Put a new QBO_ACCESS_TOKEN in your configuration file and restart Revenue Desk.",
       provider: "QuickBooks said: message=AuthenticationFailed; errorCode=003200; statusCode=401",
     });
-    expect(connectionDetail({ state: "connected", detail: "Connected to Kestrel." })).toEqual({
-      summary: "Connected to Kestrel.",
+    expect(connectionDetail({ state: "connected", detail: "Connected to Contoso." })).toEqual({
+      summary: "Connected to Contoso.",
       provider: null,
     });
   });

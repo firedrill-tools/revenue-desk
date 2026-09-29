@@ -7,15 +7,15 @@ import { createStripeTools, customerSearchQuery } from "../../../src/integration
 import {
   at,
   callContext,
-  type FetchMock,
-  mockFetch,
+  type FetchStub,
   paramsOf,
   type Reply,
   secret,
+  stubFetch,
 } from "./helpers.js";
 
 function setup(reply: Reply | ((index: number) => Reply), timezone?: string) {
-  const mock = mockFetch((_, index) => (typeof reply === "function" ? reply(index) : reply));
+  const mock = stubFetch((_, index) => (typeof reply === "function" ? reply(index) : reply));
   const client = new StripeClient({
     baseUrl: "https://api.stripe.test",
     secretKey: secret("sk_test_tools"),
@@ -40,7 +40,7 @@ async function run(
   return tool.run(args, context);
 }
 
-function only(mock: FetchMock) {
+function only(mock: FetchStub) {
   expect(mock.requests).toHaveLength(1);
   const request = mock.requests[0];
   if (request === undefined) throw new Error("no request");

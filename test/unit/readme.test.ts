@@ -36,13 +36,11 @@ function cell(text: string): string {
 function renderEnvTable(): string {
   const rows = ENV_VAR_NAMES.map((name) => {
     const spec: EnvVarSpec = ENV_VARS[name];
-    return `| \`${name}\` | ${GROUP_LABEL[spec.group]} | ${spec.secret ? "yes" : ""} | ${
-      spec.scope === "test" ? "tests, sandbox" : "product"
-    } | ${cell(spec.description)} |`;
+    return `| \`${name}\` | ${GROUP_LABEL[spec.group]} | ${spec.secret ? "yes" : ""} | ${cell(
+      spec.description,
+    )} |`;
   });
-  return ["| Variable | Group | Secret | Scope | Meaning |", "|---|---|---|---|---|", ...rows].join(
-    "\n",
-  );
+  return ["| Variable | Group | Secret | Meaning |", "|---|---|---|---|", ...rows].join("\n");
 }
 
 function readme(): string {

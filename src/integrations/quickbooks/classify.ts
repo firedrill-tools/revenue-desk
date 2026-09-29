@@ -4,7 +4,7 @@
 // and carry the amount and the customer.
 //
 // The writes name records by QuickBooks id ("customer 63", invoice id
-// "151"), which a person approving does not know: they know "Meridian Labs"
+// "151"), which a person approving does not know: they know "Acme Inc"
 // and invoice number 1051. With what the run's earlier QuickBooks calls
 // returned (QuickBooksRunMemory in run-memory.ts, `known` here), the card
 // names the customer, the invoice number and its open balance. Names come
@@ -70,12 +70,12 @@ function customerName(id: string, known: QuickBooksKnown): string | null {
   return name === null || name === undefined ? null : preview(name, 80);
 }
 
-/** "Meridian Labs" when the run saw the customer, otherwise "QuickBooks customer 63". */
+/** "Acme Inc" when the run saw the customer, otherwise "QuickBooks customer 63". */
 function customerLabel(id: string, known: QuickBooksKnown): string {
   return customerName(id, known) ?? `QuickBooks customer ${id}`;
 }
 
-/** The Customer fact: "Meridian Labs (QuickBooks customer 63)", or the id alone. */
+/** The Customer fact: "Acme Inc (QuickBooks customer 63)", or the id alone. */
 function customerFact(id: string, known: QuickBooksKnown): ApprovalFact {
   const name = customerName(id, known);
   return {

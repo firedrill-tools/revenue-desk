@@ -1,7 +1,7 @@
 // POST /api/chat and GET /api/chat/:id/stream end to end in process: the real
 // AI SDK client transport (DefaultChatTransport: SSE parsing and chunk schema
 // validation) and reducer (readUIMessageStream, as in useChat) against the
-// real app, a real SQLite file and a scripted agent core.
+// real app, a real SQLite file and a stubbed agent core.
 
 import {
   DefaultChatTransport,
@@ -163,7 +163,7 @@ describe("POST /api/chat: the refund turn", () => {
     const turn = await sendTurn(
       server,
       conversationId,
-      "Refund Kestrel's duplicate charge, please.",
+      "Refund Contoso's duplicate charge, please.",
       async (approvalId) => {
         const runId = server.core?.inputs[0]?.runId ?? "";
         // Persisted with its request: a reloaded page can show the card.
@@ -223,7 +223,7 @@ describe("POST /api/chat: the refund turn", () => {
       approval: {
         id: "apr_refund_1",
         approved: true,
-        requestReason: "Refund $49.00 to Kestrel Analytics",
+        requestReason: "Refund $49.00 to Contoso Ltd",
       },
     });
 
@@ -276,7 +276,7 @@ describe("POST /api/chat: the refund turn", () => {
     });
     expect(getConversation(db, conversationId)).toMatchObject({
       status: "idle",
-      title: "Refund Kestrel's duplicate charge, please",
+      title: "Refund Contoso's duplicate charge, please",
       sdkSessionId: "sess_refund",
       totalCostUsd: 0.0123,
       inputTokens: 1200,
@@ -931,7 +931,7 @@ describe("the agent core's input and its failures", () => {
     await server.services.connections.checkAll();
     await server.request("PATCH", "/api/settings", {
       defaultModel: "claude-opus-5",
-      companyName: "Kestrel Ops",
+      companyName: "Contoso Ops",
     });
     const conversationId = await server.createConversation();
     const first = await sendTurn(server, conversationId, "Refund it", (approvalId) =>
@@ -968,7 +968,7 @@ describe("the agent core's input and its failures", () => {
         thinkingDisplay: "summarized",
         maxTurns: 30,
       },
-      settings: { companyName: "Kestrel Ops" },
+      settings: { companyName: "Contoso Ops" },
       policy: { read: "auto", outbound: "ask", financial: "ask", destructive: "deny" },
     });
     expect(one?.connections.map((plan) => [plan.integration, plan.status])).toEqual([
@@ -1070,17 +1070,17 @@ describe("the agent core's input and its failures", () => {
     await sendTurn(
       server,
       conversationId,
-      "\n\n  Dana Whitfield from Harbor & Pine says they were charged twice in September. Look into it and reply to her.",
+      "\n\n  Jamie Lee from Fabrikam Workshops says they were charged twice in September. Look into it and reply to her.",
     );
     await activeRunDone(server);
     expect(getConversation(server.services.db, conversationId)?.title).toBe(
-      "Dana Whitfield from Harbor & Pine says they were charged…",
+      "Jamie Lee from Fabrikam Workshops says they were charged…",
     );
     // Later messages never rename it.
     await sendTurn(server, conversationId, "Now refund the duplicate.");
     await activeRunDone(server);
     expect(getConversation(server.services.db, conversationId)?.title).toBe(
-      "Dana Whitfield from Harbor & Pine says they were charged…",
+      "Jamie Lee from Fabrikam Workshops says they were charged…",
     );
   });
 

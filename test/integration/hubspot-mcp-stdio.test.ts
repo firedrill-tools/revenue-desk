@@ -1,7 +1,13 @@
 /**
  * Starts the real @hubspot/mcp-server through src/integrations/hubspot/launch.ts.
- * Every child preloads test/support/deny-network.mjs, so no test can reach HubSpot:
- * calls go to a loopback fake or are blocked and reported on stderr.
+ * Every child preloads test/support/deny-network.mjs, so no test here can
+ * reach HubSpot: a call to a non-loopback host is blocked and reported on
+ * stderr. Calls that really reach HubSpot with a token are in
+ * `pnpm test:live` (test/live/connections.test.ts, test/live/read-only.test.ts).
+ *
+ * The one loopback HTTP server below only records request paths and answers
+ * 404 to everything: it shows where the server sends a call, and pretends
+ * to be nothing.
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -58,54 +64,34 @@ async function start(
   return { client, stderr: () => stderr, close: () => client.close() };
 }
 
-function text(result: CallToolResult): string {
-  return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
-}
-
-let fake: Server;
-let fakeUrl: string;
+let recorder: Server;
+let recorderUrl: string;
 const requests: RecordedRequest[] = [];
 
 beforeAll(async () => {
-  fake = createServer((req: IncomingMessage, res) => {
+  recorder = createServer((req: IncomingMessage, res) => {
     let body = "";
     req.on("data", (chunk: Buffer) => {
       body += chunk.toString("utf8");
     });
     req.on("end", () => {
-      const path = req.url ?? "";
       requests.push({
         method: req.method ?? "",
-        path,
+        path: req.url ?? "",
         authorization: req.headers.authorization,
         body,
       });
+      res.statusCode = 404;
       res.setHeader("content-type", "application/json");
-      if (path.endsWith("/oauth/v2/private-apps/get/access-token-info")) {
-        res.end(
-          JSON.stringify({
-            userId: 101,
-            hubId: 202,
-            appId: 303,
-            scopes: ["crm.objects.contacts.read"],
-          }),
-        );
-      } else if (path.endsWith("/account-info/v3/details")) {
-        res.end(JSON.stringify({ portalId: 202, uiDomain: "app.hubspot.test" }));
-      } else if (path.includes("/crm/v3/owners/101")) {
-        res.end(JSON.stringify({ id: "9", userId: 101, email: "owner@kestrel.test" }));
-      } else {
-        res.statusCode = 404;
-        res.end(JSON.stringify({ status: "error", message: "not found" }));
-      }
+      res.end("{}");
     });
   });
-  await new Promise<void>((done) => fake.listen(0, "127.0.0.1", done));
-  fakeUrl = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+  await new Promise<void>((done) => recorder.listen(0, "127.0.0.1", done));
+  recorderUrl = `http://127.0.0.1:${(recorder.address() as AddressInfo).port}`;
 });
 
 afterAll(async () => {
-  await new Promise<void>((done) => fake.close(() => done()));
+  await new Promise<void>((done) => recorder.close(() => done()));
 });
 
 describe("HubSpot MCP server launched over stdio", () => {
@@ -122,32 +108,6 @@ describe("HubSpot MCP server launched over stdio", () => {
     } finally {
       await session.close();
     }
-    expect(session.stderr()).not.toContain(DENY_MARKER);
-  });
-
-  it("sends calls to apiBaseUrl with the token as a bearer credential", async () => {
-    requests.length = 0;
-    const launch = buildHubSpotStdioLaunch({
-      accessToken: TOKEN,
-      apiBaseUrl: `${fakeUrl}/prefix/`,
-    });
-    const session = await start(launch);
-    try {
-      const result = (await session.client.callTool({
-        name: "hubspot-get-user-details",
-        arguments: {},
-      })) as CallToolResult;
-      expect(result.isError).not.toBe(true);
-      expect(text(result)).toContain("owner@kestrel.test");
-    } finally {
-      await session.close();
-    }
-    expect(requests.map((r) => `${r.method} ${r.path}`).sort()).toEqual([
-      "GET /prefix/account-info/v3/details",
-      "GET /prefix/crm/v3/owners/101?idProperty=userId&archived=false",
-      "POST /prefix/oauth/v2/private-apps/get/access-token-info",
-    ]);
-    for (const request of requests) expect(request.authorization).toBe(`Bearer ${TOKEN}`);
     expect(session.stderr()).not.toContain(DENY_MARKER);
   });
 
@@ -172,7 +132,7 @@ describe("HubSpot MCP server launched over stdio", () => {
   it("ignores a .env file in the child's working directory", async () => {
     const dir = mkdtempSync(join(tmpdir(), "revenue-desk-hubspot-dotenv-"));
     try {
-      writeFileSync(join(dir, ".env"), `BASE_URL_OVERRIDE=${fakeUrl}/from-dotenv\n`);
+      writeFileSync(join(dir, ".env"), `BASE_URL_OVERRIDE=${recorderUrl}/from-dotenv\n`);
       const launch = buildHubSpotStdioLaunch({ accessToken: TOKEN });
 
       // Control: without the dotenv guard, 0.4.0 reads the .env and follows it.
@@ -190,7 +150,7 @@ describe("HubSpot MCP server launched over stdio", () => {
       expect(requests.some((r) => r.path.startsWith("/from-dotenv/"))).toBe(true);
 
       // With the launch environment, the .env is not read: the call targets the
-      // default HubSpot host, which the guard blocks, and the fake sees nothing.
+      // default HubSpot host, which the guard blocks, and the recorder sees nothing.
       requests.length = 0;
       const guarded = await start(launch, { cwd: dir });
       try {

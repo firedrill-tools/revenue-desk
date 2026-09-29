@@ -1,28 +1,21 @@
-// The app around the chat: theme, reduced motion, the conversation rail
-// (search, archive), the Runs screen with its detail sheet, and how an
-// answer's table reads. Against the shared sandbox (playwright.config.ts).
+// The app around the chat, in the running app with the real configuration
+// and a fresh database (playwright.config.ts): the new chat, every screen in
+// light and dark, the phone layout, reduced motion, the conversation rail,
+// the Runs screen, and that the browser talks to nothing but Revenue Desk.
+// No test here starts a job: a run needs the real model and is in
+// chat.live.spec.ts (`pnpm test:live:ui`).
 
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { J5_PROMPT } from "../scenarios/j5-weekly-digest.js";
 import {
-  APPROVAL,
+  appApi,
   expectAccessible,
   expectNoSideScroll,
-  holdStreamAt,
-  installStreamHold,
   isPhone,
   openRail,
-  releaseStream,
-  sandboxApi,
-  startJob,
-  stopActiveRuns,
   uniqueTitle,
-  waitUntilHeld,
 } from "./support.js";
 
-test.afterEach(async () => {
-  await stopActiveRuns();
-});
+const SCREENS = ["/", "/connections", "/runs", "/settings"] as const;
 
 /** The page background's relative luminance (0 black, 1 white). */
 async function backgroundLuminance(page: Page): Promise<number> {
@@ -35,12 +28,32 @@ async function backgroundLuminance(page: Page): Promise<number> {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+test.describe("the new chat", () => {
+  test("offers the five jobs when a model key is set, and fits the screen", async ({ page }) => {
+    const session = await (await appApi()).session();
+    await page.goto("/");
+    const jobs = page.getByRole("list", { name: "Suggested jobs" }).getByRole("button");
+    await expect(jobs).toHaveCount(5);
+    for (const job of await jobs.all()) {
+      if (session.modelConfigured) await expect(job).toBeEnabled();
+      else await expect(job).toBeDisabled();
+    }
+    await expect(page.getByRole("textbox", { name: "Message Revenue Desk" })).toBeVisible();
+    // Without a key the app says so before anyone starts a job (see no-model-key.spec.ts).
+    await expect(page.getByText("Revenue Desk can't run yet:")).toHaveCount(
+      session.modelConfigured ? 0 : 1,
+    );
+    await expectAccessible(page);
+    await expectNoSideScroll(page);
+  });
+});
+
 test.describe("theme", () => {
   test.afterEach(async ({ page }) => {
     await page.evaluate("localStorage.removeItem('revenue-desk:theme')");
   });
 
-  test("dark mode applies everywhere, stays after a reload and keeps contrast", async ({
+  test("dark mode applies to every screen, stays after a reload and keeps contrast", async ({
     page,
   }, testInfo) => {
     const phone = isPhone(testInfo);
@@ -55,18 +68,9 @@ test.describe("theme", () => {
 
     await page.reload();
     await expect(page.locator("html")).toHaveClass(/\bdark\b/);
-    // A financial approval card: the danger action and the facts keep their contrast.
-    await startJob(page, /Refund a duplicate charge/);
-    const card = page.getByRole("region", { name: APPROVAL });
-    await expect(card).toBeVisible({ timeout: 30_000 });
-    await expectAccessible(page);
-    await card.getByRole("button", { name: "Deny" }).click();
-    await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible({
-      timeout: 30_000,
-    });
-    for (const path of ["/connections", "/runs", "/settings"]) {
+    for (const path of SCREENS) {
       await page.goto(path);
-      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      await expect(page.getByRole("main")).toBeVisible();
       await expectAccessible(page);
       await expectNoSideScroll(page);
     }
@@ -92,24 +96,15 @@ test.describe("phone ergonomics", () => {
 
   test("controls are 44px touch targets and the app bar fits", async ({ page }, testInfo) => {
     test.skip(!isPhone(testInfo), "Touch targets are a phone requirement.");
-    await startJob(page, /Answer a billing inquiry/);
-    const card = page.getByRole("region", { name: APPROVAL });
-    await expect(card.getByRole("button", { name: "Approve" })).toBeEnabled({ timeout: 30_000 });
+    const api = await appApi();
+    await api.expect("POST /api/conversations", { body: { title: uniqueTitle("Touch") } });
+    await page.goto("/");
     await expectTouchTargets([
       page.getByRole("button", { name: "Open conversations" }),
       page.getByRole("button", { name: /^Connections: / }),
-      page.getByRole("button", { name: "Open inspector" }),
-      card.getByRole("button", { name: "Add a note for the agent" }),
-      card.getByRole("button", { name: "Deny" }),
-      card.getByRole("button", { name: "Approve" }),
-      page.getByRole("button", { name: /^Checked \d+ sources/ }),
-      page.getByRole("button", { name: /^Create Gmail draft/ }),
-      page.getByRole("button", { name: "Stop" }),
+      page.getByRole("button", { name: "Send", exact: true }),
     ]);
     await expect(page.getByRole("banner").getByText("Revenue Desk", { exact: true })).toBeVisible();
-    await expect(
-      page.getByRole("banner").getByText("Local sandbox", { exact: true }),
-    ).toBeVisible();
 
     // The navigation sheet: one row of screens, the theme, and each conversation's actions.
     const rail = await openRail(page, true);
@@ -134,52 +129,20 @@ test.describe("phone ergonomics", () => {
   });
 });
 
-test.describe("motion", () => {
-  /** Holds the reply before its first event, so the Thinking line shows; returns its text. */
-  async function showThinking(page: Page): Promise<Locator> {
-    await installStreamHold(page);
+test.describe("with reduced motion", () => {
+  test.use({ reducedMotion: "reduce" });
+
+  test("transitions are instant", async ({ page }) => {
     await page.goto("/");
-    await holdStreamAt(page, '"type":"start"');
-    await page
-      .getByRole("list", { name: "Suggested jobs" })
-      .getByRole("button", { name: /Answer a billing inquiry/ })
-      .click();
-    await waitUntilHeld(page);
-    const status = page.getByRole("status").filter({ hasText: "Thinking" });
-    await expect(status).toBeVisible();
-    return status.locator(".rd-shimmer");
-  }
-
-  async function letItFinish(page: Page): Promise<void> {
-    await releaseStream(page);
-    await expect(page.getByRole("region", { name: APPROVAL })).toBeVisible({ timeout: 30_000 });
-  }
-
-  test("the Thinking line shimmers by default", async ({ page }) => {
-    const shimmer = await showThinking(page);
-    await expect(shimmer).toHaveCSS("animation-name", "rd-shimmer");
-    await letItFinish(page);
-  });
-
-  test.describe("with reduced motion", () => {
-    test.use({ reducedMotion: "reduce" });
-
-    test("the Thinking line holds still and transitions are instant", async ({ page }) => {
-      const shimmer = await showThinking(page);
-      await expect(shimmer).toHaveCSS("animation-name", "none");
-      await expect(page.getByRole("button", { name: "Stop" })).toHaveCSS(
-        "transition-duration",
-        /^0s(, 0s)*$/,
-      );
-      await letItFinish(page);
-      // The approval card appears without an enter animation, and stays readable.
-      const card = page.getByRole("region", { name: APPROVAL });
-      await expect(card.getByRole("button", { name: "Approve" })).toHaveCSS(
-        "transition-duration",
-        /^0s(, 0s)*$/,
-      );
-      await expectAccessible(page);
-    });
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCSS(
+      "transition-duration",
+      /^0s(, 0s)*$/,
+    );
+    await page.goto("/connections");
+    await expect(page.getByRole("button", { name: "Check all" })).toHaveCSS(
+      "transition-duration",
+      /^0s(, 0s)*$/,
+    );
   });
 });
 
@@ -187,8 +150,8 @@ test.describe("conversation rail", () => {
   test("search finds a conversation by title and says when nothing matches", async ({
     page,
   }, testInfo) => {
-    const api = await sandboxApi();
-    const title = uniqueTitle("Kiwi ledger");
+    const api = await appApi();
+    const title = uniqueTitle("Ledger review");
     await api.expect("POST /api/conversations", { body: { title } });
     await page.goto("/");
     const rail = await openRail(page, isPhone(testInfo));
@@ -211,7 +174,7 @@ test.describe("conversation rail", () => {
   test("archiving the open conversation removes it and returns to a new chat", async ({
     page,
   }, testInfo) => {
-    const api = await sandboxApi();
+    const api = await appApi();
     const title = uniqueTitle("Archive me");
     const { conversation } = await api.expect("POST /api/conversations", { body: { title } });
     await page.goto(`/c/${conversation.id}`);
@@ -234,99 +197,35 @@ test.describe("conversation rail", () => {
 });
 
 test.describe("runs", () => {
-  test("the runs list names each run's conversation and opens its detail", async ({
-    page,
-  }, testInfo) => {
-    const phone = isPhone(testInfo);
-    // A finished run to find: the weekly digest reads without asking.
-    const api = await sandboxApi();
-    const title = uniqueTitle("Weekly digest");
-    const { conversation } = await api.expect("POST /api/conversations", { body: { title } });
-    await api.chat(conversation.id, J5_PROMPT);
-
+  test("a new workspace has no runs, and the screen says so", async ({ page }) => {
+    const { items } = await (await appApi()).expect("GET /api/runs", { query: { limit: 1 } });
+    test.skip(items.length > 0, "This database already has runs.");
     await page.goto("/runs");
     await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
-    const entry = phone
-      ? page.getByRole("main").getByRole("button").filter({ hasText: title })
-      : page.getByRole("main").getByRole("row").filter({ hasText: title });
-    await expect(entry).toHaveCount(1);
-    await expect(entry).toContainText("Completed");
+    await expect(
+      page.getByText("No runs yet. Runs appear here once you ask Revenue Desk something."),
+    ).toBeVisible();
     await expectAccessible(page);
     await expectNoSideScroll(page);
-
-    await entry.click();
-    await expect(page).toHaveURL(/\/runs\/[^/]+$/);
-    const detail = page.getByRole("dialog", { name: `Run: ${title}` });
-    await expect(detail).toBeVisible();
-    await expect(detail).toContainText("Completed");
-    await expect(detail).toContainText("Tool calls");
-    await expect(detail).toContainText(/in Stripe/);
-    await expect(detail).toContainText("Approval policy");
-    await expectAccessible(page);
-    await expectNoSideScroll(page);
-
-    await page.keyboard.press("Escape");
-    await expect(detail).toHaveCount(0);
-    await expect(page).toHaveURL(/\/runs$/);
-
-    await entry.click();
-    await page
-      .getByRole("dialog", { name: `Run: ${title}` })
-      .getByRole("link", { name: "Open conversation" })
-      .click();
-    await expect(page).toHaveURL(new RegExp(`/c/${conversation.id}$`));
-    await expect(page.getByText(J5_PROMPT, { exact: true })).toBeVisible();
   });
 });
 
-test.describe("answers", () => {
-  test("numeric table columns line up on the right", async ({ page }) => {
-    // The scripted jobs answer without tables, so this answer is streamed by the test.
-    const table = [
-      "| Customer | Invoice | Amount due | Days overdue | Note |",
-      "|---|---|---|---|---|",
-      "| Copperleaf Studios | 1043 | $3,600.00 | 70 | Call booked |",
-      "| Tidewater Logistics | 1048 | $2,400.00 | 34 | – |",
-      "| Bluefin Dental Group | 1055 | $750.00 | 8 | Partial payment |",
-    ].join("\n");
-    const chunks = [
-      { type: "start", messageId: "msg_table" },
-      { type: "start-step" },
-      { type: "text-start", id: "text_1" },
-      { type: "text-delta", id: "text_1", delta: `Overdue invoices:\n\n${table}\n` },
-      { type: "text-end", id: "text_1" },
-      { type: "finish-step" },
-      { type: "finish", finishReason: "stop" },
-    ];
-    await page.route("**/api/chat", (route) =>
-      route.request().method() === "POST"
-        ? route.fulfill({
-            status: 200,
-            headers: {
-              "content-type": "text/event-stream",
-              "x-vercel-ai-ui-message-stream": "v1",
-            },
-            body: `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("")}data: [DONE]\n\n`,
-          })
-        : route.continue(),
-    );
-    await page.goto("/");
-    const composer = page.getByRole("textbox", { name: "Message Revenue Desk" });
-    await composer.fill("Show the overdue invoices as a table");
-    await composer.press("Enter");
-    const answer = page.getByRole("table");
-    await expect(answer).toBeVisible({ timeout: 30_000 });
-
-    const cell = (text: string) => answer.getByRole("cell", { name: text, exact: true });
-    const header = (text: string) => answer.getByRole("columnheader", { name: text, exact: true });
-    await expect(cell("$3,600.00")).toHaveCSS("text-align", "right");
-    await expect(header("Amount due")).toHaveCSS("text-align", "right");
-    await expect(cell("70")).toHaveCSS("text-align", "right");
-    await expect(cell("1043")).toHaveCSS("text-align", "right");
-    // Text columns stay on the left, including one with a dash for "nothing".
-    await expect(cell("Copperleaf Studios")).not.toHaveCSS("text-align", "right");
-    await expect(header("Note")).not.toHaveCSS("text-align", "right");
-    await expect(cell("Call booked")).not.toHaveCSS("text-align", "right");
-    await expectNoSideScroll(page);
+test.describe("privacy", () => {
+  test("every screen loads from Revenue Desk alone, under its Content-Security-Policy", async ({
+    page,
+  }) => {
+    const hosts = new Set<string>();
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.protocol === "http:" || url.protocol === "https:") hosts.add(url.host);
+    });
+    const home = await page.goto("/");
+    // The page carries the policy that keeps it that way.
+    expect(home?.headers()["content-security-policy"]).toContain("img-src 'self' data:");
+    for (const path of SCREENS) {
+      await page.goto(path);
+      await expect(page.getByRole("main")).toBeVisible();
+    }
+    expect([...hosts]).toEqual(["127.0.0.1:4320"]);
   });
 });

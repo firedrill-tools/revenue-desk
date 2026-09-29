@@ -9,7 +9,7 @@ export class ActiveRunError extends Error {
   readonly code = "run_active";
 }
 
-/** An ActiveRunError, also one from another copy of this module (tests' fakes). */
+/** An ActiveRunError, also one from another copy of this module. */
 export function isActiveRunError(error: unknown): error is ActiveRunError {
   return (
     error instanceof Error &&

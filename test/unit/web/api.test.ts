@@ -20,7 +20,6 @@ function session(token: string): SessionInfo {
   return {
     csrfToken: token,
     version: "0.0.0-test",
-    mode: "normal",
     model: "claude-sonnet-5",
     effort: "medium",
     businessDate: "2026-09-28",
@@ -36,8 +35,8 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** A fake server: GET /api/session hands out tokens in order; `handle` answers the rest. */
-function fakeServer(handle: (request: Recorded, token: string) => Response, tokens = ["t1", "t2"]) {
+/** A stub server: GET /api/session hands out tokens in order; `handle` answers the rest. */
+function stubServer(handle: (request: Recorded, token: string) => Response, tokens = ["t1", "t2"]) {
   const requests: Recorded[] = [];
   let sessions = 0;
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -117,16 +116,16 @@ describe("parseApiError", () => {
 
 describe("createApiClient", () => {
   it("sends GET requests without a body or CSRF header, after the session sets its cookie", async () => {
-    const server = fakeServer(() => json({ items: [], nextCursor: null }));
+    const server = stubServer(() => json({ items: [], nextCursor: null }));
     const client = createApiClient({ fetch: server.fetch });
     const page = await client.request("GET /api/conversations", {
-      query: { q: "kestrel", limit: 10 },
+      query: { q: "contoso", limit: 10 },
     });
     expect(page.items).toEqual([]);
     // Every /api read needs the session cookie, which GET /api/session sets.
     expect(server.requests.map((request) => request.url)).toEqual([
       "/api/session",
-      "/api/conversations?q=kestrel&limit=10",
+      "/api/conversations?q=contoso&limit=10",
     ]);
     const request = server.requests.at(-1);
     expect(request?.method).toBe("GET");
@@ -137,7 +136,7 @@ describe("createApiClient", () => {
 
   it("re-reads the session once when a read finds it stale, and retries the read", async () => {
     let reads = 0;
-    const server = fakeServer(() => {
+    const server = stubServer(() => {
       reads += 1;
       return reads === 1
         ? json({ error: { code: "csrf_failed", message: "Stale." } }, 403)
@@ -150,7 +149,7 @@ describe("createApiClient", () => {
   });
 
   it("sends JSON and the session's CSRF token on mutating requests, {} when there is no body", async () => {
-    const server = fakeServer((request, token) =>
+    const server = stubServer((request, token) =>
       request.headers.get(CSRF_HEADER) === token
         ? json({ runId: "run_1", status: "stopping" }, 202)
         : json({ error: { code: "csrf_failed", message: "No." } }, 403),
@@ -167,7 +166,7 @@ describe("createApiClient", () => {
   });
 
   it("caches the session across requests", async () => {
-    const server = fakeServer(() => json({ status: "accepted", approvalId: "a" }));
+    const server = stubServer(() => json({ status: "accepted", approvalId: "a" }));
     const client = createApiClient({ fetch: server.fetch });
     await client.request("POST /api/approvals/:approvalId", {
       params: { approvalId: "a" },
@@ -181,23 +180,23 @@ describe("createApiClient", () => {
   });
 
   it("re-reads the session once after a stale token (server restart) and retries", async () => {
-    const server = fakeServer((request) =>
+    const server = stubServer((request) =>
       request.headers.get(CSRF_HEADER) === "t2"
-        ? json({ settings: { companyName: "Kestrel" } })
+        ? json({ settings: { companyName: "Contoso" } })
         : json({ error: { code: "csrf_failed", message: "Stale." } }, 403),
     );
     const client = createApiClient({ fetch: server.fetch });
     const response = await client.request("PATCH /api/settings", {
-      body: { companyName: "Kestrel" },
+      body: { companyName: "Contoso" },
     });
-    expect(response.settings.companyName).toBe("Kestrel");
+    expect(response.settings.companyName).toBe("Contoso");
     expect(server.sessionCount()).toBe(2);
     const mutations = server.requests.filter((request) => request.method === "PATCH");
     expect(mutations.map((request) => request.headers.get(CSRF_HEADER))).toEqual(["t1", "t2"]);
   });
 
   it("does not retry other 403s", async () => {
-    const server = fakeServer(() =>
+    const server = stubServer(() =>
       json({ error: { code: "forbidden_origin", message: "Cross-origin." } }, 403),
     );
     const client = createApiClient({ fetch: server.fetch });
@@ -210,7 +209,7 @@ describe("createApiClient", () => {
 
   it("maps error bodies and network failures to ApiError", async () => {
     const notFound = createApiClient({
-      fetch: fakeServer(() => json({ error: { code: "not_found", message: "No such run." } }, 404))
+      fetch: stubServer(() => json({ error: { code: "not_found", message: "No such run." } }, 404))
         .fetch,
     });
     await expect(

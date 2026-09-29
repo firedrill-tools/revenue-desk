@@ -19,11 +19,12 @@
  *   gateway's upstream client). The Agent SDK's stdio config has no `cwd`
  *   field, so do not hand this launch to the Claude CLI directly.
  * - `apiBaseUrl` maps to 0.4.0's `BASE_URL_OVERRIDE` (default
- *   `https://api.hubspot.com`). The server joins it with the request path by
- *   plain concatenation, so a path prefix is kept. It is for loopback fakes;
- *   the server cannot add extra headers.
- * - `command` / `args` replace the whole command line, for tests and for
- *   running a different MCP server. They skip package resolution.
+ *   `https://api.hubspot.com`), for example HubSpot's `api.hubapi.com` host.
+ *   The server joins it with the request path by plain concatenation, so a
+ *   path prefix is kept; it must be https. The server cannot add extra
+ *   headers.
+ * - Any other MCP server is reached over Streamable HTTP (`HUBSPOT_MCP_URL`),
+ *   not by replacing this command line.
  *
  * Nothing here reads `process.env`; configuration parsing belongs to the
  * config layer, which passes explicit options.
@@ -134,10 +135,6 @@ export interface HubSpotStdioLaunchOptions {
   readonly accessToken: string;
   /** Replaces https://api.hubspot.com inside the child (BASE_URL_OVERRIDE). */
   readonly apiBaseUrl?: string;
-  /** Full command override (HUBSPOT_MCP_COMMAND). Skips package resolution. */
-  readonly command?: string;
-  /** Arguments for the command override (HUBSPOT_MCP_ARGS). Requires `command`. */
-  readonly args?: readonly string[];
   /** Node binary for the bundled server. Defaults to process.execPath. */
   readonly execPath?: string;
   readonly resolveFrom?: string;
@@ -152,42 +149,16 @@ export interface HubSpotStdioLaunch {
   readonly args: string[];
   readonly env: Record<string, string>;
   readonly cwd?: string;
-  readonly source:
-    | {
-        readonly kind: "bundled";
-        readonly packageName: typeof HUBSPOT_MCP_PACKAGE;
-        readonly version: string;
-        readonly binPath: string;
-      }
-    | { readonly kind: "override" };
+  readonly source: {
+    readonly kind: "bundled";
+    readonly packageName: typeof HUBSPOT_MCP_PACKAGE;
+    readonly version: string;
+    readonly binPath: string;
+  };
 }
 
 export function buildHubSpotStdioLaunch(options: HubSpotStdioLaunchOptions): HubSpotStdioLaunch {
   const env = childEnvironment(options);
-
-  if (options.command !== undefined) {
-    const command = options.command.trim();
-    if (command.length === 0) {
-      throw new HubSpotLaunchError("hubspot_mcp_invalid_override", "HubSpot MCP command is empty");
-    }
-    const args = [...(options.args ?? [])];
-    for (const arg of args) {
-      if (typeof arg !== "string" || arg.includes("\0")) {
-        throw new HubSpotLaunchError(
-          "hubspot_mcp_invalid_override",
-          "HubSpot MCP arguments must be strings without NUL characters",
-        );
-      }
-    }
-    return { command, args, env, source: { kind: "override" } };
-  }
-  if (options.args !== undefined) {
-    throw new HubSpotLaunchError(
-      "hubspot_mcp_invalid_override",
-      "HubSpot MCP arguments were given without a command override",
-    );
-  }
-
   const execPath = options.execPath ?? process.execPath;
   if (!isAbsolute(execPath)) {
     throw new HubSpotLaunchError(
@@ -219,30 +190,6 @@ export function buildHubSpotStdioLaunch(options: HubSpotStdioLaunchOptions): Hub
       binPath: server.binPath,
     },
   };
-}
-
-/**
- * Parses HUBSPOT_MCP_ARGS: a JSON array of strings. Returns undefined when the
- * variable is unset or blank.
- */
-export function parseHubSpotMcpArgs(raw: string | undefined): string[] | undefined {
-  if (raw === undefined || raw.trim().length === 0) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new HubSpotLaunchError(
-      "hubspot_mcp_invalid_override",
-      "HUBSPOT_MCP_ARGS must be a JSON array of strings",
-    );
-  }
-  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
-    throw new HubSpotLaunchError(
-      "hubspot_mcp_invalid_override",
-      "HUBSPOT_MCP_ARGS must be a JSON array of strings",
-    );
-  }
-  return parsed;
 }
 
 /** A loggable view of a launch: environment values are replaced by their names. */
@@ -295,10 +242,10 @@ function normaliseBaseUrl(raw: string): string {
   } catch {
     throw new HubSpotLaunchError("hubspot_mcp_invalid_base_url", "HubSpot API base URL is invalid");
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
+  if (url.protocol !== "https:") {
     throw new HubSpotLaunchError(
       "hubspot_mcp_invalid_base_url",
-      "HubSpot API base URL must use http or https",
+      "HubSpot API base URL must use https",
     );
   }
   if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {

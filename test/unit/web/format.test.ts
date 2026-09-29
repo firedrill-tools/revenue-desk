@@ -91,7 +91,7 @@ describe("text helpers", () => {
     expect(looksLikeRecordIds("ch_3Q8hPine0002")).toBe(true);
     expect(looksLikeRecordIds("in_1Q8hPine2041, re_3Q8hPine0007")).toBe(true);
     expect(looksLikeRecordIds("$49.00 USD")).toBe(false);
-    expect(looksLikeRecordIds("Harbor & Pine Outfitters (cus_KAharborpine)")).toBe(false);
+    expect(looksLikeRecordIds("Fabrikam Inc (cus_Fabrikam001)")).toBe(false);
   });
 });
 
@@ -124,11 +124,11 @@ describe("cn", () => {
 });
 
 describe("safeRedirectUrl", () => {
-  it("allows https and loopback http only", () => {
+  it("allows https only", () => {
     expect(safeRedirectUrl("https://connect.composio.dev/link/abc")).toBe(
       "https://connect.composio.dev/link/abc",
     );
-    expect(safeRedirectUrl("http://127.0.0.1:4390/link")).toBe("http://127.0.0.1:4390/link");
+    expect(safeRedirectUrl("http://127.0.0.1:4390/link")).toBeNull();
     expect(safeRedirectUrl("http://evil.example/link")).toBeNull();
     expect(safeRedirectUrl("javascript:alert(1)")).toBeNull();
     expect(safeRedirectUrl("https://user:pass@example.com/")).toBeNull();

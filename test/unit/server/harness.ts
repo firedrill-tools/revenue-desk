@@ -1,9 +1,13 @@
-// Test harness for the database repositories and the HTTP server (W3).
+// Test harness for the database repositories and the HTTP server's own logic
+// (routes, security guards, streaming, approvals, persistence).
 //
 // Everything is in process: a real SQLite file in a temporary state
-// directory, the real Hono app reached through app.request, and fakes for
-// what other workstreams provide (the agent core's runTurn, the integration
-// definitions, the redactor). The approval gate is the policy's own
+// directory, the real Hono app reached through app.request, and in-process
+// stubs at the server's two injected ports: the agent core's runTurn (which
+// yields AgentEvents a test writes) and the integration definitions (which
+// report the configuration and check result a test sets). They stand for no
+// real service or business: the real agent and services are exercised by
+// `pnpm test:live`. The approval gate is the policy's own
 // (src/policy/approvals.ts) over the server's real SQLite store.
 // Nothing here opens a socket or reaches a network.
 
@@ -89,7 +93,6 @@ export function testEnv(
   return {
     model: {
       apiKey: secret("sk-ant-test-0000000000"),
-      baseUrl: null,
       model: "claude-sonnet-5",
       effort: "medium",
       thinkingDisplay: null,
@@ -103,7 +106,6 @@ export function testEnv(
       policyOverrides: {},
       businessDate: "2026-09-28",
       approvalTimeoutMs: 900_000,
-      sandbox: false,
       dotenvPath: null,
       ...runtime,
     },
@@ -114,7 +116,7 @@ export function testEnv(
       CLAUDE_CODE_MAX_RETRIES: null,
     },
     composio: { apiKey: null, userId: null, baseUrl: "https://backend.composio.dev" },
-    hubspot: { accessToken: null, apiBaseUrl: null, mcpUrl: null, mcpToken: null, command: null },
+    hubspot: { accessToken: null, apiBaseUrl: null, mcpUrl: null, mcpToken: null },
     stripe: {
       secretKey: null,
       allowLive: false,
@@ -132,24 +134,24 @@ export const testRedact: Redact = (text) =>
     .replace(/\bBearer\s+\S+/g, "Bearer [redacted]");
 
 // ---------------------------------------------------------------------------
-// Integration definitions (fakes of W2's, with scripted configuration and probes)
+// Integration definitions: stubs with the configuration and check result a test sets
 // ---------------------------------------------------------------------------
 
-export type FakeConfiguration = "configured" | "not_configured" | "invalid";
+export type StubConfiguration = "configured" | "not_configured" | "invalid";
 
-/** Composio's hosted sign-in, as a fake connector's authorize(). */
-export type FakeAuthorize = (
+/** Composio's hosted sign-in, as a stub connector's authorize(). */
+export type StubAuthorize = (
   toolkit: string,
   callbackUrl: string,
 ) => Promise<{ readonly redirectUrl: string }>;
 
-export type FakeIntegrationOptions = {
+export type StubIntegrationOptions = {
   /** Default: not_configured. */
-  readonly configuration?: Partial<Record<IntegrationId, FakeConfiguration>>;
+  readonly configuration?: Partial<Record<IntegrationId, StubConfiguration>>;
   /** Default: connected. An Error makes the probe throw. */
   readonly probes?: Partial<Record<IntegrationId, ProbeResult | Error>>;
   /** The Composio integrations' connector.authorize (Connect). Default: throws, unexpected. */
-  readonly authorize?: FakeAuthorize;
+  readonly authorize?: StubAuthorize;
 };
 
 export const CONNECTIONS: { readonly [I in IntegrationId]: ResolvedConnectionOf<I> } = {
@@ -231,7 +233,7 @@ export const MISSING_VARS = {
   slack: ["COMPOSIO_API_KEY", "COMPOSIO_USER_ID"],
 } as const satisfies { readonly [I in IntegrationId]: readonly string[] };
 
-export type FakeIntegrations = {
+export type StubIntegrations = {
   readonly definitions: readonly IntegrationDefinition[];
   /** How many times each probe ran. */
   readonly probeCalls: Map<IntegrationId, number>;
@@ -239,7 +241,7 @@ export type FakeIntegrations = {
   readonly authorizeCalls: { readonly toolkit: string; readonly callbackUrl: string }[];
 };
 
-export function fakeIntegrations(options: FakeIntegrationOptions = {}): FakeIntegrations {
+export function stubIntegrations(options: StubIntegrationOptions = {}): StubIntegrations {
   const probeCalls = new Map<IntegrationId, number>();
   const authorizeCalls: { toolkit: string; callbackUrl: string }[] = [];
   const connector = () => ({
@@ -282,9 +284,9 @@ export function fakeIntegrations(options: FakeIntegrationOptions = {}): FakeInte
   });
   return {
     definitions: INTEGRATION_IDS.map((id) => {
-      const fake = definition(id) as IntegrationDefinition;
+      const stub = definition(id) as IntegrationDefinition;
       // Composio integrations connect through their connector, as ComposioIntegration does.
-      return INTEGRATIONS[id].kind === "composio" ? Object.assign(fake, { connector }) : fake;
+      return INTEGRATIONS[id].kind === "composio" ? Object.assign(stub, { connector }) : stub;
     }),
     probeCalls,
     authorizeCalls,
@@ -294,18 +296,18 @@ export function fakeIntegrations(options: FakeIntegrationOptions = {}): FakeInte
 export { STOP_REASON } from "../../../src/policy/approvals.js";
 
 // ---------------------------------------------------------------------------
-// A scripted agent core: a fake runTurn that yields AgentEvents in the order
-// the real core does and uses the approval gate the way it does.
+// A stubbed agent core: a runTurn that yields the AgentEvents a test writes, in
+// the order the real core does, and uses the approval gate the way it does.
 // ---------------------------------------------------------------------------
 
 export type Script = (input: RunTurnInput) => AsyncGenerator<AgentEvent, void, void>;
 
-export type ScriptedCore = {
+export type StubCore = {
   readonly runTurn: RunTurn;
   readonly inputs: RunTurnInput[];
 };
 
-export function scriptedCore(script: Script): ScriptedCore {
+export function stubCore(script: Script): StubCore {
   const inputs: RunTurnInput[] = [];
   return {
     inputs,
@@ -466,7 +468,7 @@ export const LOOKUP_CALL: ToolCallScript = {
   id: "toolu_lookup_1",
   toolName: "mcp__stripe__list_charges",
   title: "List charges in Stripe",
-  input: { customer: "cus_kestrel" },
+  input: { customer: "cus_contoso" },
   tool: {
     integration: "stripe",
     connectionKind: "api",
@@ -590,7 +592,7 @@ export function heldScript(): { script: Script; release: () => void } {
 export type TestServerOptions = {
   readonly script?: Script;
   readonly runTurn?: RunTurn;
-  readonly integrations?: FakeIntegrationOptions;
+  readonly integrations?: StubIntegrationOptions;
   readonly runtime?: Partial<AgentEnv["runtime"]>;
   readonly model?: Partial<AgentEnv["model"]>;
   readonly maxConcurrentRuns?: number;
@@ -605,10 +607,10 @@ export type TestServer = {
   readonly app: Hono;
   readonly services: ApiServices;
   readonly database: RevenueDeskDatabase;
-  readonly core: ScriptedCore | null;
+  readonly core: StubCore | null;
   /** The approval gate (src/policy/approvals.ts) over this server's approvals table. */
   readonly gate: ApiServices["approvals"];
-  readonly integrations: FakeIntegrations;
+  readonly integrations: StubIntegrations;
   readonly logs: string[];
   /** A request with a loopback Host and the session cookie, plus the CSRF token and JSON for mutations. */
   request(
@@ -625,9 +627,9 @@ export type TestServer = {
 export function createTestServer(options: TestServerOptions = {}): TestServer {
   const stateDir = options.stateDir ?? tempStateDir();
   const database = openTestDatabase(stateDir);
-  const integrations = fakeIntegrations(options.integrations);
-  const core = options.runTurn === undefined ? scriptedCore(options.script ?? answerScript) : null;
-  const runTurn = options.runTurn ?? (core as ScriptedCore).runTurn;
+  const integrations = stubIntegrations(options.integrations);
+  const core = options.runTurn === undefined ? stubCore(options.script ?? answerScript) : null;
+  const runTurn = options.runTurn ?? (core as StubCore).runTurn;
   const logs: string[] = [];
   const services = createApiServices({
     db: database.db,

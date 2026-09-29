@@ -6,10 +6,10 @@ import {
   modelSettings,
   plannedConnections,
 } from "../../../src/cli/run-settings.js";
+import { loadAgentEnv } from "../../../src/config/env.js";
 import type { AskCommand } from "../../../src/contracts/cli.js";
 import type { AgentEnv } from "../../../src/contracts/env.js";
 import { DEFAULT_POLICY } from "../../../src/contracts/integration.js";
-import { fakeLoadConfig } from "../../integration/cli/support/fake-services.js";
 
 const COMMAND: AskCommand = {
   command: "ask",
@@ -26,8 +26,8 @@ const COMMAND: AskCommand = {
 };
 
 function envWith(environment: Record<string, string>): AgentEnv {
-  const result = fakeLoadConfig(environment);
-  if (!result.ok) throw new Error("fixture configuration refused");
+  const result = loadAgentEnv(environment, { cwd: "/" });
+  if (!result.ok) throw new Error("test configuration refused");
   return result.env;
 }
 
@@ -105,8 +105,8 @@ describe("dateInTimeZone", () => {
 
 describe("conversationTitle", () => {
   it("uses the first non-empty line with whitespace collapsed", () => {
-    expect(conversationTitle("\n\n  Why was   Kestrel\tcharged twice?\nMore context")).toBe(
-      "Why was Kestrel charged twice?",
+    expect(conversationTitle("\n\n  Why was   Contoso\tcharged twice?\nMore context")).toBe(
+      "Why was Contoso charged twice?",
     );
   });
 
@@ -122,9 +122,9 @@ describe("conversationTitle", () => {
 
 describe("plannedConnections", () => {
   it("describes available and unavailable plans without secrets", () => {
-    const env = envWith({});
+    const env = envWith({ STRIPE_SECRET_KEY: `sk_test_${"k".repeat(24)}` });
     const secretKey = env.stripe.secretKey;
-    if (secretKey === null) throw new Error("fixture has no Stripe key");
+    if (secretKey === null) throw new Error("no Stripe key in the test configuration");
     const connections = plannedConnections([
       {
         integration: "stripe",

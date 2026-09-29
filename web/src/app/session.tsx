@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import type { SessionInfo } from "@/lib/contracts";
 
 // GET /api/session once at boot: the CSRF token (kept inside lib/api.ts), the
-// model label, the business date and whether this is the sandbox demo.
+// model label, the business date and whether a model key is configured.
 
 type SessionState =
   | { readonly status: "loading" }

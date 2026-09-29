@@ -7,7 +7,51 @@ import {
   invalidArgumentsMessage,
   SchemaCompileError,
 } from "../../../src/gateway/validate.js";
-import { CRM_TOOLS, MAIL_TOOLS } from "../../support/upstream-mcp.js";
+
+/** Schemas written the way upstream MCP servers write them (plain JSON Schema, no zod). */
+const SEARCH_SCHEMA = {
+  type: "object",
+  properties: {
+    query: { type: "string", description: "Search query" },
+    max_results: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+    label_ids: { type: "array", items: { type: "string" } },
+  },
+  required: ["query"],
+  additionalProperties: false,
+};
+
+const NOTE_SCHEMA = {
+  type: "object",
+  $defs: {
+    association: {
+      type: "object",
+      properties: {
+        object_type: { type: "string", enum: ["contact", "company", "deal"] },
+        id: { type: "string", pattern: "^[0-9]+$" },
+      },
+      required: ["object_type", "id"],
+      additionalProperties: false,
+    },
+  },
+  properties: {
+    contact_id: { type: "string", pattern: "^[0-9]+$" },
+    body: { type: "string", maxLength: 65536 },
+    associations: { type: "array", items: { $ref: "#/$defs/association" } },
+  },
+  required: ["contact_id", "body"],
+  additionalProperties: false,
+};
+
+const DRAFT_SCHEMA = {
+  type: "object",
+  properties: {
+    recipient_email: { type: "string", format: "email" },
+    subject: { type: "string" },
+    body: { type: "string" },
+  },
+  required: ["recipient_email", "subject", "body"],
+  additionalProperties: false,
+};
 
 type CapturedTool = { readonly name: string; readonly inputSchema: unknown };
 
@@ -42,8 +86,7 @@ describe("compileArgumentValidator", () => {
   });
 
   it("checks types, ranges, required and undeclared properties of an upstream schema", () => {
-    const schema = MAIL_TOOLS[0]?.tool.inputSchema;
-    const validate = compileArgumentValidator(schema);
+    const validate = compileArgumentValidator(SEARCH_SCHEMA);
     expect(validate({ query: "from:ana@acme.test", max_results: 5 })).toEqual([]);
     expect(validate({ max_results: 500, surprise: 1 })).toEqual(
       expect.arrayContaining([
@@ -55,7 +98,7 @@ describe("compileArgumentValidator", () => {
   });
 
   it("follows $defs references and formats", () => {
-    const note = compileArgumentValidator(CRM_TOOLS[1]?.tool.inputSchema);
+    const note = compileArgumentValidator(NOTE_SCHEMA);
     expect(
       note({ contact_id: "101", body: "ok", associations: [{ object_type: "deal", id: "555" }] }),
     ).toEqual([]);
@@ -70,7 +113,7 @@ describe("compileArgumentValidator", () => {
         { path: "/associations/0/id", message: 'must match pattern "^[0-9]+$"' },
       ]),
     );
-    const draft = compileArgumentValidator(MAIL_TOOLS[1]?.tool.inputSchema);
+    const draft = compileArgumentValidator(DRAFT_SCHEMA);
     expect(draft({ recipient_email: "not-an-email", subject: "s", body: "b" })).toEqual([
       { path: "/recipient_email", message: 'must match format "email"' },
     ]);

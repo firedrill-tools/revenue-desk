@@ -82,7 +82,6 @@ async function main(): Promise<void> {
   for (const line of listeningLines(server.url, existsSync(join(webRoot, "index.html")))) {
     log(line);
   }
-  if (env.runtime.sandbox) log("Local sandbox — no real services");
   if (env.model.apiKey === null) {
     log("ANTHROPIC_API_KEY is not set: runs will fail until it is configured.");
   }

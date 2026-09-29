@@ -51,14 +51,14 @@ const DESCRIPTOR: ApprovalDescriptor = {
   connectionKind: "api",
   operation: "stripe.refunds.create",
   title: "Refund charge in Stripe",
-  consequence: "Refund $49.00 to Harbor & Pine Outfitters",
+  consequence: "Refund $49.00 to Fabrikam Inc",
   facts: [
     { label: "Amount", value: "$49.00 USD" },
     { label: "Charge", value: "ch_2" },
   ],
   amount: { amountMinor: 4900, currency: "USD" },
   recordIds: ["ch_2", "in_7"],
-  recipients: ["dana@harborpine.test"],
+  recipients: ["jamie@fabrikam.example"],
   expiresAt: "2026-09-28T10:15:00Z",
 };
 
@@ -108,7 +108,7 @@ describe("reading stream payloads", () => {
     expect(approvalFactRows(readApprovalFacts(DESCRIPTOR))).toEqual([
       { label: "Amount", value: "$49.00 USD" },
       { label: "Charge", value: "ch_2" },
-      { label: "Recipient", value: "dana@harborpine.test" },
+      { label: "Recipient", value: "jamie@fabrikam.example" },
       { label: "Record", value: "in_7" },
     ]);
   });
@@ -509,7 +509,7 @@ describe("approval card fact rows", () => {
   });
 
   it("folds a long message body behind Show all", () => {
-    expect(isLongText("Hi Dana,\n\nThanks.\n\nMaya")).toBe(false);
+    expect(isLongText("Hi Jamie,\n\nThanks.\n\nMaya")).toBe(false);
     expect(isLongText(Array.from({ length: 12 }, (_, index) => `Line ${index}`).join("\n"))).toBe(
       true,
     );

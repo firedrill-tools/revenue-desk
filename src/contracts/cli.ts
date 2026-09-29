@@ -1,6 +1,6 @@
 // Headless CLI contract (docs/ARCHITECTURE.md §10), workstream W6.
 //
-//   revenue-desk ask "Why was Kestrel charged twice?"          prints the reply
+//   revenue-desk ask "Which invoices are 60 days overdue?"     prints the reply
 //   revenue-desk ask --json "…"                               prints a RunSummary
 //   echo "…" | revenue-desk ask -                             reads the prompt from stdin
 //

@@ -4,12 +4,9 @@
 
 import { INTEGRATION_IDS, type IntegrationId } from "../../../src/contracts/integration.js";
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
-
 /**
- * A Composio sign-in URL is opened only if it is https, or http on a loopback
- * host (the sandbox demo's local fake). Anything else (javascript:, data:,
- * plain http to a remote host) is refused.
+ * A Composio sign-in URL is opened only if it is https. Anything else
+ * (javascript:, data:, plain http) is refused.
  */
 export function safeRedirectUrl(value: string): string | null {
   let url: URL;
@@ -19,9 +16,7 @@ export function safeRedirectUrl(value: string): string | null {
     return null;
   }
   if (url.username !== "" || url.password !== "") return null;
-  if (url.protocol === "https:") return url.toString();
-  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return url.toString();
-  return null;
+  return url.protocol === "https:" ? url.toString() : null;
 }
 
 /**

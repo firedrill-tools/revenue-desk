@@ -126,14 +126,8 @@ describe("approvals waiting outside their conversation", () => {
 
   it("counts them for the tab title and the app bar", () => {
     const items = [
-      item("a", "awaiting_approval", 1, "Refund $490.00 to Harbor & Pine Outfitters"),
-      item(
-        "b",
-        "awaiting_approval",
-        2,
-        "Refund $49.00 to Kestrel Analytics",
-        "2026-09-29T11:00:00.000Z",
-      ),
+      item("a", "awaiting_approval", 1, "Refund $490.00 to Fabrikam Inc"),
+      item("b", "awaiting_approval", 2, "Refund $49.00 to Contoso Ltd", "2026-09-29T11:00:00.000Z"),
       item("c", "running", 0, null),
       item("d", "idle", 0, null),
     ];
@@ -144,9 +138,9 @@ describe("approvals waiting outside their conversation", () => {
   });
 
   it("says in the rail what each one waits for", () => {
-    expect(
-      waitingMarker(item("a", "awaiting_approval", 1, "Refund $490.00 to Harbor & Pine")),
-    ).toBe("Needs approval · Refund $490.00 to Harbor & Pine");
+    expect(waitingMarker(item("a", "awaiting_approval", 1, "Refund $490.00 to Fabrikam"))).toBe(
+      "Needs approval · Refund $490.00 to Fabrikam",
+    );
     expect(waitingMarker(item("b", "awaiting_approval", 2, "Send the reply"))).toBe(
       "2 approvals waiting · Send the reply",
     );

@@ -16,11 +16,6 @@ import {
 import type { RunConnection } from "../../../src/contracts/events.js";
 import { INTEGRATIONS } from "../../../src/contracts/integration.js";
 import { TEST_SETTINGS, tempStateDir, testEnv } from "../../helpers/agent-fixtures.js";
-import { loadBusinessFixtures } from "../../support/fakes/fixtures.js";
-
-function formatUsd(minor: number): string {
-  return `$${(minor / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
-}
 
 const connection = (
   integration: keyof typeof INTEGRATIONS,
@@ -92,7 +87,7 @@ describe("buildSystemPrompt", () => {
     );
   });
 
-  // The rules below come from the real-model runs against the sandbox (the live lane).
+  // The rules below come from runs with the real model.
   it("moves money only when asked, and recommends instead", () => {
     expect(STABLE_RULES).toContain(
       "Call a refund, invoice, payment or cancellation tool only when the user asked for that action in this conversation;",
@@ -200,19 +195,14 @@ describe("buildSystemPrompt", () => {
     expect(SYSTEM_NOTES.slack).toContain("<@USERID>");
   });
 
-  it("is not fitted to the sandbox: no fixture company, person, id or amount", () => {
+  it("is fitted to no business: no record id, amount, address or domain in its fixed text", () => {
     // The fixed text of the prompt; the workspace section holds each workspace's own values.
     const fixed = [STABLE_RULES, ...Object.values(SYSTEM_NOTES)].join("\n");
-    const fixtures = loadBusinessFixtures();
-    const values = [
-      ...fixtures.stripe.customers.flatMap((customer) => [customer.name, customer.id]),
-      ...fixtures.stripe.charges.flatMap((charge) => [charge.id, formatUsd(charge.amount)]),
-      ...fixtures.company.people.flatMap((person) => [person.name, person.email]),
-    ];
-    for (const value of values) expect(fixed, value).not.toContain(value);
-    for (const word of ["Harbor", "Meridian", "Copperleaf", "Solstice", "Kestrel", ".test"]) {
-      expect(fixed).not.toContain(word);
-    }
+    expect(fixed).not.toMatch(/\b(ch|cus|in|pi|re|sub|py)_[A-Za-z0-9]{4,}/);
+    // The only amount is the unit example.
+    expect(new Set(fixed.match(/\$[\d,]+(\.\d+)?/g))).toEqual(new Set(["$49.00"]));
+    expect(fixed).not.toMatch(/[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
+    expect(fixed).not.toMatch(/\.(test|example|invalid)\b/);
   });
 
   it("tells the model HubSpot's timestamp rule only when HubSpot is available", () => {
@@ -230,9 +220,9 @@ describe("buildSystemPrompt", () => {
 
   it("describes the workspace, the systems of this run and the business date", () => {
     const dynamic = prompt[2] ?? "";
-    expect(dynamic).toContain("Company: Kestrel Analytics");
-    expect(dynamic).toContain("Emails are sent on behalf of: Dana Reyes");
-    expect(dynamic).toContain("Internal email domains (anyone else is external): kestrel.test");
+    expect(dynamic).toContain("Company: Contoso Ltd");
+    expect(dynamic).toContain("Emails are sent on behalf of: Morgan Rivera");
+    expect(dynamic).toContain("Internal email domains (anyone else is external): contoso.example");
     expect(dynamic).toContain("without approval: #billing, #sales-ops");
     expect(dynamic).toContain("- Gmail (via Composio)");
     expect(dynamic).toContain("- HubSpot (via MCP): ");
@@ -287,11 +277,10 @@ describe("buildSystemPrompt", () => {
 describe("query options", () => {
   const env = testEnv({
     ANTHROPIC_API_KEY: "sk-ant-test-0123456789",
-    ANTHROPIC_BASE_URL: "http://127.0.0.1:7777",
     AGENT_STATE_DIR: "/state",
     COMPOSIO_API_KEY: "composio-secret-value",
     STRIPE_SECRET_KEY: "sk_test_secret_value",
-    HTTP_PROXY: "http://127.0.0.1:7777",
+    HTTP_PROXY: "http://proxy.internal:3128",
     NO_PROXY: "127.0.0.1,localhost",
   });
   const directories = stateDirectories("/state");
@@ -323,8 +312,7 @@ describe("query options", () => {
       HOME: "/state/home",
       CLAUDE_CONFIG_DIR: "/state/claude",
       ANTHROPIC_API_KEY: "sk-ant-test-0123456789",
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:7777",
-      HTTP_PROXY: "http://127.0.0.1:7777",
+      HTTP_PROXY: "http://proxy.internal:3128",
       NO_PROXY: "127.0.0.1,localhost",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       DISABLE_TELEMETRY: "1",

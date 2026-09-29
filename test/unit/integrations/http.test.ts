@@ -5,7 +5,7 @@ import {
   sendHttp,
   TransportError,
 } from "../../../src/integrations/shared/http.js";
-import { mockFetch, networkError } from "./helpers.js";
+import { networkError, stubFetch } from "./helpers.js";
 
 const read = {
   method: "GET",
@@ -18,7 +18,7 @@ const write = { ...read, method: "POST", retryable: false } as const;
 
 describe("sendHttp retry rules", () => {
   it("retries a read on 429, honouring Retry-After, at most twice", async () => {
-    const mock = mockFetch(() => ({
+    const mock = stubFetch(() => ({
       status: 429,
       json: { error: "slow" },
       headers: { "retry-after": "2" },
@@ -30,7 +30,7 @@ describe("sendHttp retry rules", () => {
   });
 
   it("returns the first success after a 429", async () => {
-    const mock = mockFetch((_, index) => (index === 0 ? { status: 429 } : { json: { ok: true } }));
+    const mock = stubFetch((_, index) => (index === 0 ? { status: 429 } : { json: { ok: true } }));
     const response = await sendHttp(read, mock.http);
     expect(response.status).toBe(200);
     expect(response.json).toEqual({ ok: true });
@@ -38,14 +38,14 @@ describe("sendHttp retry rules", () => {
   });
 
   it("does not wait for a Retry-After beyond the limit", async () => {
-    const mock = mockFetch(() => ({ status: 429, headers: { "retry-after": "120" } }));
+    const mock = stubFetch(() => ({ status: 429, headers: { "retry-after": "120" } }));
     const response = await sendHttp(read, { ...mock.http, maxRetryDelayMs: 10_000 });
     expect(response.status).toBe(429);
     expect(mock.requests).toHaveLength(1);
   });
 
   it("never retries a write, even on 429", async () => {
-    const mock = mockFetch(() => ({ status: 429 }));
+    const mock = stubFetch(() => ({ status: 429 }));
     const response = await sendHttp(write, mock.http);
     expect(response.status).toBe(429);
     expect(mock.requests).toHaveLength(1);
@@ -54,14 +54,14 @@ describe("sendHttp retry rules", () => {
 
   it("does not retry other errors", async () => {
     for (const status of [400, 402, 500, 503]) {
-      const mock = mockFetch(() => ({ status }));
+      const mock = stubFetch(() => ({ status }));
       expect((await sendHttp(read, mock.http)).status).toBe(status);
       expect(mock.requests).toHaveLength(1);
     }
   });
 
   it("retries a read after a network error raised before sending", async () => {
-    const mock = mockFetch((_, index) => (index < 2 ? networkError("ECONNREFUSED") : { json: {} }));
+    const mock = stubFetch((_, index) => (index < 2 ? networkError("ECONNREFUSED") : { json: {} }));
     const response = await sendHttp(read, mock.http);
     expect(response.status).toBe(200);
     expect(mock.requests).toHaveLength(3);
@@ -69,7 +69,7 @@ describe("sendHttp retry rules", () => {
   });
 
   it("gives up after two retries with a TransportError", async () => {
-    const mock = mockFetch(() => networkError("ENOTFOUND"));
+    const mock = stubFetch(() => networkError("ENOTFOUND"));
     const error = await sendHttp(read, mock.http).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TransportError);
     expect((error as TransportError).kind).toBe("network");
@@ -78,20 +78,20 @@ describe("sendHttp retry rules", () => {
   });
 
   it("does not retry a network error that may have happened after sending", async () => {
-    const mock = mockFetch(() => networkError("ECONNRESET"));
+    const mock = stubFetch(() => networkError("ECONNRESET"));
     await expect(sendHttp(read, mock.http)).rejects.toBeInstanceOf(TransportError);
     expect(mock.requests).toHaveLength(1);
   });
 
   it("does not retry a write after a pre-send network error", async () => {
-    const mock = mockFetch(() => networkError("ECONNREFUSED"));
+    const mock = stubFetch(() => networkError("ECONNREFUSED"));
     await expect(sendHttp(write, mock.http)).rejects.toBeInstanceOf(TransportError);
     expect(mock.requests).toHaveLength(1);
   });
 
   it("reports a cancelled request as aborted", async () => {
     const controller = new AbortController();
-    const mock = mockFetch(() => {
+    const mock = stubFetch(() => {
       controller.abort();
       return new DOMException("aborted", "AbortError");
     });
@@ -116,7 +116,7 @@ describe("sendHttp retry rules", () => {
   it("marks a write sent without an answer as outcome unknown, never a read or a refused write", async () => {
     // After the connection: the provider may have received and applied it.
     for (const failure of [networkError("ECONNRESET"), networkError("UND_ERR_SOCKET")]) {
-      const error = (await sendHttp(write, mockFetch(() => failure).http).catch(
+      const error = (await sendHttp(write, stubFetch(() => failure).http).catch(
         (e: unknown) => e,
       )) as TransportError;
       expect(error.outcomeUnknown).toBe(true);
@@ -132,25 +132,25 @@ describe("sendHttp retry rules", () => {
     // Refused before sending: nothing reached the provider.
     const refused = (await sendHttp(
       write,
-      mockFetch(() => networkError("ECONNREFUSED")).http,
+      stubFetch(() => networkError("ECONNREFUSED")).http,
     ).catch((e: unknown) => e)) as TransportError;
     expect(refused.outcomeUnknown).toBe(false);
     const cancelled = new AbortController();
     cancelled.abort();
     const early = (await sendHttp(
       { ...write, signal: cancelled.signal },
-      mockFetch(() => new DOMException("aborted", "AbortError")).http,
+      stubFetch(() => new DOMException("aborted", "AbortError")).http,
     ).catch((e: unknown) => e)) as TransportError;
     expect(early.outcomeUnknown).toBe(false);
     // A read is simply failed.
-    const readError = (await sendHttp(read, mockFetch(() => networkError("ECONNRESET")).http).catch(
+    const readError = (await sendHttp(read, stubFetch(() => networkError("ECONNRESET")).http).catch(
       (e: unknown) => e,
     )) as TransportError;
     expect(readError.outcomeUnknown).toBe(false);
   });
 
   it("parses JSON bodies and keeps non-JSON text", async () => {
-    const mock = mockFetch(() => ({ status: 502, text: "<html>bad gateway</html>" }));
+    const mock = stubFetch(() => ({ status: 502, text: "<html>bad gateway</html>" }));
     const response = await sendHttp(read, mock.http);
     expect(response.json).toBeUndefined();
     expect(response.text).toContain("bad gateway");

@@ -1,13 +1,14 @@
-// Helpers for the UI end-to-end suites: the sandbox's API for setup, the
-// shared screen checks (axe, no side scroll) and a way to hold the chat
-// stream so a transient state (Thinking, a running call) can be checked.
+// Helpers for the UI end-to-end suites: the running app's own API for setup
+// and for the truth a page must show, and the shared screen checks (axe, no
+// side scroll, keyboard focus).
 
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
+import type { ConnectionView } from "../../src/contracts/api.js";
 import { ApiClient } from "../support/api-client.js";
 
-/** The sandbox that playwright.config.ts starts (dist/server/main.js). */
-export const SANDBOX_URL = "http://127.0.0.1:4320";
+/** The app that playwright.config.ts starts (dist/server/main.js with the real configuration). */
+export const APP_URL = "http://127.0.0.1:4320";
 
 export const APPROVAL = /^Approval needed: /;
 
@@ -15,8 +16,8 @@ export function isPhone(testInfo: TestInfo): boolean {
   return testInfo.project.name === "phone-chrome";
 }
 
-/** An API client with a session (cookie and CSRF token), for setup and clean-up. */
-export async function sandboxApi(baseUrl: string = SANDBOX_URL): Promise<ApiClient> {
+/** An API client with a session (cookie and CSRF token), as a browser tab has one. */
+export async function appApi(baseUrl: string = APP_URL): Promise<ApiClient> {
   const api = new ApiClient(baseUrl);
   await api.session();
   return api;
@@ -27,13 +28,22 @@ export function uniqueTitle(label: string): string {
   return `${label} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** Starts one of the five jobs from the empty chat's suggestions. */
-export async function startJob(page: Page, title: RegExp | string, base = ""): Promise<void> {
-  await page.goto(`${base}/`);
-  await page
-    .getByRole("list", { name: "Suggested jobs" })
-    .getByRole("button", { name: title })
-    .click();
+/**
+ * The connections once the server's start-up check has finished: every
+ * configured integration has left "unknown" (not checked yet).
+ */
+export async function checkedConnections(api: ApiClient): Promise<readonly ConnectionView[]> {
+  let connections: readonly ConnectionView[] = [];
+  await expect
+    .poll(
+      async () => {
+        connections = (await api.expect("GET /api/connections")).items;
+        return connections.filter((connection) => connection.state === "unknown").length;
+      },
+      { timeout: 90_000, intervals: [250, 500, 1_000] },
+    )
+    .toBe(0);
+  return connections;
 }
 
 export async function expectNoSideScroll(page: Page): Promise<void> {
@@ -118,20 +128,6 @@ export async function isFocusVisible(locator: Locator): Promise<boolean> {
 }
 
 /**
- * Stops every run still active in the sandbox, so a test that ends at an
- * approval (or fails there) never leaves the next one at the four-run limit.
- */
-export async function stopActiveRuns(baseUrl: string = SANDBOX_URL): Promise<void> {
-  const api = await sandboxApi(baseUrl);
-  const { items } = await api.expect("GET /api/runs", {
-    query: { status: "running", limit: 50 },
-  });
-  for (const run of items) {
-    await api.call("POST /api/runs/:runId/stop", { params: { runId: run.id } });
-  }
-}
-
-/**
  * Presses Tab (or Shift+Tab) until `target` has the focus; fails after
  * `limit` presses. Returns how many presses it took.
  */
@@ -147,77 +143,4 @@ export async function tabTo(
     if (await isFocused(target)) return presses;
   }
   throw new Error(`${key} did not reach the target in ${limit} presses`);
-}
-
-// Holds the chat's response stream in the browser before (or after) the first
-// SSE event that matches, until released. Installed with addInitScript; it
-// wraps fetch for /api/chat only and passes every byte through unchanged.
-const STREAM_HOLD = `(() => {
-  const original = window.fetch.bind(window);
-  const hold = { match: null, paused: false, release: null };
-  window.__rdHold = hold;
-  window.fetch = async (input, init) => {
-    const response = await original(input, init);
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const path = new URL(url, location.href).pathname;
-    if (!/^\\/api\\/chat(\\/|$)/.test(path) || !response.body || response.status !== 200) return response;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    const encoder = new TextEncoder();
-    let buffer = "";
-    const body = new ReadableStream({
-      async start(controller) {
-        try {
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) {
-              if (buffer) controller.enqueue(encoder.encode(buffer));
-              controller.close();
-              return;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            let end;
-            while ((end = buffer.indexOf("\\n\\n")) !== -1) {
-              const event = buffer.slice(0, end + 2);
-              buffer = buffer.slice(end + 2);
-              if (hold.match && event.includes(hold.match)) {
-                hold.match = null;
-                await new Promise((resume) => {
-                  hold.paused = true;
-                  hold.release = () => { hold.paused = false; hold.release = null; resume(); };
-                });
-              }
-              controller.enqueue(encoder.encode(event));
-            }
-          }
-        } catch (error) {
-          controller.error(error);
-        }
-      },
-    });
-    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-  };
-})();`;
-
-/** Installs the stream hold for every page of the context (call before goto). */
-export async function installStreamHold(page: Page): Promise<void> {
-  await page.context().addInitScript(STREAM_HOLD);
-}
-
-/** The next SSE event containing `text` waits until releaseStream(). */
-export async function holdStreamAt(page: Page, text: string): Promise<void> {
-  await page.evaluate(`window.__rdHold.match = ${JSON.stringify(text)};`);
-}
-
-export async function waitUntilHeld(page: Page): Promise<void> {
-  // A function, not a string: the app's Content-Security-Policy forbids evaluating strings.
-  await page.waitForFunction(
-    () => (globalThis as unknown as { __rdHold?: { paused: boolean } }).__rdHold?.paused === true,
-    null,
-    { timeout: 30_000 },
-  );
-}
-
-export async function releaseStream(page: Page): Promise<void> {
-  await page.evaluate("window.__rdHold.release && window.__rdHold.release()");
 }

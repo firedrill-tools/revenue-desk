@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { ApiToolError } from "../../../src/gateway/api-server.js";
 import { StripeClient, stripeError } from "../../../src/integrations/stripe/client.js";
 import { encodeForm, formPairs } from "../../../src/integrations/stripe/form.js";
-import { mockFetch, networkError, paramsOf, secret } from "./helpers.js";
+import { networkError, paramsOf, secret, stubFetch } from "./helpers.js";
 
 const KEY = "sk_test_unit_0123456789abcdef";
 const IDEMPOTENCY = "f".repeat(64);
 
 function client(
-  mock: ReturnType<typeof mockFetch>,
+  mock: ReturnType<typeof stubFetch>,
   overrides: Partial<ConstructorParameters<typeof StripeClient>[0]> = {},
 ) {
   return new StripeClient({
@@ -58,7 +58,7 @@ describe("Stripe form encoding", () => {
 
 describe("StripeClient", () => {
   it("sends a read with Bearer auth, the API version and bracket query parameters under the prefix", async () => {
-    const mock = mockFetch(() => ({ json: { object: "list", data: [] } }));
+    const mock = stubFetch(() => ({ json: { object: "list", data: [] } }));
     await client(mock).get(
       "/v1/charges",
       { customer: "cus_1", created: { gte: 5 }, limit: 3 },
@@ -79,13 +79,13 @@ describe("StripeClient", () => {
   });
 
   it("omits Stripe-Version when none is configured", async () => {
-    const mock = mockFetch(() => ({ json: {} }));
+    const mock = stubFetch(() => ({ json: {} }));
     await client(mock, { apiVersion: null }).get("/v1/balance", {}, undefined);
     expect(mock.requests[0]?.headers["stripe-version"]).toBeUndefined();
   });
 
   it("sends a POST as a form with the gateway's idempotency key", async () => {
-    const mock = mockFetch(() => ({ json: { id: "re_1", object: "refund" } }));
+    const mock = stubFetch(() => ({ json: { id: "re_1", object: "refund" } }));
     const body = await client(mock).post(
       "/v1/refunds",
       { charge: "ch_1", amount: 4900, metadata: { ticket: "t1" } },
@@ -101,7 +101,7 @@ describe("StripeClient", () => {
   });
 
   it("sends DELETE parameters in the query string with the idempotency key", async () => {
-    const mock = mockFetch(() => ({ json: { id: "sub_1", status: "canceled" } }));
+    const mock = stubFetch(() => ({ json: { id: "sub_1", status: "canceled" } }));
     await client(mock).delete(
       "/v1/subscriptions/sub_1",
       { prorate: true, cancellation_details: { comment: "churn" } },
@@ -118,7 +118,7 @@ describe("StripeClient", () => {
   });
 
   it("refuses a write without an idempotency key before sending anything", async () => {
-    const mock = mockFetch(() => ({ json: {} }));
+    const mock = stubFetch(() => ({ json: {} }));
     await expect(
       client(mock).post(
         "/v1/refunds",
@@ -130,7 +130,7 @@ describe("StripeClient", () => {
   });
 
   it("refuses live keys unless the connection allows them", () => {
-    const mock = mockFetch(() => ({ json: {} }));
+    const mock = stubFetch(() => ({ json: {} }));
     for (const key of ["sk_live_abc", "rk_live_abc"]) {
       expect(() => client(mock, { secretKey: secret(key) })).toThrow(ApiToolError);
       expect(() => client(mock, { secretKey: secret(key), allowLive: true })).not.toThrow();
@@ -138,7 +138,7 @@ describe("StripeClient", () => {
   });
 
   it("normalises Stripe's error envelope, including the decline code", async () => {
-    const mock = mockFetch(() => ({
+    const mock = stubFetch(() => ({
       status: 402,
       json: {
         error: {
@@ -189,11 +189,11 @@ describe("StripeClient", () => {
         error: { type: "invalid_request_error", code: "rate_limit", message: "Too many requests" },
       },
     };
-    const reads = mockFetch((_, index) => (index === 0 ? rateLimited : { json: { data: [] } }));
+    const reads = stubFetch((_, index) => (index === 0 ? rateLimited : { json: { data: [] } }));
     await expect(client(reads).get("/v1/refunds", {}, undefined)).resolves.toEqual({ data: [] });
     expect(reads.requests).toHaveLength(2);
 
-    const writes = mockFetch(() => rateLimited);
+    const writes = stubFetch(() => rateLimited);
     await expect(
       client(writes).post(
         "/v1/refunds",
@@ -205,7 +205,7 @@ describe("StripeClient", () => {
   });
 
   it("reports a network failure as a ToolFailure with a network code", async () => {
-    const mock = mockFetch(() => networkError("ECONNREFUSED"));
+    const mock = stubFetch(() => networkError("ECONNREFUSED"));
     await expect(client(mock).get("/v1/balance", {}, undefined)).rejects.toMatchObject({
       provider: "stripe",
       code: "network_error",
@@ -214,7 +214,7 @@ describe("StripeClient", () => {
   });
 
   it("reports a refund sent without an answer as outcome_unknown, never as failed", async () => {
-    const mock = mockFetch(() => networkError("ECONNRESET"));
+    const mock = stubFetch(() => networkError("ECONNRESET"));
     const error = await client(mock)
       .post(
         "/v1/refunds",
@@ -233,7 +233,7 @@ describe("StripeClient", () => {
     // Never retried: a second POST could refund twice.
     expect(mock.requests).toHaveLength(1);
     // Refused before sending: plainly a network error.
-    const refused = mockFetch(() => networkError("ECONNREFUSED"));
+    const refused = stubFetch(() => networkError("ECONNREFUSED"));
     await expect(
       client(refused).post(
         "/v1/refunds",
@@ -244,7 +244,7 @@ describe("StripeClient", () => {
   });
 
   it("rejects a success body that is not a JSON object", async () => {
-    const mock = mockFetch(() => ({ text: "ok" }));
+    const mock = stubFetch(() => ({ text: "ok" }));
     await expect(client(mock).get("/v1/balance", {}, undefined)).rejects.toMatchObject({
       code: "invalid_response",
     });

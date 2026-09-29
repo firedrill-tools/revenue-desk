@@ -27,34 +27,48 @@ describe("base URLs", () => {
       "https://api.stripe.com/v1/charges",
     );
     expect(
-      joinUrl("http://127.0.0.1:9000/stripe/", "/v1/charges", { limit: 10, email: undefined }),
-    ).toBe("http://127.0.0.1:9000/stripe/v1/charges?limit=10");
+      joinUrl("https://proxy.example/stripe/", "/v1/charges", { limit: 10, email: undefined }),
+    ).toBe("https://proxy.example/stripe/v1/charges?limit=10");
     expect(joinUrl("https://x.test/a/b", "c/d", new URLSearchParams({ q: "a b" }))).toBe(
       "https://x.test/a/b/c/d?q=a+b",
     );
   });
 
-  it("requires https except on loopback, and refuses credentials, queries and fragments", () => {
+  it("requires https, and refuses credentials, queries and fragments", () => {
     expect(checkBaseUrl("https://api.stripe.com/")).toEqual({
       ok: true,
       url: "https://api.stripe.com",
       host: "api.stripe.com",
-      loopback: false,
     });
-    expect(checkBaseUrl("http://127.0.0.1:4555/prefix/")).toMatchObject({
+    expect(checkBaseUrl("https://proxy.example:8443/prefix/")).toEqual({
       ok: true,
-      url: "http://127.0.0.1:4555/prefix",
-      host: "127.0.0.1:4555",
-      loopback: true,
+      url: "https://proxy.example:8443/prefix",
+      host: "proxy.example:8443",
     });
-    expect(checkBaseUrl("http://localhost:1")).toMatchObject({ ok: true });
-    expect(checkBaseUrl("http://[::1]:2")).toMatchObject({ ok: true });
+    for (const url of ["http://127.0.0.1:4555/prefix/", "http://localhost:1", "http://[::1]:2"]) {
+      expect(checkBaseUrl(url)).toEqual({ ok: false, message: "must use https" });
+    }
     expect(checkBaseUrl("http://api.stripe.com")).toMatchObject({ ok: false });
     expect(checkBaseUrl("ftp://api.stripe.com")).toMatchObject({ ok: false });
     expect(checkBaseUrl("https://user:pw@api.stripe.com")).toMatchObject({ ok: false });
     expect(checkBaseUrl("https://api.stripe.com?x=1")).toMatchObject({ ok: false });
     expect(checkBaseUrl("https://api.stripe.com#x")).toMatchObject({ ok: false });
     expect(checkBaseUrl("not a url")).toMatchObject({ ok: false });
+  });
+
+  it("accepts plain http on loopback only for a server on this machine, when asked", () => {
+    const local = { allowLoopbackHttp: true };
+    expect(checkBaseUrl("http://127.0.0.1:4555/mcp/", local)).toEqual({
+      ok: true,
+      url: "http://127.0.0.1:4555/mcp",
+      host: "127.0.0.1:4555",
+    });
+    expect(checkBaseUrl("http://localhost:1/mcp", local)).toMatchObject({ ok: true });
+    expect(checkBaseUrl("http://[::1]:2/mcp", local)).toMatchObject({ ok: true });
+    expect(checkBaseUrl("http://mcp.example/mcp", local)).toEqual({
+      ok: false,
+      message: "must use https (plain http is accepted only for a server on this machine)",
+    });
   });
 
   it("recognises loopback hosts only", () => {
@@ -101,13 +115,13 @@ describe("email addresses", () => {
   });
 
   it("treats internal domains and their subdomains as internal", () => {
-    const internal = ["Kestrel.test", "@ops.example"];
-    expect(isInternalAddress("ana@kestrel.test", internal)).toBe(true);
-    expect(isInternalAddress("ana@eu.kestrel.test", internal)).toBe(true);
+    const internal = ["Contoso.example", "@ops.example"];
+    expect(isInternalAddress("ana@contoso.example", internal)).toBe(true);
+    expect(isInternalAddress("ana@eu.contoso.example", internal)).toBe(true);
     expect(isInternalAddress("bo@ops.example", internal)).toBe(true);
-    expect(isInternalAddress("ana@notkestrel.test", internal)).toBe(false);
-    expect(isInternalAddress("ana@kestrel.test.evil", internal)).toBe(false);
-    expect(isInternalAddress("ana@kestrel.test", [])).toBe(false);
+    expect(isInternalAddress("ana@notcontoso.example", internal)).toBe(false);
+    expect(isInternalAddress("ana@contoso.example.evil", internal)).toBe(false);
+    expect(isInternalAddress("ana@contoso.example", [])).toBe(false);
   });
 });
 
@@ -118,9 +132,7 @@ describe("text", () => {
     expect(listOf(["a"])).toBe("a");
     expect(listOf(["a", "b", "c"])).toBe("a, b and c");
     expect(listOf(["a", "b", "c", "d", "e"])).toBe("a, b and 3 others");
-    expect(sentence("Connected to Kestrel Analytics, Inc.")).toBe(
-      "Connected to Kestrel Analytics, Inc.",
-    );
+    expect(sentence("Connected to Contoso Ltd.")).toBe("Connected to Contoso Ltd.");
     expect(sentence("Connected to Acme")).toBe("Connected to Acme.");
     expect(maskIdentifier("ca_1234567890c6M")).toBe("ca_…c6M");
     expect(maskIdentifier("20211234")).toBe("…234");

@@ -23,16 +23,23 @@ export type BaseUrlCheck =
       readonly url: string;
       /** Host (and port) only; safe to show, log and store. */
       readonly host: string;
-      readonly loopback: boolean;
     }
   | { readonly ok: false; readonly message: string };
 
+export type BaseUrlOptions = {
+  /**
+   * Accept plain HTTP on a loopback host: an MCP server the user runs on
+   * this machine (HUBSPOT_MCP_URL). Every service base URL is HTTPS only.
+   */
+  readonly allowLoopbackHttp?: boolean;
+};
+
 /**
- * Validates a configured base URL. HTTPS is required, except that plain HTTP
- * is accepted for loopback hosts (local fakes and the sandbox demo). A base
- * URL never carries credentials, a query or a fragment.
+ * Validates a configured base URL. HTTPS is required (see BaseUrlOptions for
+ * the one exception). A base URL never carries credentials, a query or a
+ * fragment.
  */
-export function checkBaseUrl(raw: string): BaseUrlCheck {
+export function checkBaseUrl(raw: string, options: BaseUrlOptions = {}): BaseUrlCheck {
   let url: URL;
   try {
     url = new URL(raw.trim());
@@ -42,11 +49,12 @@ export function checkBaseUrl(raw: string): BaseUrlCheck {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     return { ok: false, message: "must use https" };
   }
-  const loopback = isLoopbackHost(url.hostname);
-  if (url.protocol === "http:" && !loopback) {
+  if (url.protocol === "http:" && !(options.allowLoopbackHttp && isLoopbackHost(url.hostname))) {
     return {
       ok: false,
-      message: "must use https (plain http is accepted only for loopback hosts)",
+      message: options.allowLoopbackHttp
+        ? "must use https (plain http is accepted only for a server on this machine)"
+        : "must use https",
     };
   }
   if (url.username !== "" || url.password !== "") {
@@ -56,7 +64,7 @@ export function checkBaseUrl(raw: string): BaseUrlCheck {
     return { ok: false, message: "must not contain a query or a fragment" };
   }
   const path = url.pathname.replace(/\/+$/, "");
-  return { ok: true, url: `${url.origin}${path}`, host: url.host, loopback };
+  return { ok: true, url: `${url.origin}${path}`, host: url.host };
 }
 
 /** The host of a URL for labels; the raw string when it cannot be parsed. */

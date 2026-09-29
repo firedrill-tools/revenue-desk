@@ -108,7 +108,7 @@ function descriptor(): ApprovalDescriptor {
     connectionKind: "api",
     operation: "stripe.refunds.create",
     title: "Refund charge in Stripe",
-    consequence: "Refund $49.00 to Kestrel Analytics",
+    consequence: "Refund $49.00 to Contoso Ltd",
     facts: [{ label: "Amount", value: "$49.00" }],
     expiresAt: "2026-09-28T10:15:00.000Z",
   };
@@ -159,11 +159,11 @@ describe("seed", () => {
 
   it("is idempotent and never overwrites a changed row", () => {
     const database = seeded();
-    updateSettings(database.db, { companyName: "Kestrel Ops" }, T1);
+    updateSettings(database.db, { companyName: "Contoso Ops" }, T1);
     savePolicies(database.db, { financial: "deny" }, T1);
     seedDatabase(database.db, T2);
     seedDatabase(database.db, T2);
-    expect(readSettings(database.db)).toMatchObject({ companyName: "Kestrel Ops", updatedAt: T1 });
+    expect(readSettings(database.db)).toMatchObject({ companyName: "Contoso Ops", updatedAt: T1 });
     expect(readSavedPolicies(database.db).financial).toBe("deny");
   });
 
@@ -179,7 +179,7 @@ describe("settings", () => {
     const updated = updateSettings(
       database.db,
       {
-        internalEmailDomains: ["kestrel.test"],
+        internalEmailDomains: ["contoso.example"],
         allowedSlackChannels: ["#billing"],
         notifySlackChannel: "#billing",
         defaultEffort: "high",
@@ -188,7 +188,7 @@ describe("settings", () => {
     );
     expect(updated).toMatchObject({
       companyName: "",
-      internalEmailDomains: ["kestrel.test"],
+      internalEmailDomains: ["contoso.example"],
       allowedSlackChannels: ["#billing"],
       notifySlackChannel: "#billing",
       defaultEffort: "high",
@@ -298,7 +298,7 @@ describe("conversations", () => {
 
   it("searches titles and message text, treating % and _ literally", () => {
     const database = seeded();
-    conversation(database, "c1", T0, "Kestrel duplicate charge");
+    conversation(database, "c1", T0, "Contoso duplicate charge");
     conversation(database, "c2", T1, "Weekly digest");
     conversation(database, "c3", T2, "100% refund");
     insertUserMessage(database.db, {
@@ -309,7 +309,7 @@ describe("conversations", () => {
       now: T1,
     });
     const ids = (q: string) => listConversations(database.db, { q }).rows.map((row) => row.id);
-    expect(ids("kestrel")).toEqual(["c1"]);
+    expect(ids("contoso")).toEqual(["c1"]);
     expect(ids("acme")).toEqual(["c2"]);
     expect(ids("invoice_42")).toEqual(["c2"]);
     expect(ids("100%")).toEqual(["c3"]);
@@ -347,7 +347,7 @@ describe("conversations", () => {
       activeRunId: "r1",
       pendingApprovals: 1,
       // What waits, so two waiting "Refund a duplicate charge" rows can be told apart.
-      pendingConsequence: "Refund $49.00 to Kestrel Analytics",
+      pendingConsequence: "Refund $49.00 to Contoso Ltd",
       totalCostUsd: 0.75,
       createdAt: T0,
       updatedAt: T1,
@@ -363,13 +363,16 @@ describe("conversations", () => {
       runId: "r1",
       conversationId: "c1",
       toolUseId: "toolu_2",
-      descriptor: { ...descriptor(), consequence: "Send the Gmail draft to dana@harborpine.test" },
+      descriptor: {
+        ...descriptor(),
+        consequence: "Send the Gmail draft to jamie@fabrikam.example",
+      },
       requestedAt: T1,
       expiresAt: descriptor().expiresAt,
     });
     expect(conversationSummary(database.db, row)).toMatchObject({
       pendingApprovals: 2,
-      pendingConsequence: "Send the Gmail draft to dana@harborpine.test",
+      pendingConsequence: "Send the Gmail draft to jamie@fabrikam.example",
     });
     settleApproval(database.db, "a1", {
       status: "approved",
@@ -981,7 +984,7 @@ describe("approvals", () => {
       id: "a1",
       toolCallId: "toolu_1",
       integration: "stripe",
-      consequence: "Refund $49.00 to Kestrel Analytics",
+      consequence: "Refund $49.00 to Contoso Ltd",
       descriptor: descriptor(),
       status: "approved",
     });

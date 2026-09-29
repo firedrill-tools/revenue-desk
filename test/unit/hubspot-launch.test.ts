@@ -6,7 +6,6 @@ import {
   buildHubSpotStdioLaunch,
   describeHubSpotStdioLaunch,
   HubSpotLaunchError,
-  parseHubSpotMcpArgs,
   resolveHubSpotMcpServer,
 } from "../../src/integrations/hubspot/launch.js";
 
@@ -28,15 +27,15 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** A throwaway project with a fake @hubspot/mcp-server under node_modules. */
-function fakeProject(packageJson: Record<string, unknown> | null, files: string[] = []): string {
+/** A throwaway project whose node_modules holds a package layout under test (no real code). */
+function projectWith(packageJson: Record<string, unknown> | null, files: string[] = []): string {
   const root = mkdtempSync(join(tmpdir(), "revenue-desk-hubspot-launch-"));
   tempDirs.push(root);
   if (packageJson !== null) {
     const dir = join(root, "node_modules/@hubspot/mcp-server");
     mkdirSync(join(dir, "dist"), { recursive: true });
     writeFileSync(join(dir, "package.json"), JSON.stringify(packageJson));
-    for (const file of files) writeFileSync(join(dir, file), "// fake\n");
+    for (const file of files) writeFileSync(join(dir, file), "// placeholder\n");
   }
   return root;
 }
@@ -52,7 +51,7 @@ describe("resolveHubSpotMcpServer", () => {
   });
 
   it("reports a missing installation", () => {
-    const root = fakeProject(null);
+    const root = projectWith(null);
     expectLaunchError(
       () => resolveHubSpotMcpServer({ resolveFrom: root }),
       "hubspot_mcp_not_installed",
@@ -60,7 +59,7 @@ describe("resolveHubSpotMcpServer", () => {
   });
 
   it("refuses a package with another name", () => {
-    const root = fakeProject({ name: "evil", version: "0.4.0", bin: "dist/index.js" }, [
+    const root = projectWith({ name: "evil", version: "0.4.0", bin: "dist/index.js" }, [
       "dist/index.js",
     ]);
     expectLaunchError(
@@ -70,7 +69,7 @@ describe("resolveHubSpotMcpServer", () => {
   });
 
   it("refuses a bin that escapes the package directory", () => {
-    const root = fakeProject({
+    const root = projectWith({
       name: "@hubspot/mcp-server",
       version: "0.4.0",
       bin: { "mcp-hubspot": "../../../outside.js" },
@@ -83,7 +82,7 @@ describe("resolveHubSpotMcpServer", () => {
   });
 
   it("refuses a bin file that does not exist", () => {
-    const root = fakeProject({
+    const root = projectWith({
       name: "@hubspot/mcp-server",
       version: "0.4.0",
       bin: { "mcp-hubspot": "dist/index.js" },
@@ -128,9 +127,9 @@ describe("buildHubSpotStdioLaunch", () => {
   it("maps apiBaseUrl to BASE_URL_OVERRIDE, keeping a path prefix and dropping trailing slashes", () => {
     const launch = buildHubSpotStdioLaunch({
       accessToken: TOKEN,
-      apiBaseUrl: "http://127.0.0.1:4555/hubspot/",
+      apiBaseUrl: "https://api.hubapi.com/hubspot/",
     });
-    expect(launch.env.BASE_URL_OVERRIDE).toBe("http://127.0.0.1:4555/hubspot");
+    expect(launch.env.BASE_URL_OVERRIDE).toBe("https://api.hubapi.com/hubspot");
     expect(
       buildHubSpotStdioLaunch({ accessToken: TOKEN, apiBaseUrl: "https://api.hubapi.com" }).env
         .BASE_URL_OVERRIDE,
@@ -140,6 +139,8 @@ describe("buildHubSpotStdioLaunch", () => {
   it.each([
     "not a url",
     "ftp://127.0.0.1/",
+    "http://127.0.0.1:4555/",
+    "http://api.hubapi.com",
     "https://user:pass@example.test",
     "https://example.test/?q=1",
     "https://example.test/#x",
@@ -169,35 +170,7 @@ describe("buildHubSpotStdioLaunch", () => {
     }
   });
 
-  it("uses a command override verbatim, without resolving the package", () => {
-    const empty = fakeProject(null);
-    const launch = buildHubSpotStdioLaunch({
-      accessToken: TOKEN,
-      command: "/opt/fake/bin/node",
-      args: ["--import", "tsx", "test/support/fake-hubspot.ts"],
-      resolveFrom: empty,
-    });
-    expect(launch).toEqual({
-      command: "/opt/fake/bin/node",
-      args: ["--import", "tsx", "test/support/fake-hubspot.ts"],
-      env: {
-        PRIVATE_APP_ACCESS_TOKEN: TOKEN,
-        DOTENV_CONFIG_PATH: devNull,
-        DOTENV_CONFIG_QUIET: "true",
-      },
-      source: { kind: "override" },
-    });
-  });
-
-  it("rejects arguments without a command, a blank command and a relative execPath", () => {
-    expectLaunchError(
-      () => buildHubSpotStdioLaunch({ accessToken: TOKEN, args: ["x"] }),
-      "hubspot_mcp_invalid_override",
-    );
-    expectLaunchError(
-      () => buildHubSpotStdioLaunch({ accessToken: TOKEN, command: "  " }),
-      "hubspot_mcp_invalid_override",
-    );
+  it("rejects a relative execPath", () => {
     expectLaunchError(
       () => buildHubSpotStdioLaunch({ accessToken: TOKEN, execPath: "node" }),
       "hubspot_mcp_invalid_override",
@@ -205,7 +178,7 @@ describe("buildHubSpotStdioLaunch", () => {
   });
 
   it("refuses a version outside 0.4.x instead of launching an unknown tool surface", () => {
-    const root = fakeProject(
+    const root = projectWith(
       { name: "@hubspot/mcp-server", version: "0.5.0", bin: { "mcp-hubspot": "dist/index.js" } },
       ["dist/index.js"],
     );
@@ -216,7 +189,7 @@ describe("buildHubSpotStdioLaunch", () => {
   });
 
   it("accepts another 0.4.x patch release", () => {
-    const root = fakeProject(
+    const root = projectWith(
       { name: "@hubspot/mcp-server", version: "0.4.7", bin: { "mcp-hubspot": "dist/index.js" } },
       ["dist/index.js"],
     );
@@ -230,7 +203,7 @@ describe("describeHubSpotStdioLaunch", () => {
   it("lists environment names without values", () => {
     const launch = buildHubSpotStdioLaunch({
       accessToken: TOKEN,
-      apiBaseUrl: "http://127.0.0.1:1",
+      apiBaseUrl: "https://api.hubapi.com",
     });
     const description = describeHubSpotStdioLaunch(launch);
     expect(description.envKeys).toEqual([
@@ -240,17 +213,5 @@ describe("describeHubSpotStdioLaunch", () => {
       "PRIVATE_APP_ACCESS_TOKEN",
     ]);
     expect(JSON.stringify(description)).not.toContain(TOKEN);
-  });
-});
-
-describe("parseHubSpotMcpArgs", () => {
-  it("parses a JSON array of strings and treats blank as unset", () => {
-    expect(parseHubSpotMcpArgs('["a","--b"]')).toEqual(["a", "--b"]);
-    expect(parseHubSpotMcpArgs(undefined)).toBeUndefined();
-    expect(parseHubSpotMcpArgs("  ")).toBeUndefined();
-  });
-
-  it.each(['"a"', "[1]", "{}", "[a]"])("rejects %s", (raw) => {
-    expectLaunchError(() => parseHubSpotMcpArgs(raw), "hubspot_mcp_invalid_override");
   });
 });

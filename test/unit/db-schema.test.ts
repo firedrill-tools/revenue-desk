@@ -237,7 +237,7 @@ describe("schema constraints", () => {
         .values({ ...call, id: "t2", toolUseId: "toolu_1", integration: "stripe" })
         .run(),
     ).toThrow(/UNIQUE constraint failed/);
-    // Another run may repeat a tool_use id (a scripted model does).
+    // Another run may repeat a tool_use id (a replayed transcript can).
     db.insert(toolCalls)
       .values({ ...call, id: "t2", runId: "r2", toolUseId: "toolu_1", integration: "stripe" })
       .run();
@@ -272,14 +272,14 @@ describe("schema constraints", () => {
         integration: "stripe",
         actionClass: "financial",
         operation: "stripe.refunds.create",
-        consequence: "Refund $49.00 to Kestrel Analytics",
+        consequence: "Refund $49.00 to Contoso Ltd",
         descriptorJson: {
           actionClass: "financial",
           integration: "stripe",
           connectionKind: "api",
           operation: "stripe.refunds.create",
           title: "Refund charge in Stripe",
-          consequence: "Refund $49.00 to Kestrel Analytics",
+          consequence: "Refund $49.00 to Contoso Ltd",
           facts: [{ label: "Amount", value: "$49.00 USD" }],
           amount: { amountMinor: 4900, currency: "USD" },
           expiresAt: NOW,

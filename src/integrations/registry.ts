@@ -65,7 +65,7 @@ export type Integrations = {
 
 /**
  * One definition per integration, keyed by id: the production Integrations,
- * or a test's fakes. Everything below reads definitions through it.
+ * or a unit test's stubs. Everything below reads definitions through it.
  */
 export type IntegrationSet = { readonly [I in IntegrationId]: IntegrationDefinition<I> };
 
@@ -127,7 +127,7 @@ export const PROFILES: { readonly [I in IntegrationId]: ToolProfile<I> } = {
   slack: SLACK_PROFILE,
 };
 
-/** Every profile's tool names, e.g. for fixtures and fakes. */
+/** Every profile's tool names. */
 export const PROFILE_ALLOWLISTS: ProfileAllowlists = {
   gmail: Object.keys(GMAIL_PROFILE.tools),
   google_calendar: Object.keys(GOOGLE_CALENDAR_PROFILE.tools),

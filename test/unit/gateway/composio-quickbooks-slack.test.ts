@@ -1,13 +1,24 @@
 // QuickBooks and Slack through the gateway's Composio path, with the
 // production integrations (profiles, classifiers, input rules, run memory)
-// and the captured Composio schemas served by a local MCP upstream in place
-// of the Composio session MCP. Proves that one session serves both toolkits
-// under their own servers, that a call's result reaches the run memory
-// before the next call is classified, and that the input rules reject a bad
-// call before any policy.
+// and the captured Composio schemas. The session's MCP endpoint is replaced
+// by a minimal MCP server in memory, local to this file, that lists those
+// captured tools and answers two reads with the smallest result shape
+// Composio's output schemas allow. Proves that one session serves both
+// toolkits under their own servers, that a call's result reaches the run
+// memory before the next call is classified, and that the input rules reject
+// a bad call before any policy. The real toolkits are exercised by
+// `pnpm test:live` once they are connected.
 
 import { readFileSync } from "node:fs";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  CallToolRequestSchema,
+  type CallToolResult,
+  ListToolsRequestSchema,
+  type Tool,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   COMPOSIO_TOOLKIT_OF,
@@ -15,49 +26,85 @@ import {
   DEFAULT_POLICY,
 } from "../../../src/contracts/integration.js";
 import type { IntegrationCatalog } from "../../../src/gateway/catalog.js";
+import type { UpstreamConnector } from "../../../src/gateway/mcp-proxy.js";
 import { openRunGateway, type RunGateway } from "../../../src/gateway/run-gateway.js";
 import { createIntegrations } from "../../../src/integrations/registry.js";
 import { plansWith, TEST_SETTINGS } from "../../helpers/agent-fixtures.js";
 import { callWithMeta, connectClient } from "../../helpers/mcp-client.js";
-import { startHttpUpstream, type UpstreamToolFixture } from "../../support/upstream-mcp.js";
-
-const TOKEN = "composio-session-token-0123456789";
 
 const surface = JSON.parse(
   readFileSync(new URL("../../fixtures/surfaces/composio-direct.json", import.meta.url), "utf8"),
 ) as { toolkits: Record<string, { tools: (Tool & { catalog?: unknown })[] }> };
 
-/** A captured Composio tool with the data Composio would answer inside `data`. */
-function captured(name: string, reply: () => unknown): UpstreamToolFixture {
+/** A captured Composio tool, without the catalog metadata the capture adds. */
+function captured(name: string): Tool {
   for (const toolkit of Object.values(surface.toolkits)) {
     const found = toolkit.tools.find((tool) => tool.name === name);
     if (found !== undefined) {
       const { catalog: _catalog, ...tool } = found;
-      return { tool, reply: () => ({ successful: true, data: reply(), error: null }) };
+      return tool;
     }
   }
   throw new Error(`${name} is not in the captured surface`);
 }
 
-const TOOLS: readonly UpstreamToolFixture[] = [
-  captured("QUICKBOOKS_QUERY_INVOICES", () => ({
+const TOOLS: readonly Tool[] = [
+  captured("QUICKBOOKS_QUERY_INVOICES"),
+  captured("QUICKBOOKS_CREATE_PAYMENT"),
+  captured("SLACK_FIND_CHANNELS"),
+  captured("SLACK_SEND_MESSAGE"),
+];
+
+/** The `data` of the two reads the tests call, in Composio's result envelope. */
+const READ_RESULTS: Readonly<Record<string, unknown>> = {
+  QUICKBOOKS_QUERY_INVOICES: {
     Invoice: [
       {
         Id: "151",
         DocNumber: "1051",
         TotalAmt: 1980,
         Balance: 1980,
-        CustomerRef: { value: "63", name: "Meridian Labs" },
+        CustomerRef: { value: "63", name: "Initech" },
       },
     ],
-  })),
-  captured("QUICKBOOKS_CREATE_PAYMENT", () => ({ Id: "90", TotalAmt: "1980.00" })),
-  captured("SLACK_FIND_CHANNELS", () => ({
+  },
+  SLACK_FIND_CHANNELS: {
     ok: true,
     channels: [{ id: "C0BILLING01", name: "billing", is_ext_shared: false }],
-  })),
-  captured("SLACK_SEND_MESSAGE", () => ({ ok: true, channel: "C0BILLING01", ts: "1.2" })),
-];
+  },
+};
+
+/** Serves TOOLS in memory; any call other than the two reads is an error. */
+const connectInMemory: UpstreamConnector = async () => {
+  const server = new Server(
+    { name: "composio", version: "1.0.0" },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [...TOOLS] }));
+  server.setRequestHandler(CallToolRequestSchema, (request): CallToolResult => {
+    const data = READ_RESULTS[request.params.name];
+    if (data === undefined) {
+      return { isError: true, content: [{ type: "text", text: "not called in this test" }] };
+    }
+    const text = JSON.stringify({ successful: true, data, error: null });
+    return { content: [{ type: "text", text }] };
+  });
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverSide);
+  const client = new Client({ name: "revenue-desk-gateway", version: "1.0.0" });
+  await client.connect(clientSide);
+  const listed = await client.listTools();
+  return {
+    client,
+    tools: listed.tools,
+    instructions: undefined,
+    stderrTail: () => "",
+    close: async () => {
+      await client.close();
+      await server.close();
+    },
+  };
+};
 
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -81,19 +128,11 @@ function connection<I extends "quickbooks" | "slack">(integration: I): ComposioC
 }
 
 async function openGateway(): Promise<{ gateway: RunGateway; toolkits: readonly string[][] }> {
-  const upstream = await startHttpUpstream({ token: TOKEN, tools: TOOLS, name: "composio" });
-  cleanups.push(() => upstream.close());
   const toolkits: string[][] = [];
   const connector = () => ({
     upstream: async (requested: readonly string[]) => {
       toolkits.push([...requested]);
-      return {
-        config: {
-          transport: "http" as const,
-          url: upstream.url,
-          headers: { Authorization: `Bearer ${TOKEN}` },
-        },
-      };
+      return { config: { transport: "http" as const, url: "memory://composio/mcp" } };
     },
   });
   const production = createIntegrations();
@@ -108,6 +147,7 @@ async function openGateway(): Promise<{ gateway: RunGateway; toolkits: readonly 
     settings: TEST_SETTINGS,
     policy: DEFAULT_POLICY,
     signal: new AbortController().signal,
+    connectUpstream: connectInMemory,
     plans: plansWith([
       { integration: "quickbooks", status: "available", connection: connection("quickbooks") },
       { integration: "slack", status: "available", connection: connection("slack") },
@@ -167,7 +207,7 @@ describe("QuickBooks and Slack through the Composio session", () => {
     expect(payment.classify(input)).toMatchObject({
       actionClass: "financial",
       details: {
-        consequence: "Record a $1,980.00 payment from Meridian Labs against invoice 1051",
+        consequence: "Record a $1,980.00 payment from Initech against invoice 1051",
         amount: { amountMinor: 198_000, currency: "USD" },
       },
     });

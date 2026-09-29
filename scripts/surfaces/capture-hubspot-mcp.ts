@@ -24,7 +24,7 @@ import {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const DENY_MARKER = "[deny-network] blocked";
-// Obviously fake and never valid for HubSpot; 0.4.0 only requires a non-empty value.
+// A dummy token, never valid for HubSpot; 0.4.0 only requires a non-empty value.
 const DUMMY_TOKEN = "revenue-desk-surface-capture-not-a-token";
 
 async function main(): Promise<void> {

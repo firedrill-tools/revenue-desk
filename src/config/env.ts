@@ -3,9 +3,9 @@
 // loadAgentEnv() reads an environment record once (process.env by default,
 // or the record a caller already merged with its DOTENV_PATH file) into an
 // immutable AgentEnv, applying ENV_DEFAULTS. It validates the model and
-// runtime values it owns and the AGENT_SANDBOX loopback rule. Integration
-// sections hold raw configuration: IntegrationDefinition.resolve() decides
-// whether an integration is configured, not_configured or invalid.
+// runtime values it owns. Integration sections hold raw configuration:
+// IntegrationDefinition.resolve() decides whether an integration is
+// configured, not_configured or invalid.
 //
 // Problems name the variable and the rule, never the value. Secrets become
 // SecretValue at once. Blank values count as unset. Nothing here mutates the
@@ -27,7 +27,6 @@ import {
 } from "../contracts/env.js";
 import type { PolicyOverrides } from "../contracts/integration.js";
 import { parsePolicyOverrides } from "../policy/engine.js";
-import { isLoopbackUrl } from "./loopback.js";
 import { secretValue } from "./secret.js";
 
 /** Environment variables as strings; unset and blank are the same. */
@@ -105,27 +104,6 @@ class Reader {
     if (match === undefined) this.problem(name, `must be one of ${allowed.join(", ")}.`);
     return match ?? null;
   }
-
-  httpUrl(name: EnvVarName): string | null {
-    const value = this.text(name);
-    if (value === null) return null;
-    let parsed: URL;
-    try {
-      parsed = new URL(value);
-    } catch {
-      this.problem(name, "must be an absolute http or https URL.");
-      return null;
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      this.problem(name, "must be an absolute http or https URL.");
-      return null;
-    }
-    if (parsed.username !== "" || parsed.password !== "") {
-      this.problem(name, "must not contain credentials.");
-      return null;
-    }
-    return value;
-  }
 }
 
 function validCalendarDate(value: string): boolean {
@@ -148,56 +126,6 @@ function readPolicy(reader: Reader): PolicyOverrides {
     return {};
   }
   return parsed.overrides;
-}
-
-function readHubSpotCommand(reader: Reader): AgentEnv["hubspot"]["command"] {
-  const command = reader.text("HUBSPOT_MCP_COMMAND");
-  const rawArgs = reader.text("HUBSPOT_MCP_ARGS");
-  if (command === null) {
-    if (rawArgs !== null) reader.problem("HUBSPOT_MCP_ARGS", "requires HUBSPOT_MCP_COMMAND.");
-    return null;
-  }
-  if (rawArgs === null) return { command, args: [] };
-  let args: unknown;
-  try {
-    args = JSON.parse(rawArgs);
-  } catch {
-    args = undefined;
-  }
-  if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
-    reader.problem("HUBSPOT_MCP_ARGS", "must be a JSON array of strings.");
-    return null;
-  }
-  return { command, args };
-}
-
-/**
- * The AGENT_SANDBOX rule: every integration endpoint that would be used must
- * be loopback. The model endpoint is checked only when ANTHROPIC_BASE_URL is
- * set: the sandbox demo may run the real model (by explicit choice), which
- * leaves it unset.
- */
-export function sandboxEndpointProblems(env: AgentEnv): ConfigProblem[] {
-  const problems: ConfigProblem[] = [];
-  const require = (variable: EnvVarName, url: string | null) => {
-    if (url === null || !isLoopbackUrl(url)) {
-      problems.push({
-        variable,
-        message:
-          "AGENT_SANDBOX=1 requires a loopback endpoint (127.0.0.1, localhost or [::1]) for every configured integration.",
-      });
-    }
-  };
-  if (env.model.baseUrl !== null) require("ANTHROPIC_BASE_URL", env.model.baseUrl);
-  if (env.composio.apiKey !== null || env.composio.userId !== null) {
-    require("COMPOSIO_BASE_URL", env.composio.baseUrl);
-  }
-  if (env.hubspot.mcpUrl !== null) require("HUBSPOT_MCP_URL", env.hubspot.mcpUrl);
-  else if (env.hubspot.accessToken !== null && env.hubspot.command === null) {
-    require("HUBSPOT_API_BASE_URL", env.hubspot.apiBaseUrl);
-  }
-  if (env.stripe.secretKey !== null) require("STRIPE_API_BASE_URL", env.stripe.apiBaseUrl);
-  return problems;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -226,7 +154,6 @@ export function loadAgentEnv(
   const env: AgentEnv = {
     model: {
       apiKey: reader.secret("ANTHROPIC_API_KEY"),
-      baseUrl: reader.httpUrl("ANTHROPIC_BASE_URL"),
       model: reader.text("AGENT_MODEL") ?? ENV_DEFAULTS.AGENT_MODEL,
       effort,
       thinkingDisplay: reader.oneOf("AGENT_THINKING_DISPLAY", THINKING_DISPLAYS),
@@ -247,7 +174,6 @@ export function loadAgentEnv(
         1_000,
         7 * 24 * 60 * 60 * 1_000,
       ),
-      sandbox: reader.flag("AGENT_SANDBOX"),
       dotenvPath: reader.text("DOTENV_PATH"),
     },
     passthrough: {
@@ -266,7 +192,6 @@ export function loadAgentEnv(
       apiBaseUrl: reader.text("HUBSPOT_API_BASE_URL"),
       mcpUrl: reader.text("HUBSPOT_MCP_URL"),
       mcpToken: reader.secret("HUBSPOT_MCP_TOKEN"),
-      command: readHubSpotCommand(reader),
     },
     stripe: {
       secretKey: reader.secret("STRIPE_SECRET_KEY"),
@@ -277,7 +202,6 @@ export function loadAgentEnv(
   };
 
   const problems = [...reader.problems];
-  if (env.runtime.sandbox) problems.push(...sandboxEndpointProblems(env));
   if (problems.length > 0) return { ok: false, problems };
   return { ok: true, env: deepFreeze(env) };
 }

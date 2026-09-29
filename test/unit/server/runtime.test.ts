@@ -15,11 +15,11 @@ import { readSettings } from "../../../src/db/repos/settings.js";
 import { type RunningServer, SERVER_HOST, startServer } from "../../../src/server/runtime.js";
 import {
   cleanupAll,
-  fakeIntegrations,
   GONE_OWNER,
   heldScript,
   refundDescriptor,
-  scriptedCore,
+  stubCore,
+  stubIntegrations,
   tempStateDir,
   testEnv,
   testRedact,
@@ -71,10 +71,10 @@ describe("startServer", () => {
     previous.close();
 
     const logs: string[] = [];
-    const integrations = fakeIntegrations({ configuration: { stripe: "configured" } });
+    const integrations = stubIntegrations({ configuration: { stripe: "configured" } });
     const server = await startServer({
       env: testEnv(stateDir),
-      runTurn: scriptedCore(heldScript().script).runTurn,
+      runTurn: stubCore(heldScript().script).runTurn,
       integrations: integrations.definitions,
       redact: testRedact,
       version: "9.9.9",
@@ -117,11 +117,11 @@ describe("startServer", () => {
 
   it("stops active runs as a shutdown when it closes", async () => {
     const held = heldScript();
-    const core = scriptedCore(held.script);
+    const core = stubCore(held.script);
     const server = await startServer({
       env: testEnv(tempStateDir()),
       runTurn: core.runTurn,
-      integrations: fakeIntegrations().definitions,
+      integrations: stubIntegrations().definitions,
       redact: testRedact,
       version: "9.9.9",
       log: () => {},

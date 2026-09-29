@@ -36,7 +36,6 @@ const stdioMcp: StdioTransport = {
   transport: "stdio",
   accessToken: secret(TOKEN),
   apiBaseUrl: null,
-  command: null,
 };
 
 const stdio: HubSpotConnection = {
@@ -308,43 +307,34 @@ describe("resolveHubSpot", () => {
     });
   });
 
-  it("resolves the stdio server with an optional API base URL and command override", () => {
+  it("resolves the stdio server with an optional https API base URL", () => {
     expect(resolveHubSpot(testEnv({ hubspot: { accessToken: secret(TOKEN) } }))).toMatchObject({
       status: "configured",
       connection: {
         kind: "mcp",
         endpointLabel: "api.hubspot.com",
-        mcp: { transport: "stdio", apiBaseUrl: null, command: null },
+        mcp: { transport: "stdio", apiBaseUrl: null },
       },
     });
-    const faked = resolveHubSpot(
-      testEnv({
-        hubspot: {
-          accessToken: secret(TOKEN),
-          apiBaseUrl: "http://127.0.0.1:4440/hs/",
-          command: { command: "node", args: ["fake.js"] },
-        },
-      }),
+    const based = resolveHubSpot(
+      testEnv({ hubspot: { accessToken: secret(TOKEN), apiBaseUrl: "https://api.hubapi.com/" } }),
     );
-    expect(faked).toMatchObject({
+    expect(based).toMatchObject({
       status: "configured",
       connection: {
-        endpointLabel: "127.0.0.1:4440",
-        mcp: {
-          transport: "stdio",
-          apiBaseUrl: "http://127.0.0.1:4440/hs",
-          command: { command: "node", args: ["fake.js"] },
-        },
+        endpointLabel: "api.hubapi.com",
+        mcp: { transport: "stdio", apiBaseUrl: "https://api.hubapi.com" },
       },
     });
-    expect(
-      resolveHubSpot(
-        testEnv({ hubspot: { accessToken: secret(TOKEN), apiBaseUrl: "http://hubspot.example" } }),
-      ),
-    ).toMatchObject({
-      status: "invalid",
-      problems: [{ variable: "HUBSPOT_API_BASE_URL" }],
-    });
+    // Plain http is refused, on loopback too: the API base URL is a HubSpot host.
+    for (const apiBaseUrl of ["http://hubspot.example", "http://127.0.0.1:4440/hs/"]) {
+      expect(
+        resolveHubSpot(testEnv({ hubspot: { accessToken: secret(TOKEN), apiBaseUrl } })),
+      ).toMatchObject({
+        status: "invalid",
+        problems: [{ variable: "HUBSPOT_API_BASE_URL" }],
+      });
+    }
   });
 
   it("prefers HUBSPOT_MCP_URL, with or without a token", () => {
@@ -386,7 +376,7 @@ describe("HubSpot upstream configuration", () => {
   it("launches the pinned server over stdio with an explicit environment", () => {
     const config = hubspotUpstreamConfig({
       ...stdio,
-      mcp: { ...stdioMcp, apiBaseUrl: "http://127.0.0.1:4440/hs" },
+      mcp: { ...stdioMcp, apiBaseUrl: "https://api.hubapi.com/hs" },
     });
     expect(config.transport).toBe("stdio");
     if (config.transport !== "stdio") return;
@@ -397,17 +387,12 @@ describe("HubSpot upstream configuration", () => {
       PRIVATE_APP_ACCESS_TOKEN: TOKEN,
       DOTENV_CONFIG_PATH: devNull,
       DOTENV_CONFIG_QUIET: "true",
-      BASE_URL_OVERRIDE: "http://127.0.0.1:4440/hs",
+      BASE_URL_OVERRIDE: "https://api.hubapi.com/hs",
     });
     expect(config.cwd).toMatch(/mcp-server$/);
   });
 
-  it("uses a command override for tests and a Bearer header for HTTP servers", () => {
-    const override = hubspotUpstreamConfig({
-      ...stdio,
-      mcp: { ...stdioMcp, command: { command: "node", args: ["fake.js"] } },
-    });
-    expect(override).toMatchObject({ transport: "stdio", command: "node", args: ["fake.js"] });
+  it("sends a Bearer header to an HTTP server when a token is set", () => {
     const http: UpstreamConfig = hubspotUpstreamConfig({
       ...stdio,
       mcp: { transport: "http", url: "https://mcp.example.test/mcp", token: secret("mcp-token") },
@@ -441,8 +426,8 @@ describe("HubSpot upstream configuration", () => {
   });
 });
 
-describe("probeHubSpot with a fake upstream", () => {
-  function fakeUpstream(tools: readonly string[], result: CallToolResult | Error) {
+describe("probeHubSpot with a stub upstream", () => {
+  function stubUpstream(tools: readonly string[], result: CallToolResult | Error) {
     const calls: string[] = [];
     let closed = 0;
     const client = {
@@ -468,23 +453,23 @@ describe("probeHubSpot with a fake upstream", () => {
   const text = (value: string): CallToolResult => ({ content: [{ type: "text", text: value }] });
 
   it("is connected when every profile tool is listed and the token works", async () => {
-    const fake = fakeUpstream(
+    const stub = stubUpstream(
       [...HUBSPOT_TOOL_NAMES, "hubspot-get-workflow"],
       text('- Token Info: {"userId": 1, "hubId": 20211234}'),
     );
     await expect(
-      probeHubSpot(stdio, new AbortController().signal, { connect: fake.connect }),
+      probeHubSpot(stdio, new AbortController().signal, { connect: stub.connect }),
     ).resolves.toEqual({
       state: "connected",
       detail: "HubSpot MCP server lists all 10 profile tools; the token is accepted.",
       accountHint: "…234",
     });
-    expect(fake.calls).toEqual(["hubspot-get-user-details"]);
-    expect(fake.closed()).toBe(1);
+    expect(stub.calls).toEqual(["hubspot-get-user-details"]);
+    expect(stub.closed()).toBe(1);
   });
 
   it("reports a rejected token as needs_auth, without echoing it", async () => {
-    const fake = fakeUpstream(HUBSPOT_TOOL_NAMES, {
+    const stub = stubUpstream(HUBSPOT_TOOL_NAMES, {
       isError: true,
       content: [
         {
@@ -494,15 +479,15 @@ describe("probeHubSpot with a fake upstream", () => {
       ],
     });
     const result = await probeHubSpot(stdio, new AbortController().signal, {
-      connect: fake.connect,
+      connect: stub.connect,
     });
     expect(result.state).toBe("needs_auth");
     expect(JSON.stringify(result)).not.toContain(TOKEN);
-    expect(fake.closed()).toBe(1);
+    expect(stub.closed()).toBe(1);
   });
 
   it("reports a server that does not match the profile, other failures and launch problems as error", async () => {
-    const partial = fakeUpstream(HUBSPOT_TOOL_NAMES.slice(0, 8), text("{}"));
+    const partial = stubUpstream(HUBSPOT_TOOL_NAMES.slice(0, 8), text("{}"));
     await expect(
       probeHubSpot(stdio, new AbortController().signal, { connect: partial.connect }),
     ).resolves.toMatchObject({
@@ -513,7 +498,7 @@ describe("probeHubSpot with a fake upstream", () => {
     });
     expect(partial.calls).toEqual([]);
 
-    const failing = fakeUpstream(HUBSPOT_TOOL_NAMES, {
+    const failing = stubUpstream(HUBSPOT_TOOL_NAMES, {
       isError: true,
       content: [{ type: "text", text: `HubSpot API Error: 500 oops ${TOKEN}` }],
     });
@@ -538,10 +523,11 @@ describe("probeHubSpot with a fake upstream", () => {
       probeHubSpot(stdio, new AbortController().signal, { connect: unreachable }),
     ).resolves.toMatchObject({ state: "error" });
 
-    const badLaunch = { ...stdio, mcp: { ...stdioMcp, command: { command: "  ", args: [] } } };
+    // Refused before anything is started, so nothing is contacted.
+    const badLaunch = { ...stdio, mcp: { ...stdioMcp, apiBaseUrl: "http://api.hubapi.com" } };
     await expect(probeHubSpot(badLaunch, new AbortController().signal)).resolves.toMatchObject({
       state: "error",
-      detail: "HubSpot MCP command is empty",
+      detail: "HubSpot API base URL must use https",
     });
   });
 

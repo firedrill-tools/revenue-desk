@@ -161,9 +161,9 @@ export type ConversationSummary = {
   readonly activeRunId: string | null;
   readonly pendingApprovals: number;
   /**
-   * The newest pending approval's consequence ("Refund $490.00 to Harbor &
-   * Pine Outfitters"), so two waiting conversations with the same title can
-   * be told apart; null when nothing waits.
+   * The newest pending approval's consequence (for example a refund with its
+   * amount and customer), so two waiting conversations with the same title
+   * can be told apart; null when nothing waits.
    */
   readonly pendingConsequence: string | null;
   readonly totalCostUsd: number;
@@ -291,8 +291,6 @@ export type SessionInfo = {
   /** Echo in CSRF_HEADER on every mutating request. Never readable cross-origin. */
   readonly csrfToken: string;
   readonly version: string;
-  /** "sandbox" only when started by pnpm dev:sandbox; the UI shows "Local sandbox". */
-  readonly mode: "normal" | "sandbox";
   readonly model: string;
   readonly effort: AgentEffort;
   readonly businessDate: string;

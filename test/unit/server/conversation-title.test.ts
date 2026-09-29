@@ -11,8 +11,8 @@ import {
 
 describe("titleFromMessage", () => {
   it("takes the first sentence of the first line with words, whitespace collapsed", () => {
-    expect(titleFromMessage("\n\n  Why was   Kestrel\tcharged twice?\nMore context")).toBe(
-      "Why was Kestrel charged twice?",
+    expect(titleFromMessage("\n\n  Why was   Contoso\tcharged twice?\nMore context")).toBe(
+      "Why was Contoso charged twice?",
     );
     expect(titleFromMessage("Chase overdue invoices. Then post to #billing.")).toBe(
       "Chase overdue invoices",
@@ -33,9 +33,9 @@ describe("titleFromMessage", () => {
 
   it("shortens after the last whole word within about 60 characters", () => {
     const title = titleFromMessage(
-      "Dana Whitfield from Harbor & Pine says they were charged twice in September. Look into it.",
+      "Jamie Lee from Fabrikam Workshops says they were charged twice in September. Look into it.",
     );
-    expect(title).toBe("Dana Whitfield from Harbor & Pine says they were charged…");
+    expect(title).toBe("Jamie Lee from Fabrikam Workshops says they were charged…");
     expect([...title].length).toBeLessThanOrEqual(MAX_DERIVED_TITLE);
     // A word that ends exactly at the limit is kept whole.
     const words = "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm";

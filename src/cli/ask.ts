@@ -49,7 +49,7 @@ import { exitCodeFor, type RunFinished, RunSummaryBuilder, type SummarySeed } fr
 
 export type AskContext = {
   readonly io: CliIo;
-  /** Loads the real (or, in tests, fake) agent core, integrations and database. */
+  /** Loads the agent core, integrations and database (src/cli/services.ts). */
   loadServices(): Promise<AskServices>;
   /** How long a stopped run may take to deliver its own run.finished. */
   readonly stopGraceMs: number;

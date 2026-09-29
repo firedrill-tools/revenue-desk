@@ -15,11 +15,11 @@ import {
 } from "../../../web/src/lib/settings-form.js";
 
 const SETTINGS: WorkspaceSettings = {
-  companyName: "Kestrel Analytics, Inc.",
+  companyName: "Contoso Ltd.",
   agentName: "Revenue Desk",
-  senderName: "Maya Lindqvist",
+  senderName: "Maya Chen",
   emailSignature: "Maya",
-  internalEmailDomains: ["kestrel.test"],
+  internalEmailDomains: ["contoso.example"],
   notifySlackChannel: "#billing",
   allowedSlackChannels: ["#billing"],
   internalCalendarIds: [],
@@ -32,8 +32,10 @@ const SETTINGS: WorkspaceSettings = {
 
 describe("list entries", () => {
   it("normalises domains", () => {
-    expect(normalizeDomain("  @Kestrel.TEST. ")).toEqual({ value: "kestrel.test" });
-    expect(normalizeDomain("mail.harbor-pine.test")).toEqual({ value: "mail.harbor-pine.test" });
+    expect(normalizeDomain("  @Contoso.EXAMPLE. ")).toEqual({ value: "contoso.example" });
+    expect(normalizeDomain("mail.fabrikam-inc.example")).toEqual({
+      value: "mail.fabrikam-inc.example",
+    });
     expect("error" in normalizeDomain("not a domain")).toBe(true);
     expect("error" in normalizeDomain("-bad.test")).toBe(true);
   });
@@ -83,7 +85,7 @@ describe("settingsPatch", () => {
   it("sends only changed fields, normalised", () => {
     const draft = {
       ...draftFromSettings(SETTINGS),
-      companyName: "  Kestrel Analytics  ",
+      companyName: "  Contoso Ltd  ",
       currency: "eur",
       notifySlackChannel: "revenue",
       allowedSlackChannels: ["#billing", "#revenue"],
@@ -92,7 +94,7 @@ describe("settingsPatch", () => {
       defaultEffort: "high",
     };
     expect(settingsPatch(SETTINGS, draft)).toEqual({
-      companyName: "Kestrel Analytics",
+      companyName: "Contoso Ltd",
       currency: "EUR",
       notifySlackChannel: "#revenue",
       allowedSlackChannels: ["#billing", "#revenue"],

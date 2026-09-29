@@ -8,7 +8,7 @@ import {
   HUBSPOT_DEFAULT_API_BASE_URL,
   OWNERS_TOOL,
 } from "../../../src/integrations/hubspot/owners.js";
-import { callContext, mockFetch, type Reply, SETTINGS, secret } from "./helpers.js";
+import { callContext, type Reply, SETTINGS, secret, stubFetch } from "./helpers.js";
 
 const TOKEN = "pat-na1-owners-unit-token";
 
@@ -17,7 +17,7 @@ const stdio = (apiBaseUrl: string | null): HubSpotConnection => ({
   kind: "mcp",
   profile: "hubspot-mcp-0.4",
   endpointLabel: "hubspot.test",
-  mcp: { transport: "stdio", accessToken: secret(TOKEN), apiBaseUrl, command: null },
+  mcp: { transport: "stdio", accessToken: secret(TOKEN), apiBaseUrl },
 });
 
 const JORDAN = {
@@ -35,7 +35,7 @@ function setup(
   reply: (index: number) => Reply,
   apiBaseUrl: string | null = "http://127.0.0.1:4455/hs",
 ) {
-  const mock = mockFetch((_, index) => reply(index));
+  const mock = stubFetch((_, index) => reply(index));
   const [tool] = createHubSpotApiTools(stdio(apiBaseUrl), mock.http);
   if (tool === undefined) throw new Error("no owners tool");
   const run = (args: JsonObject) => tool.run(args, callContext());

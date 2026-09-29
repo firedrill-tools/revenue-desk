@@ -18,7 +18,7 @@ let counter = 0;
 function request(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   counter += 1;
   const descriptor: ApprovalDescriptor = {
-    consequence: "Refund $49.00 to Kestrel Analytics",
+    consequence: "Refund $49.00 to Contoso Ltd",
     facts: [{ label: "Charge", value: "ch_2" }],
     amount: { amountMinor: 4900, currency: "USD" },
     actionClass: "financial",

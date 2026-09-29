@@ -188,7 +188,7 @@ export type ToolProfile<I extends IntegrationId = IntegrationId> = {
   readonly tools: { readonly [name: string]: ToolSpec };
 };
 
-/** The tool names of every profile, e.g. for fixtures and fakes. */
+/** The tool names of every profile. */
 export type ProfileAllowlists = { readonly [I in IntegrationId]: readonly string[] };
 
 /** A tool as registered for a run: the profile entry plus where it lives. */
@@ -214,7 +214,7 @@ export type ApprovalFact = { readonly label: string; readonly value: string };
 
 /** What an approval card shows about an action. */
 export type ActionDetails = {
-  /** The exact consequence, e.g. "Refund $49.00 to Kestrel Analytics". */
+  /** The exact consequence, e.g. "Refund $49.00 to Acme Inc on Stripe charge ch_…". */
   readonly consequence: string;
   readonly facts: readonly ApprovalFact[];
   readonly amount?: Money;
@@ -338,8 +338,6 @@ export type HubSpotMcpTransport =
       readonly accessToken: SecretValue;
       /** BASE_URL_OVERRIDE for the child; null keeps the server's default. */
       readonly apiBaseUrl: string | null;
-      /** HUBSPOT_MCP_COMMAND / HUBSPOT_MCP_ARGS (tests); null launches the bundled server. */
-      readonly command: { readonly command: string; readonly args: readonly string[] } | null;
     };
 
 export type HubSpotConnection = ConnectionBase<"hubspot"> & {

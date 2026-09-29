@@ -153,35 +153,11 @@ it starts; until its check finishes, a connection shows as not checked yet.
 |---|---|
 | `pnpm dev` | The API server on 127.0.0.1:4320 (`tsx watch`) and Vite on http://127.0.0.1:4321, which proxies `/api` to the server. Open port 4321; port 4320 answers only the API (and a page pointing to 4321). |
 | `pnpm build && pnpm start` | Builds the web app into `dist/web` and the server and CLI into `dist/`, then serves the API and the built app on http://127.0.0.1:4320. |
-| `pnpm dev:sandbox` | The labelled demo: see [Sandbox demo](#sandbox-demo). |
 | `node dist/cli/main.js ask "…"` | The headless CLI (after `pnpm build`); see [Command line](#command-line). |
 
 The server listens on 127.0.0.1 only; `PORT` changes the port. The server and
 the CLI share the state directory (`AGENT_STATE_DIR`, default `./data`), so
 CLI conversations and runs appear in the app with source `cli`.
-
-### Sandbox demo
-
-`pnpm dev:sandbox` starts local fake Stripe, HubSpot MCP and Composio
-services on loopback ports, then the server and the app with
-`AGENT_SANDBOX=1` and every integration pointed at the fakes through the
-ordinary base-URL variables. The fakes hold one fictional company on `*.test`
-domains. The Composio fake runs Gmail and Google Calendar; it lists
-QuickBooks and Slack but has no data for them, so they show as needing
-sign-in and the scripted jobs say what they could not do without them. The model is the scripted test model, which plays the five jobs by
-prompt, unless `ANTHROPIC_API_KEY` is set in the environment of the script
-(it is never read from a file) or you pass `--model real`; `--model scripted`
-forces the scripted one. The app bar and the Connections screen show "Local
-sandbox" for the whole session, and the server refuses to start if any
-configured endpoint is not loopback. Sandbox data never replaces missing
-configuration in normal mode.
-
-Options: `--hubspot stdio|http` (the pinned vendor server over stdio, or the
-fake's HTTP MCP endpoint), `--state-dir <dir>` (keep the database between
-runs; the default is a temporary directory), `--no-web` (API only) and
-`--built`, which runs the production build (`pnpm build` first): the server
-then serves the built app itself on http://127.0.0.1:4320 and Vite is not
-started.
 
 ## Command line
 
@@ -247,7 +223,7 @@ continues after the output is written.
 Examples:
 
 ```sh
-node dist/cli/main.js ask "Why was Harbor & Pine Outfitters charged twice?"
+node dist/cli/main.js ask "Which customers were charged twice this month?"
 node dist/cli/main.js ask --json "List invoices more than 60 days overdue" | jq .toolCalls
 echo "Post this week's revenue digest to Slack" | node dist/cli/main.js ask -
 node dist/cli/main.js ask --conversation <id> "Draft the reminder emails"
@@ -280,18 +256,18 @@ and the class's mode decides what happens:
   run.
 - **Approval cards** show the exact consequence and its facts, naming
   records by what the systems returned earlier in the same run rather than
-  by internal ids. Examples from the sandbox:
-  - "Refund $490.00 to Harbor & Pine Outfitters on Stripe charge ch_…", with
+  by internal ids. For example:
+  - "Refund $490.00 to <customer> on Stripe charge ch_…", with
     the charge's amount, date and description, what was already refunded
     (this run's refunds included), and a "Check" line first when the refund
     is more than what is left;
-  - "Send the Gmail draft to dana@harborpine.test", with To, Cc, Bcc,
+  - "Send the Gmail draft to <recipient>", with To, Cc, Bcc,
     subject, thread and body of the draft the run created (a draft the run
     did not create says its recipients could not be confirmed);
-  - "Record a $1,980.00 payment from Meridian Labs against invoice 1051",
+  - "Record a $1,980.00 payment from <customer> against invoice 1051",
     flagged when it exceeds the invoice's open balance or the invoice
     belongs to another customer;
-  - "Create a $18,000.00 invoice for Solstice Energy Cooperative (not sent)",
+  - "Create a $18,000.00 invoice for <customer> (not sent)",
     with each line, the due date and the billing email;
   - a calendar event with its weekday and time in the event's zone, who is
     outside the company, who is removed, and whom Google emails;
@@ -394,7 +370,7 @@ Tables:
 | `tool_calls` | The action log: one row per tool call with its connection type, operation, class, decision, redacted input, compacted output, error, the provider's HTTP status (successes included) and, for a Stripe or QuickBooks write, the idempotency key it sent. |
 | `approvals` | One row per approval request with its facts, status, who decided, reason and expiry. |
 
-Migrations (`src/db/migrations`, `0000` to `0005`) are applied when the
+Migrations (`src/db/migrations`, `0000` to `0006`) are applied when the
 server or the CLI opens the database.
 `pnpm db:seed` writes the default settings and policies (it is idempotent).
 There is no sample data: conversations, runs and tool calls exist only after
@@ -414,95 +390,131 @@ generated migration in `src/db/migrations`.
 
 ## Testing
 
+Nothing in the tests stands in for a service, the model or a business.
+Unit tests check Revenue Desk's own logic with the smallest input it needs;
+everything that talks to a service or to the model runs against the real one,
+in the opt-in live suites.
+
 | Command | What it covers | Tests (2026-09-29) |
 |---|---|---|
-| `pnpm test` | Vitest unit and integration tests, no network: contracts and schema, configuration, clients, classifiers and the cards they build, input rules, policy, redaction, the event-to-stream mapping, security guards, database repositories and run recovery, the web client's libraries, the CLI, QuickBooks and Slack against the captured Composio schemas, and the real Claude Agent SDK against a scripted Messages API on loopback with local fakes of Stripe, HubSpot and Composio (which runs Gmail and Calendar and reports QuickBooks and Slack not connected). The full-stack suite (`test/integration/e2e`) plays the jobs, decisions, stops and failures over the HTTP API of the real server and checks the database rows against what happened in each fake. | 1,130 |
-| `pnpm test:e2e-cli` | The built CLI (`dist/cli/main.js`) as a separate process against the fakes and the scripted model: human and `--json` output, the run shown in the app, exit codes, SIGTERM, a CLI killed with SIGKILL not blocking its conversation, four runs at once with separate state directories, the shebang. Run `pnpm build` first. | 8 |
-| `pnpm test:e2e` | Playwright UI tests of the built app in the sandbox (started by the suite on port 4320, which must be free) in the installed Google Chrome, on desktop and phone viewports: the jobs with approvals, reload, Stop and keyboard-only approval; conversation names; the inspector; every connection state, Check and Connect; a policy block; no request to another host; waiting approvals outside their conversation; a failed approved refund; no model key; dark mode, reduced motion, 44px touch targets, the rail, Runs and table alignment. Each checks accessibility (axe) and, on the phone, that the page never scrolls sideways. Run `pnpm build` first. | 49, plus 1 skipped (touch targets run on the phone only) |
+| `pnpm test` | Vitest, no network and no model: configuration and redaction; contracts and the database schema; the policy engine and the approval gate; the classifiers and the approval cards they build; input rules and schema validation (every captured HubSpot and Composio schema compiles); Stripe form encoding and error normalisation; the event-to-stream mapping; security guards; database repositories, run ownership and recovery on a real SQLite file; the web client's libraries; the CLI's arguments, settings and output. Where a unit needs a caller or an answer, its test gives it the smallest one in place: an in-process stub of the agent core or of an integration definition, a `fetch` that answers what the test says, or a minimal MCP server in memory. None is shared between tests or copies a vendor's service. It also starts the real `@hubspot/mcp-server` over stdio (with the network blocked), the real Vite dev server, and the CLI's run start against a real database. | 878 in 77 files |
+| `pnpm test:cli` | The built CLI (`dist/cli/main.js`) as a separate process, for everything it decides before a model call: the shebang, help and version; usage errors (exit 2, nothing on stdout); configuration errors (exit 3, one `--json` summary, no database written); `DOTENV_PATH`; an unknown conversation and one whose run belongs to another live process; SIGTERM, SIGINT and `--timeout-ms` before a run starts; no key in any output. Run `pnpm build` first. | 17 |
+| `pnpm test:e2e` | Playwright against the built app with the real configuration (`DOTENV_PATH`, default `.env`) and a fresh database in the system temp directory, in the installed Google Chrome on desktop and phone viewports. The new chat; every screen in light and dark; phone touch targets; reduced motion; the conversation rail; Runs; that the browser loads nothing from another host; Connections showing exactly the states the server checked, with Connect and Check where they apply (Check is clicked; Connect is not, because it starts a real sign-in); Settings saved and read back; and a second, unconfigured server that says it cannot run and offers no job. Every screen is checked with axe, and on the phone for sideways scrolling. No test starts a job. Run `pnpm build` first; port 4320 must be free. | 27, plus 1 skipped (touch targets run on the phone only) |
 | `pnpm typecheck`, `pnpm lint` | TypeScript and Biome. | |
-| `pnpm verify` | Typecheck, lint, `pnpm test`, the build, then the CLI and UI end-to-end suites. | |
-| `LIVE_E2E=1 pnpm test:live` | Opt-in, against real services, read-only, and not part of `pnpm verify`: see [Live tests](#live-tests). | 1 live, 11 offline |
+| `pnpm verify` | Typecheck, lint, `pnpm test`, the build, `pnpm test:cli` and `pnpm test:e2e`. | |
+| `LIVE_E2E=1 pnpm test:live` | The real model and the real accounts, read-only: see [Live tests](#live-tests). | 16 |
+| `LIVE_E2E=1 pnpm test:live:ui` | The chat in the browser with the real model and the connected Gmail. | 2 |
+| `LIVE_E2E=1 LIVE_E2E_WRITES=1 pnpm test:live:writes` | Real changes, on test-safe targets only. | 5 |
 
 `pnpm build` warns that the chat screen's JavaScript chunk is larger than
 500 kB; the build succeeds.
 
 ### Live tests
 
-Both refuse to start unless `LIVE_E2E=1` is set, because they call the real
-Anthropic API and cost money. Keys are read at run time from files outside
-the tracked tree and are never printed.
+The live suites are not part of `pnpm verify`. Each refuses to start without
+`LIVE_E2E=1` (and the write suite also without `LIVE_E2E_WRITES=1`), because
+they call the real Anthropic API, cost money and use real accounts.
 
-- **`LIVE_E2E=1 pnpm test:live`** runs `test/live`. The Gmail test asks the
-  headless CLI (from source) to summarise the three most recent emails in the
-  connected inbox, with every class except `read` denied (so the Composio
-  session is read-only and offers no write tool) and
-  `AGENT_MAX_BUDGET_USD=0.50`. It first checks the connections read-only, as
-  **Check** does, then asserts that the run completed, only Gmail reads ran,
-  nothing was drafted, sent or labelled, and the cost stayed under the cap.
-  `COMPOSIO_API_KEY` and `COMPOSIO_USER_ID` come from `DOTENV_PATH` (default
-  `../gmail-agent/.env`), `ANTHROPIC_API_KEY` from `LIVE_MODEL_ENV` (default
-  `.env`, which git ignores). The reply holds real email, so the test prints
-  only counts and tool names; set `LIVE_OUT_DIR` to a directory outside the
-  repository to keep the run's database and summary there for review.
-  `test/live` also checks the live script's approval rules offline.
-- **`LIVE_E2E=1 node --import tsx scripts/live-e2e.ts --out <dir>`** plays the
-  five jobs with the real model against the sandbox fakes, through the HTTP
-  API with the production build (`pnpm build` first), then three headless CLI
-  runs. QuickBooks and Slack have no local fake, so they are not connected
-  in these runs. Each approval is decided
-  by the job's rules (the correct refund, invoice or call is approved; a wrong
-  charge, an unrequested payment or refund, an email that promises a refund
-  nobody approved, or an email the user asked only to draft is denied), and
-  every card is checked against the call's input. The
-  key comes from `--key-file` (default `.env`). Transcripts, the database and
-  a summary go to `<dir>`, which must be outside the repository; spend is kept
-  in `<dir>/spend.json`, and a run that could take it past `--budget-usd`
-  (default 8) is not started. Each run may cost up to its cap: $2 per server
-  turn and $1 per CLI run by default, or `--run-cap-usd` (at most 2), which
-  the script enforces through `AGENT_MAX_BUDGET_USD` and `--max-budget-usd`
-  so more runs fit a small budget. `--jobs j1,j3` and `--no-cli` narrow the
-  run. The script checks that nothing it wrote contains a key.
+- **Configuration.** Keys come from the file `DOTENV_PATH` names (default this
+  repository's `.env`, which git ignores) and are never printed. Each run
+  gets an explicit environment with the model key and the variables of the
+  systems under test only.
+- **What is not connected is skipped, never faked.** Before each test the
+  connections are checked read-only, as **Check** does. A system that is not
+  connected or not configured is skipped with the reason and what to do, for
+  example "Slack needs sign-in (needs_auth): Slack is not connected. Click
+  Connect in Connections to sign in." or "HubSpot is not configured: set
+  HUBSPOT_ACCESS_TOKEN in …/.env."
+- **Real data stays out of the output.** Tests print states, counts, tool
+  names and cost only. Set `LIVE_OUT_DIR` to a directory outside the
+  repository to keep each run's state directory, summary and stderr (and the
+  browser suite's artifacts) there for review; otherwise they go to a
+  temporary directory.
 
-Real-SDK tests run the Claude CLI with `ANTHROPIC_BASE_URL` pointing at the
-scripted API and proxies that refuse any non-loopback connection. They fail,
-rather than skip, when the SDK's native binary is missing.
+Read-only (`LIVE_E2E=1 pnpm test:live`, `test/live`):
+
+- `connections.test.ts`, without the model: every integration's check ends
+  in a definite state, and each connected integration answers one read
+  through the product's run gateway, the same MCP servers the model calls
+  (Gmail labels, Calendar events, QuickBooks company info, Slack channels,
+  HubSpot account details, Stripe balance). A read-only policy opens a
+  read-only Composio session, which offers no write tool.
+- `read-only.test.ts`: for each of the six systems, the real model answers a
+  question from the headless CLI with every class except `read` denied and
+  a $0.50 cap. It asserts that the run completed, at least one read of that
+  system ran, nothing else ran, the database agrees and the cost stayed
+  under the cap.
+- `cli.test.ts`, the model without any integration: the reply on stdout and
+  the status line on stderr; `--json` continuing the conversation; the app
+  listing both runs as the CLI's; SIGTERM mid-run (exit 130 within 2
+  seconds); and a CLI killed with SIGKILL, whose conversation the next
+  invocation recovers.
+
+In the browser (`LIVE_E2E=1 pnpm test:live:ui`,
+`test/e2e-ui/chat.live.spec.ts`, desktop): a read-only question answered
+from Gmail (tool rows, the answer, the inspector, the run's cost, and on the
+server only reads); and an approval card for a Gmail draft (internal writes
+set to ask) that names the recipient and is denied with the keyboard alone,
+so nothing is created. This suite keeps no trace, screenshot or HTML report.
+
+Writes (`LIVE_E2E=1 LIVE_E2E_WRITES=1 pnpm test:live:writes`,
+`test/live/writes`), each on a test-safe target only, removing what it made
+where the API allows:
+
+- **Stripe**, test mode only (an `sk_test_` or `rk_test_` key that Stripe
+  reports as test mode): the test creates a customer and a PaymentIntent
+  confirmed with `pm_card_visa`; the agent refunds that charge with financial
+  actions set to auto; the test checks there is exactly one refund, sent with
+  an idempotency key, then deletes the customer (Stripe keeps test payments
+  and refunds).
+- **Gmail**: a draft to the connected account's own address, with drafts
+  allowed and nothing outbound (the session offers no send tool); deleted
+  afterwards.
+- **Slack**: one post to the channel named in `LIVE_SLACK_TEST_CHANNEL`, the
+  workspace's only allowlisted channel; deleted afterwards. Skipped when the
+  variable is not set.
+- **HubSpot**: only when HubSpot reports the account as a developer test
+  account or a sandbox; a task, deleted afterwards.
+- **QuickBooks**: only when the connected account uses
+  `https://sandbox-quickbooks.api.intuit.com`; a customer, which stays in the
+  sandbox company (QuickBooks does not delete customers).
+
+Last run (2026-09-29): `pnpm test:live` 8 passed and 8 skipped (Google
+Calendar, QuickBooks and Slack need sign-in; HubSpot is not configured), with
+Gmail and Stripe read by the model; `pnpm test:live:ui` 2 passed. The write
+suite has not been run.
 
 ## Configuration
 
 Configuration comes only from environment variables, read once at start
-(`.env.example` lists them in this order). Variables with scope "tests,
-sandbox" exist for tests and the sandbox demo; leave them unset otherwise.
+(`.env.example` lists them in this order).
 
 <!-- env-table:start: generated from src/contracts/env.ts by test/unit/readme.test.ts -->
-| Variable | Group | Secret | Scope | Meaning |
-|---|---|---|---|---|
-| `ANTHROPIC_API_KEY` | Model | yes | product | Required to run the agent. |
-| `ANTHROPIC_BASE_URL` | Model |  | tests, sandbox | Messages API base URL; tests point it at the local scripted API. |
-| `AGENT_MODEL` | Model |  | product | Model id. Default claude-sonnet-5. No silent fallback. |
-| `AGENT_EFFORT` | Model |  | product | low, medium, high, xhigh or max. Default medium. |
-| `AGENT_THINKING_DISPLAY` | Model |  | product | summarized or omitted. Default summarized in the UI, omitted in the CLI. |
-| `AGENT_MAX_TURNS` | Model |  | product | Turn limit per run. Default 30. |
-| `AGENT_MAX_BUDGET_USD` | Model |  | product | Spend limit per run in USD. Default 2.00. |
-| `PORT` | Runtime |  | product | API server port, always bound to 127.0.0.1. Default 4320. |
-| `AGENT_STATE_DIR` | Runtime |  | product | Database, work directory and Claude config. Default ./data (git-ignored). |
-| `AGENT_POLICY` | Runtime |  | product | JSON approval modes per action class, e.g. {"financial":"deny"}. Locks them. |
-| `AGENT_BUSINESS_DATE` | Runtime |  | product | YYYY-MM-DD the agent treats as today. Default: today in the workspace time zone. |
-| `AGENT_APPROVAL_TIMEOUT_MS` | Runtime |  | product | How long a pending approval waits before it is denied. Default 900000. |
-| `AGENT_SANDBOX` | Runtime |  | tests, sandbox | Set to 1 only by pnpm dev:sandbox: labels the app 'Local sandbox' and refuses any non-loopback endpoint. |
-| `DOTENV_PATH` | Runtime |  | product | An env file outside the repository to load at start. |
-| `COMPOSIO_API_KEY` | Composio (Gmail, Google Calendar, QuickBooks, Slack) | yes | product | Composio project key. Gmail, Google Calendar, QuickBooks and Slack need it. |
-| `COMPOSIO_USER_ID` | Composio (Gmail, Google Calendar, QuickBooks, Slack) |  | product | The Composio user whose connections are used. No default in code. |
-| `COMPOSIO_BASE_URL` | Composio (Gmail, Google Calendar, QuickBooks, Slack) |  | product | Composio API base URL. Default https://backend.composio.dev. |
-| `HUBSPOT_ACCESS_TOKEN` | HubSpot | yes | product | Private-app token for the bundled @hubspot/mcp-server over stdio. |
-| `HUBSPOT_API_BASE_URL` | HubSpot |  | product | HubSpot API base URL for the stdio server (BASE_URL_OVERRIDE). Default: the server's. |
-| `HUBSPOT_MCP_URL` | HubSpot |  | product | Any Streamable HTTP MCP server for HubSpot; replaces the stdio server when set. |
-| `HUBSPOT_MCP_TOKEN` | HubSpot | yes | product | Bearer token for HUBSPOT_MCP_URL. |
-| `HUBSPOT_MCP_COMMAND` | HubSpot |  | tests, sandbox | Replaces the stdio command (tests). |
-| `HUBSPOT_MCP_ARGS` | HubSpot |  | tests, sandbox | JSON array of arguments for HUBSPOT_MCP_COMMAND (tests). |
-| `STRIPE_SECRET_KEY` | Stripe | yes | product | sk_test_/rk_test_ key. Live keys are refused unless ALLOW_LIVE_STRIPE=1. |
-| `ALLOW_LIVE_STRIPE` | Stripe |  | product | Set to 1 to accept a live Stripe key. |
-| `STRIPE_API_BASE_URL` | Stripe |  | product | Default https://api.stripe.com. A path prefix is kept. |
-| `STRIPE_API_VERSION` | Stripe |  | product | Stripe-Version header. Default: the account's version. |
+| Variable | Group | Secret | Meaning |
+|---|---|---|---|
+| `ANTHROPIC_API_KEY` | Model | yes | Required to run the agent. |
+| `AGENT_MODEL` | Model |  | Model id. Default claude-sonnet-5. No silent fallback. |
+| `AGENT_EFFORT` | Model |  | low, medium, high, xhigh or max. Default medium. |
+| `AGENT_THINKING_DISPLAY` | Model |  | summarized or omitted. Default summarized in the UI, omitted in the CLI. |
+| `AGENT_MAX_TURNS` | Model |  | Turn limit per run. Default 30. |
+| `AGENT_MAX_BUDGET_USD` | Model |  | Spend limit per run in USD. Default 2.00. |
+| `PORT` | Runtime |  | API server port, always bound to 127.0.0.1. Default 4320. |
+| `AGENT_STATE_DIR` | Runtime |  | Database, work directory and Claude config. Default ./data (git-ignored). |
+| `AGENT_POLICY` | Runtime |  | JSON approval modes per action class, e.g. {"financial":"deny"}. Locks them. |
+| `AGENT_BUSINESS_DATE` | Runtime |  | YYYY-MM-DD the agent treats as today. Default: today in the workspace time zone. |
+| `AGENT_APPROVAL_TIMEOUT_MS` | Runtime |  | How long a pending approval waits before it is denied. Default 900000. |
+| `DOTENV_PATH` | Runtime |  | An env file outside the repository to load at start. |
+| `COMPOSIO_API_KEY` | Composio (Gmail, Google Calendar, QuickBooks, Slack) | yes | Composio project key. Gmail, Google Calendar, QuickBooks and Slack need it. |
+| `COMPOSIO_USER_ID` | Composio (Gmail, Google Calendar, QuickBooks, Slack) |  | The Composio user whose connections are used. No default in code. |
+| `COMPOSIO_BASE_URL` | Composio (Gmail, Google Calendar, QuickBooks, Slack) |  | Composio API base URL. Default https://backend.composio.dev. |
+| `HUBSPOT_ACCESS_TOKEN` | HubSpot | yes | Private-app token for the bundled @hubspot/mcp-server over stdio. |
+| `HUBSPOT_API_BASE_URL` | HubSpot |  | HubSpot API base URL (https) for the stdio server (BASE_URL_OVERRIDE). Default: the server's. |
+| `HUBSPOT_MCP_URL` | HubSpot |  | Any Streamable HTTP MCP server for HubSpot (https, or http on this machine); replaces the stdio server when set. |
+| `HUBSPOT_MCP_TOKEN` | HubSpot | yes | Bearer token for HUBSPOT_MCP_URL. |
+| `STRIPE_SECRET_KEY` | Stripe | yes | sk_test_/rk_test_ key. Live keys are refused unless ALLOW_LIVE_STRIPE=1. |
+| `ALLOW_LIVE_STRIPE` | Stripe |  | Set to 1 to accept a live Stripe key. |
+| `STRIPE_API_BASE_URL` | Stripe |  | Default https://api.stripe.com. HTTPS only; a path prefix is kept. |
+| `STRIPE_API_VERSION` | Stripe |  | Stripe-Version header. Default: the account's version. |
 <!-- env-table:end -->
 
 `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and `CLAUDE_CODE_MAX_RETRIES` are
@@ -530,7 +542,8 @@ passed to the Claude CLI child process when set, and are otherwise unused.
 | HubSpot owners show as ids | The owners lookup needs the stdio server (`HUBSPOT_ACCESS_TOKEN`) and the token's `crm.objects.owners.read` scope; with `HUBSPOT_MCP_URL` it is not offered. |
 | Dates or aging are off by a day | The business date is today in the Settings time zone. Set the time zone, or `AGENT_BUSINESS_DATE` for a fixed date. |
 | "address already in use" on 4320 or 4321 | Another process holds the port. Stop it, or set `PORT` (the Vite proxy expects 4320). |
-| Tests fail with "No native Claude Agent SDK binary" | Optional dependencies were skipped. Run `pnpm install` again without `--no-optional`. |
+| Every run fails before the model answers | One cause: optional dependencies were skipped, and the Claude Agent SDK's native binary comes from an optional per-platform package. Run `pnpm install` again without `--no-optional`. |
 | `pnpm test:e2e` cannot find a browser, or port 4320 is in use | The suite uses the installed Google Chrome; stop any Revenue Desk server on 4320 first (it never reuses one), and run `pnpm build` before the suite. |
+| A live test is skipped | Its system is not connected or not configured; the skip names it and what to do (Connect in Connections, or the variable to set). |
 
 This repository is private and local-only. It has no licence file yet.

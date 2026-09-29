@@ -23,30 +23,30 @@ import { SETTINGS } from "./helpers.js";
 /** Composio's wrapper around a tool's data. */
 const ok = (data: JsonValue): JsonObject => ({ successful: true, data, error: null });
 
-const MERIDIAN_INVOICE: JsonObject = {
+const INITECH_INVOICE: JsonObject = {
   Id: "151",
   DocNumber: "1051",
   TxnDate: "2026-08-10",
   DueDate: "2026-09-09",
   TotalAmt: 1980,
   Balance: 1980,
-  CustomerRef: { value: "63", name: "Meridian Labs" },
-  BillEmail: { Address: "ap@meridian.test" },
+  CustomerRef: { value: "63", name: "Initech" },
+  BillEmail: { Address: "ap@initech.example" },
   CurrencyRef: { value: "USD", name: "United States Dollar" },
 };
 
-const COPPERLEAF_INVOICE: JsonObject = {
+const HOOLI_INVOICE: JsonObject = {
   Id: "143",
   DocNumber: "1043",
   DueDate: "2026-07-20",
   TotalAmt: 3600,
   Balance: 3600,
-  CustomerRef: { value: "61", name: "Copperleaf Studios" },
+  CustomerRef: { value: "61", name: "Hooli" },
 };
 
 /** QUICKBOOKS_QUERY_INVOICES answers `data.Invoice[]`. */
 const INVOICES = ok({
-  Invoice: [MERIDIAN_INVOICE, COPPERLEAF_INVOICE],
+  Invoice: [INITECH_INVOICE, HOOLI_INVOICE],
   startPosition: 1,
   maxResults: 2,
   totalCount: 2,
@@ -82,14 +82,12 @@ describe("QuickBooks records from Composio results", () => {
       { Id: "68" },
     ]);
     // QUICKBOOKS_READ_INVOICE / CREATE_INVOICE / CREATE_PAYMENT: the record itself.
-    expect(entitiesOf(ok(MERIDIAN_INVOICE), "Invoice", { single: true })).toEqual([
-      MERIDIAN_INVOICE,
-    ]);
-    expect(entitiesOf(ok(MERIDIAN_INVOICE), "Invoice")).toEqual([]);
+    expect(entitiesOf(ok(INITECH_INVOICE), "Invoice", { single: true })).toEqual([INITECH_INVOICE]);
+    expect(entitiesOf(ok(INITECH_INVOICE), "Invoice")).toEqual([]);
     // Bare data (no wrapper) is read the same way; a failed call yields nothing.
-    expect(entitiesOf({ Invoice: [MERIDIAN_INVOICE] }, "Invoice")).toHaveLength(1);
+    expect(entitiesOf({ Invoice: [INITECH_INVOICE] }, "Invoice")).toHaveLength(1);
     expect(
-      entitiesOf({ successful: false, data: { Invoice: [MERIDIAN_INVOICE] } }, "Invoice"),
+      entitiesOf({ successful: false, data: { Invoice: [INITECH_INVOICE] } }, "Invoice"),
     ).toEqual([]);
     expect(entitiesOf("Invoice 1051", "Invoice")).toEqual([]);
   });
@@ -98,22 +96,22 @@ describe("QuickBooks records from Composio results", () => {
     expect(
       customerFrom({
         Id: "63",
-        DisplayName: "Meridian Labs",
-        PrimaryEmailAddr: { Address: "ap@meridian.test" },
+        DisplayName: "Initech",
+        PrimaryEmailAddr: { Address: "ap@initech.example" },
       }),
-    ).toEqual({ id: "63", displayName: "Meridian Labs", email: "ap@meridian.test" });
+    ).toEqual({ id: "63", displayName: "Initech", email: "ap@initech.example" });
     expect(customerFrom({ Id: "70", GivenName: "Marco", FamilyName: "Bellini" })).toEqual({
       id: "70",
       displayName: "Marco Bellini",
       email: null,
     });
     expect(customerFrom({ DisplayName: "No id" })).toBeNull();
-    expect(invoiceFrom(MERIDIAN_INVOICE, "EUR")).toEqual({
+    expect(invoiceFrom(INITECH_INVOICE, "EUR")).toEqual({
       id: "151",
       docNumber: "1051",
       customerId: "63",
-      customerName: "Meridian Labs",
-      billEmail: "ap@meridian.test",
+      customerName: "Initech",
+      billEmail: "ap@initech.example",
       totalMinor: 198_000,
       balanceMinor: 198_000,
       currency: "USD",
@@ -128,7 +126,7 @@ describe("QuickBooks records from Composio results", () => {
         {
           Id: "90",
           TotalAmt: "1980.00",
-          CustomerRef: { value: "63", name: "Meridian Labs" },
+          CustomerRef: { value: "63", name: "Initech" },
           Line: [
             { Amount: "1500", LinkedTxn: [{ TxnId: "151", TxnType: "Invoice" }] },
             { Amount: 480, LinkedTxn: [{ TxnId: "12", TxnType: "CreditMemo" }] },
@@ -139,7 +137,7 @@ describe("QuickBooks records from Composio results", () => {
     ).toEqual({
       id: "90",
       customerId: "63",
-      customerName: "Meridian Labs",
+      customerName: "Initech",
       totalMinor: 198_000,
       currency: null,
       applied: [{ invoiceId: "151", amountMinor: 150_000 }],
@@ -164,11 +162,11 @@ describe("classifyQuickBooks", () => {
       classifyQuickBooks(
         "QUICKBOOKS_CREATE_CUSTOMER",
         {
-          display_name: "Solstice Energy Cooperative",
-          CompanyName: "Solstice Energy Cooperative",
+          display_name: "Umbrella Corporation",
+          CompanyName: "Umbrella Corporation",
           given_name: "Marco",
           family_name: "Bellini",
-          PrimaryEmailAddr: { Address: "marco@solstice.test" },
+          PrimaryEmailAddr: { Address: "marco@umbrella.example" },
         },
         SETTINGS,
       ),
@@ -177,10 +175,10 @@ describe("classifyQuickBooks", () => {
       operation: "quickbooks.customers.create",
       title: "Create customer in QuickBooks",
       details: {
-        consequence: 'Create QuickBooks customer "Solstice Energy Cooperative"',
+        consequence: 'Create QuickBooks customer "Umbrella Corporation"',
         facts: [
-          { label: "Customer", value: "Solstice Energy Cooperative" },
-          { label: "Email", value: "marco@solstice.test" },
+          { label: "Customer", value: "Umbrella Corporation" },
+          { label: "Email", value: "marco@umbrella.example" },
         ],
       },
     });
@@ -198,7 +196,7 @@ describe("classifyQuickBooks", () => {
     expect(
       classifyQuickBooks(
         "QUICKBOOKS_CREATE_CUSTOMER",
-        { display_name: "Orchard Row", Balance: 1250.5, OpenBalanceDate: "2026-09-01" },
+        { display_name: "Vandelay", Balance: 1250.5, OpenBalanceDate: "2026-09-01" },
         SETTINGS,
       ),
     ).toEqual({
@@ -206,10 +204,9 @@ describe("classifyQuickBooks", () => {
       operation: "quickbooks.customers.create",
       title: "Create customer in QuickBooks",
       details: {
-        consequence:
-          'Create QuickBooks customer "Orchard Row" with an opening balance of $1,250.50',
+        consequence: 'Create QuickBooks customer "Vandelay" with an opening balance of $1,250.50',
         facts: [
-          { label: "Customer", value: "Orchard Row" },
+          { label: "Customer", value: "Vandelay" },
           { label: "Opening balance", value: "$1,250.50" },
           { label: "As of", value: "2026-09-01" },
         ],
@@ -416,12 +413,12 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
       title: "x",
     });
     expect(card.details).toMatchObject({
-      consequence: "Record a $1,980.00 payment from Meridian Labs against invoice 1051",
+      consequence: "Record a $1,980.00 payment from Initech against invoice 1051",
       recordIds: ["63", "151"],
     });
     expect(card.details?.facts).toEqual([
       { label: "Amount", value: "$1,980.00" },
-      { label: "Customer", value: "Meridian Labs (QuickBooks customer 63)" },
+      { label: "Customer", value: "Initech (QuickBooks customer 63)" },
       {
         label: "Applied to",
         value: "$1,980.00 to invoice 1051 (QuickBooks id 151), open balance $1,980.00",
@@ -435,14 +432,14 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
     const memory = new QuickBooksRunMemory(SETTINGS);
     memory.record(
       "QUICKBOOKS_QUERY_CUSTOMERS",
-      { query: "SELECT * FROM Customer WHERE DisplayName LIKE 'Harbor%'" },
-      ok({ QueryResponse: { Customer: [{ Id: "58", DisplayName: "Harbor & Pine Outfitters" }] } }),
+      { query: "SELECT * FROM Customer WHERE DisplayName LIKE 'Fabrikam%'" },
+      ok({ QueryResponse: { Customer: [{ Id: "58", DisplayName: "Fabrikam Inc" }] } }),
       false,
     );
     memory.record(
       "QUICKBOOKS_CREATE_CUSTOMER",
-      { display_name: "Solstice Energy Cooperative" },
-      ok({ Customer: { Id: "68", DisplayName: "Solstice Energy Cooperative" }, time: "t" }),
+      { display_name: "Umbrella Corporation" },
+      ok({ Customer: { Id: "68", DisplayName: "Umbrella Corporation" }, time: "t" }),
       false,
     );
     memory.record(
@@ -450,7 +447,7 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
       { customer_id: "61" },
       ok({
         Id: "61",
-        DisplayName: "Copperleaf Studios",
+        DisplayName: "Hooli",
         PrimaryEmailAddr: { Address: "a@c.test" },
       }),
       false,
@@ -462,14 +459,14 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
         { actionClass: "read", operation: "quickbooks.invoices.create", title: "x" },
       ).details;
     expect(invoice("68")?.consequence).toBe(
-      "Create a $18,000.00 invoice for Solstice Energy Cooperative (not sent)",
+      "Create a $18,000.00 invoice for Umbrella Corporation (not sent)",
     );
     expect(invoice("68")?.facts[0]).toEqual({
       label: "Customer",
-      value: "Solstice Energy Cooperative (QuickBooks customer 68)",
+      value: "Umbrella Corporation (QuickBooks customer 68)",
     });
-    expect(invoice("58")?.consequence).toContain("Harbor & Pine Outfitters");
-    expect(invoice("61")?.consequence).toContain("Copperleaf Studios");
+    expect(invoice("58")?.consequence).toContain("Fabrikam Inc");
+    expect(invoice("61")?.consequence).toContain("Hooli");
     expect(memory.customer("61")?.email).toBe("a@c.test");
   });
 
@@ -488,7 +485,7 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
     expect(card.details?.facts.slice(0, 2)).toEqual([
       {
         label: "Mismatch",
-        value: "invoice 1043 belongs to Copperleaf Studios, not this customer",
+        value: "invoice 1043 belongs to Hooli, not this customer",
       },
       {
         label: "Check",
@@ -508,7 +505,7 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
     memory.record(
       "QUICKBOOKS_QUERY_INVOICES",
       {},
-      { successful: false, data: { Invoice: [MERIDIAN_INVOICE] }, error: "boom" },
+      { successful: false, data: { Invoice: [INITECH_INVOICE] }, error: "boom" },
       false,
     );
     memory.record("QUICKBOOKS_CREATE_PAYMENT", PAYMENT_INPUT, "Unauthorized", true);
@@ -527,7 +524,7 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
 
   it("shows the balance after the run's own payment, so a second one is not a duplicate by accident", () => {
     const memory = new QuickBooksRunMemory(SETTINGS);
-    memory.record("QUICKBOOKS_READ_INVOICE", { invoice_id: "151" }, ok(MERIDIAN_INVOICE), false);
+    memory.record("QUICKBOOKS_READ_INVOICE", { invoice_id: "151" }, ok(INITECH_INVOICE), false);
     // QUICKBOOKS_CREATE_PAYMENT answers the payment itself, amounts as strings.
     memory.record(
       "QUICKBOOKS_CREATE_PAYMENT",
@@ -606,27 +603,27 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
       "QUICKBOOKS_QUERY_PAYMENTS",
       { query: "SELECT * FROM Payment" },
       ok({
-        QueryResponse: { Payment: [{ Id: "80", CustomerRef: { value: "66", name: "Bluefin" } }] },
+        QueryResponse: { Payment: [{ Id: "80", CustomerRef: { value: "66", name: "Soylent" } }] },
       }),
       false,
     );
     memory.record("QUICKBOOKS_QUERY_INVOICES", {}, INVOICES, false);
-    expect(memory.customer("66")?.displayName).toBe("Bluefin");
-    expect(memory.customer("63")?.displayName).toBe("Meridian Labs");
+    expect(memory.customer("66")?.displayName).toBe("Soylent");
+    expect(memory.customer("63")?.displayName).toBe("Initech");
     // A full customer record already known is not replaced by a reference.
     memory.record(
       "QUICKBOOKS_READ_CUSTOMER",
       { customer_id: "61" },
-      ok({ Id: "61", DisplayName: "Copperleaf Studios LLC" }),
+      ok({ Id: "61", DisplayName: "Hooli LLC" }),
       false,
     );
     memory.record("QUICKBOOKS_QUERY_INVOICES", {}, INVOICES, false);
-    expect(memory.customer("61")?.displayName).toBe("Copperleaf Studios LLC");
+    expect(memory.customer("61")?.displayName).toBe("Hooli LLC");
   });
 
   it("keeps what an earlier result said when a later one leaves it out", () => {
     const memory = new QuickBooksRunMemory(SETTINGS);
-    memory.record("QUICKBOOKS_READ_INVOICE", { invoice_id: "151" }, ok(MERIDIAN_INVOICE), false);
+    memory.record("QUICKBOOKS_READ_INVOICE", { invoice_id: "151" }, ok(INITECH_INVOICE), false);
     // QUICKBOOKS_QUERY_INVOICES with a narrow SELECT returns fewer fields.
     memory.record(
       "QUICKBOOKS_QUERY_INVOICES",
@@ -636,7 +633,7 @@ describe("QuickBooks cards with what the run read (QuickBooksRunMemory)", () => 
     );
     expect(memory.invoice("151")).toMatchObject({
       docNumber: "1051",
-      billEmail: "ap@meridian.test",
+      billEmail: "ap@initech.example",
       balanceMinor: 48_000,
       totalMinor: 198_000,
     });

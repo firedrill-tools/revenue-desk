@@ -9,7 +9,7 @@ import {
 import { STRIPE_PROFILE } from "../../../src/integrations/stripe/profile.js";
 import { resolveStripe } from "../../../src/integrations/stripe/resolve.js";
 import { StripeRunMemory } from "../../../src/integrations/stripe/run-memory.js";
-import { mockFetch, SETTINGS, secret, testEnv } from "./helpers.js";
+import { SETTINGS, secret, stubFetch, testEnv } from "./helpers.js";
 
 const stripeEnv = (
   secretKey: string | null,
@@ -31,7 +31,7 @@ describe("resolveStripe", () => {
   it("resolves a test key with the host as the endpoint label", () => {
     const resolution = resolveStripe(
       stripeEnv("sk_test_abc", {
-        apiBaseUrl: "http://127.0.0.1:4410/stripe/",
+        apiBaseUrl: "https://proxy.example/stripe/",
         apiVersion: "2025-09-30.clover",
       }),
     );
@@ -41,9 +41,9 @@ describe("resolveStripe", () => {
       integration: "stripe",
       kind: "api",
       profile: "stripe-api",
-      endpointLabel: "127.0.0.1:4410",
+      endpointLabel: "proxy.example",
       api: {
-        baseUrl: "http://127.0.0.1:4410/stripe",
+        baseUrl: "https://proxy.example/stripe",
         keyMode: "test",
         apiVersion: "2025-09-30.clover",
       },
@@ -70,6 +70,12 @@ describe("resolveStripe", () => {
     expect(resolveStripe(stripeEnv("pk_test_abc"))).toMatchObject({ status: "invalid" });
     expect(
       resolveStripe(stripeEnv("sk_test_abc", { apiBaseUrl: "http://api.stripe.com" })),
+    ).toMatchObject({
+      status: "invalid",
+      problems: [{ variable: "STRIPE_API_BASE_URL" }],
+    });
+    expect(
+      resolveStripe(stripeEnv("sk_test_abc", { apiBaseUrl: "http://127.0.0.1:4410" })),
     ).toMatchObject({
       status: "invalid",
       problems: [{ variable: "STRIPE_API_BASE_URL" }],
@@ -409,7 +415,7 @@ describe("Stripe probe and definition", () => {
   };
 
   it("reads the balance and reports connected", async () => {
-    const mock = mockFetch(() => ({ json: { object: "balance", livemode: false, available: [] } }));
+    const mock = stubFetch(() => ({ json: { object: "balance", livemode: false, available: [] } }));
     await expect(probeStripe(connection, new AbortController().signal, mock.http)).resolves.toEqual(
       {
         state: "connected",
@@ -422,7 +428,7 @@ describe("Stripe probe and definition", () => {
   });
 
   it("reports a rejected key as needs_auth and a mode mismatch or outage as error", async () => {
-    const rejected = mockFetch(() => ({
+    const rejected = stubFetch(() => ({
       status: 401,
       json: {
         error: {
@@ -434,18 +440,18 @@ describe("Stripe probe and definition", () => {
     await expect(
       probeStripe(connection, new AbortController().signal, rejected.http),
     ).resolves.toMatchObject({ state: "needs_auth" });
-    const live = mockFetch(() => ({ json: { livemode: true } }));
+    const live = stubFetch(() => ({ json: { livemode: true } }));
     await expect(
       probeStripe(connection, new AbortController().signal, live.http),
     ).resolves.toMatchObject({ state: "error" });
-    const down = mockFetch(() => ({ status: 503, text: "unavailable" }));
+    const down = stubFetch(() => ({ status: 503, text: "unavailable" }));
     await expect(
       probeStripe(connection, new AbortController().signal, down.http),
     ).resolves.toMatchObject({ state: "error" });
   });
 
   it("builds its tools from a resolved connection", () => {
-    const mock = mockFetch(() => ({ json: {} }));
+    const mock = stubFetch(() => ({ json: {} }));
     const definition = createStripeIntegration({ http: mock.http });
     expect(definition).toMatchObject({
       id: "stripe",

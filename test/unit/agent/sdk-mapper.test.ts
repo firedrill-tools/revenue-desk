@@ -105,8 +105,8 @@ describe("SdkMessageMapper", () => {
       blockStop(0),
       blockStart(1, { type: "text", text: "" }),
       delta(1, { type: "text_delta", text: "Hello " }),
-      delta(1, { type: "text_delta", text: "Dana." }),
-      assistant("msg_1", [{ type: "text", text: "Hello Dana." }]),
+      delta(1, { type: "text_delta", text: "Jamie." }),
+      assistant("msg_1", [{ type: "text", text: "Hello Jamie." }]),
       blockStop(1),
       messageDelta(42),
       messageStop(),
@@ -133,12 +133,12 @@ describe("SdkMessageMapper", () => {
       { type: "reasoning.end", id: "msg_1:0" },
       { type: "text.start", id: "msg_1:1" },
       { type: "text.delta", id: "msg_1:1", delta: "Hello " },
-      { type: "text.delta", id: "msg_1:1", delta: "Dana." },
+      { type: "text.delta", id: "msg_1:1", delta: "Jamie." },
       { type: "text.end", id: "msg_1:1" },
       { type: "step.finish" },
     ]);
     expect(mapper.sessionId).toBe("sess_1");
-    expect(mapper.lastText).toBe("Hello Dana.");
+    expect(mapper.lastText).toBe("Hello Jamie.");
     expect(mapper.modelRequests).toBe(1);
     expect(mapper.streamTokens).toEqual({
       inputTokens: 100,

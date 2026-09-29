@@ -19,15 +19,15 @@ import {
 
 const API_KEY = "ak_test_not_a_real_key_0123456789";
 const USER_ID = "revenue-desk-test-user";
-const MCP_URL = "https://backend.composio.test/tool_router/trs_fake/mcp";
+const MCP_URL = "https://backend.composio.test/tool_router/trs_stub/mcp";
 
-interface FakeSessionOptions {
+interface StubSessionOptions {
   mcp?: Partial<ComposioSessionLike["mcp"]>;
   pages?: Array<{ items: ComposioToolkitState[]; cursor?: string }>;
   redirectUrl?: string | null;
 }
 
-function fakeSession(id: string, options: FakeSessionOptions = {}) {
+function stubSession(id: string, options: StubSessionOptions = {}) {
   const pages = options.pages ?? [{ items: [] }];
   let page = 0;
   const session = {
@@ -39,7 +39,7 @@ function fakeSession(id: string, options: FakeSessionOptions = {}) {
       return result;
     }),
     authorize: vi.fn(async () => ({
-      id: "cr_fake_request",
+      id: "cr_stub_request",
       redirectUrl:
         options.redirectUrl === undefined
           ? "https://connect.composio.test/link/abc"
@@ -49,7 +49,7 @@ function fakeSession(id: string, options: FakeSessionOptions = {}) {
   return session;
 }
 
-function fakeClient(make: (index: number) => ComposioSessionLike | Promise<ComposioSessionLike>) {
+function stubClient(make: (index: number) => ComposioSessionLike | Promise<ComposioSessionLike>) {
   let index = 0;
   const createSession = vi.fn(async (_userId: string, _config: RevenueDeskSessionConfig) => {
     const current = index;
@@ -195,7 +195,7 @@ describe("allowlists and session config", () => {
 
 describe("ComposioSessionManager", () => {
   it("requires an API key and a user id, with no defaults", () => {
-    const { client } = fakeClient((i) => fakeSession(`s${i}`));
+    const { client } = stubClient((i) => stubSession(`s${i}`));
     expect(() => new ComposioSessionManager({ apiKey: API_KEY, userId: "", client })).toThrow(
       /COMPOSIO_USER_ID/,
     );
@@ -205,7 +205,7 @@ describe("ComposioSessionManager", () => {
   });
 
   it("creates one session for the configured user and reuses it", async () => {
-    const { client, createSession } = fakeClient((i) => fakeSession(`s${i}`));
+    const { client, createSession } = stubClient((i) => stubSession(`s${i}`));
     const sessions = manager(client);
     const [a, b] = await Promise.all([sessions.getSession(), sessions.getSession()]);
     const c = await sessions.getSession();
@@ -216,7 +216,7 @@ describe("ComposioSessionManager", () => {
   });
 
   it("uses the selection given at construction", async () => {
-    const { client, createSession } = fakeClient((i) => fakeSession(`s${i}`));
+    const { client, createSession } = stubClient((i) => stubSession(`s${i}`));
     const sessions = new ComposioSessionManager({
       apiKey: API_KEY,
       userId: USER_ID,
@@ -231,7 +231,7 @@ describe("ComposioSessionManager", () => {
   });
 
   it("keeps separate sessions per access level and toolkit set", async () => {
-    const { client, createSession } = fakeClient((i) => fakeSession(`s${i}`));
+    const { client, createSession } = stubClient((i) => stubSession(`s${i}`));
     const sessions = manager(client);
     const draft = await sessions.getSession();
     const outbound = await sessions.getSession({ access: "outbound" });
@@ -242,7 +242,7 @@ describe("ComposioSessionManager", () => {
 
   it("expires cached sessions after the TTL, and on fresh or reset", async () => {
     let now = 1_000;
-    const { client, createSession } = fakeClient((i) => fakeSession(`s${i}`));
+    const { client, createSession } = stubClient((i) => stubSession(`s${i}`));
     const sessions = manager(client, { now: () => now });
     const first = await sessions.getSession();
     now += 29 * 60 * 1000;
@@ -259,9 +259,9 @@ describe("ComposioSessionManager", () => {
 
   it("does not cache a failed creation and never echoes the key", async () => {
     let fail = true;
-    const { client, createSession } = fakeClient((i) => {
+    const { client, createSession } = stubClient((i) => {
       if (fail) throw new Error(`upstream said no for key ${API_KEY}`);
-      return fakeSession(`s${i}`);
+      return stubSession(`s${i}`);
     });
     const sessions = manager(client);
     const error = await sessions.getSession().catch((e: unknown) => e);
@@ -275,7 +275,7 @@ describe("ComposioSessionManager", () => {
   });
 
   it("reports an MCP destination rejection distinctly", async () => {
-    const { client } = fakeClient(() => {
+    const { client } = stubClient(() => {
       const error = new Error("The session MCP endpoint origin does not match the API origin");
       error.name = "ComposioMCPDestinationError";
       throw error;
@@ -284,43 +284,43 @@ describe("ComposioSessionManager", () => {
   });
 
   it("returns the session's MCP endpoint and a loggable description without secrets", async () => {
-    const { client } = fakeClient((i) => fakeSession(`s${i}`));
+    const { client } = stubClient((i) => stubSession(`s${i}`));
     const endpoint = await manager(client).mcpEndpoint();
     expect(endpoint).toEqual({ type: "http", url: MCP_URL, headers: { "x-api-key": API_KEY } });
     const description = describeEndpoint(endpoint);
     expect(description).toEqual({ type: "http", host: "backend.composio.test" });
     expect(JSON.stringify(description)).not.toContain(API_KEY);
-    expect(JSON.stringify(description)).not.toContain("trs_fake");
+    expect(JSON.stringify(description)).not.toContain("trs_stub");
   });
 
   it("returns a copy of the headers", async () => {
-    const session = fakeSession("s0");
-    const { client } = fakeClient(() => session);
+    const session = stubSession("s0");
+    const { client } = stubClient(() => session);
     const endpoint = await manager(client).mcpEndpoint();
     endpoint.headers["x-api-key"] = "changed";
     expect(session.mcp.headers["x-api-key"]).toBe(API_KEY);
   });
 
   it("supports Composio's SSE transport and rejects anything unsafe", async () => {
-    const sse = fakeClient(() => fakeSession("s", { mcp: { type: "sse" } }));
+    const sse = stubClient(() => stubSession("s", { mcp: { type: "sse" } }));
     await expect(manager(sse.client).mcpEndpoint()).resolves.toMatchObject({ type: "sse" });
 
-    const http = fakeClient(() =>
-      fakeSession("s", { mcp: { url: "http://backend.composio.test/mcp" } }),
+    const http = stubClient(() =>
+      stubSession("s", { mcp: { url: "http://backend.composio.test/mcp" } }),
     );
     await expect(manager(http.client).mcpEndpoint()).rejects.toMatchObject({ code: "destination" });
 
-    const bad = fakeClient(() => fakeSession("s", { mcp: { url: "not a url" } }));
+    const bad = stubClient(() => stubSession("s", { mcp: { url: "not a url" } }));
     await expect(manager(bad.client).mcpEndpoint()).rejects.toMatchObject({ code: "destination" });
 
-    const ws = fakeClient(() => fakeSession("s", { mcp: { type: "ws" as never } }));
+    const ws = stubClient(() => stubSession("s", { mcp: { type: "ws" as never } }));
     await expect(manager(ws.client).mcpEndpoint()).rejects.toMatchObject({ code: "upstream" });
   });
 
-  it("accepts a plain-http session endpoint only on loopback behind a loopback base URL", async () => {
-    const loopbackMcp = "http://127.0.0.1:4450/tool_router/trs_fake/mcp";
+  it("refuses a plain-http session endpoint, on loopback too and whatever the base URL", async () => {
+    const loopbackMcp = "http://127.0.0.1:4450/tool_router/trs_stub/mcp";
     const withBase = (baseURL: string | undefined, url: string) => {
-      const { client } = fakeClient(() => fakeSession("s", { mcp: { url } }));
+      const { client } = stubClient(() => stubSession("s", { mcp: { url } }));
       return new ComposioSessionManager({
         apiKey: API_KEY,
         userId: USER_ID,
@@ -328,21 +328,12 @@ describe("ComposioSessionManager", () => {
         ...(baseURL === undefined ? {} : { baseURL }),
       }).mcpEndpoint();
     };
-    await expect(withBase("http://127.0.0.1:4450", loopbackMcp)).resolves.toMatchObject({
-      url: loopbackMcp,
-    });
-    await expect(withBase("http://localhost:4450/api", loopbackMcp)).resolves.toMatchObject({
-      type: "http",
-    });
-    // A loopback base URL does not allow plain http to another host.
+    for (const baseURL of ["http://127.0.0.1:4450", "https://backend.composio.dev", undefined]) {
+      await expect(withBase(baseURL, loopbackMcp)).rejects.toMatchObject({ code: "destination" });
+    }
     await expect(
       withBase("http://127.0.0.1:4450", "http://backend.composio.test/mcp"),
     ).rejects.toMatchObject({ code: "destination" });
-    // The production base URL never allows plain http, even to loopback.
-    await expect(withBase("https://backend.composio.dev", loopbackMcp)).rejects.toMatchObject({
-      code: "destination",
-    });
-    await expect(withBase(undefined, loopbackMcp)).rejects.toMatchObject({ code: "destination" });
   });
 });
 
@@ -454,7 +445,7 @@ describe("connection status", () => {
   });
 
   it("reads every page for the session's toolkits and never starts a sign-in", async () => {
-    const session = fakeSession("s0", {
+    const session = stubSession("s0", {
       pages: [
         { items: [active], cursor: "next" },
         {
@@ -471,7 +462,7 @@ describe("connection status", () => {
         },
       ],
     });
-    const { client } = fakeClient(() => session);
+    const { client } = stubClient(() => session);
     const status = await manager(client).connectionStatus();
     expect(status.gmail.state).toBe("connected");
     expect(status.googlecalendar.state).toBe("expired");
@@ -486,15 +477,15 @@ describe("connection status", () => {
 
 describe("authorize", () => {
   it("returns the redirect URL for the user to open", async () => {
-    const session = fakeSession("s0");
-    const { client } = fakeClient(() => session);
+    const session = stubSession("s0");
+    const { client } = stubClient(() => session);
     const result = await manager(client).authorize(
       "googlecalendar",
       "http://127.0.0.1:4320/api/connections/composio/callback",
     );
     expect(result).toEqual({
       redirectUrl: "https://connect.composio.test/link/abc",
-      connectionRequestId: "cr_fake_request",
+      connectionRequestId: "cr_stub_request",
     });
     expect(session.authorize).toHaveBeenCalledWith("googlecalendar", {
       callbackUrl: "http://127.0.0.1:4320/api/connections/composio/callback",
@@ -502,8 +493,8 @@ describe("authorize", () => {
   });
 
   it("rejects bad callbacks, unknown toolkits and toolkits outside the session", async () => {
-    const session = fakeSession("s0");
-    const { client } = fakeClient(() => session);
+    const session = stubSession("s0");
+    const { client } = stubClient(() => session);
     const sessions = manager(client);
     await expect(sessions.authorize("gmail", "javascript:alert(1)")).rejects.toMatchObject({
       code: "config",
@@ -527,7 +518,7 @@ describe("authorize", () => {
   });
 
   it("fails clearly when Composio returns no link", async () => {
-    const { client } = fakeClient(() => fakeSession("s0", { redirectUrl: null }));
+    const { client } = stubClient(() => stubSession("s0", { redirectUrl: null }));
     await expect(manager(client).authorize("gmail", "https://x.test/cb")).rejects.toMatchObject({
       code: "no_redirect",
     });

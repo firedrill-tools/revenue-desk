@@ -21,7 +21,7 @@ import { secret, testEnv } from "./helpers.js";
 
 const API_KEY = "ak_unit_not_a_real_key_0123456789";
 const USER_ID = "revenue-desk-unit-user";
-const MCP_URL = "https://backend.composio.test/tool_router/trs_fake/mcp";
+const MCP_URL = "https://backend.composio.test/tool_router/trs_stub/mcp";
 
 const GMAIL_ACTIVE: ComposioToolkitState = {
   slug: "gmail",
@@ -34,7 +34,7 @@ const CALENDAR_EXPIRED: ComposioToolkitState = {
   connection: { isActive: false, connectedAccount: { id: "ca_EXPIRED123", status: "EXPIRED" } },
 };
 
-function fakeComposio(
+function stubComposio(
   options: {
     mcp?: Partial<ComposioSessionLike["mcp"]>;
     toolkits?: ComposioToolkitState[] | Error;
@@ -117,7 +117,7 @@ describe("resolveComposioConfig and the definitions' resolve", () => {
       composio: {
         apiKey: secret(API_KEY),
         userId: USER_ID,
-        baseUrl: "http://127.0.0.1:4450/composio",
+        baseUrl: "https://composio.internal.example/composio/",
       },
     });
     expect(createGmailIntegration().resolve(env)).toMatchObject({
@@ -126,8 +126,12 @@ describe("resolveComposioConfig and the definitions' resolve", () => {
         integration: "gmail",
         kind: "composio",
         profile: "composio",
-        endpointLabel: "127.0.0.1:4450",
-        composio: { userId: USER_ID, baseUrl: "http://127.0.0.1:4450/composio", toolkit: "gmail" },
+        endpointLabel: "composio.internal.example",
+        composio: {
+          userId: USER_ID,
+          baseUrl: "https://composio.internal.example/composio",
+          toolkit: "gmail",
+        },
       },
     });
     expect(createGoogleCalendarIntegration().resolve(env)).toMatchObject({
@@ -161,10 +165,10 @@ describe("profiles", () => {
 
 describe("ComposioConnector", () => {
   it("creates a session per (toolkits, access) and returns its MCP endpoint with allowlists", async () => {
-    const fake = fakeComposio();
+    const stub = stubComposio();
     const connector = new ComposioConnector(
       { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
-      { client: fake.client },
+      { client: stub.client },
     );
     const upstream = await connector.upstream(["gmail", "googlecalendar"], "outbound");
     expect(upstream).toEqual({
@@ -175,14 +179,14 @@ describe("ComposioConnector", () => {
       },
       endpointLabel: "backend.composio.test",
     });
-    expect(fake.createSession).toHaveBeenCalledWith(
+    expect(stub.createSession).toHaveBeenCalledWith(
       USER_ID,
       expect.objectContaining({ toolkits: ["gmail", "googlecalendar"] }),
     );
 
     const readOnly = await connector.upstream(["gmail"], "read");
     expect(readOnly.allowlists).toEqual({ gmail: allowedTools("gmail", "read") });
-    expect(fake.createSession).toHaveBeenLastCalledWith(
+    expect(stub.createSession).toHaveBeenLastCalledWith(
       USER_ID,
       expect.objectContaining({
         toolkits: ["gmail"],
@@ -190,32 +194,23 @@ describe("ComposioConnector", () => {
       }),
     );
     await connector.upstream(["gmail", "googlecalendar"], "outbound");
-    expect(fake.createSession).toHaveBeenCalledTimes(2);
+    expect(stub.createSession).toHaveBeenCalledTimes(2);
   });
 
   it("refuses an SSE endpoint, which the gateway does not connect to", async () => {
-    const fake = fakeComposio({ mcp: { type: "sse" } });
+    const stub = stubComposio({ mcp: { type: "sse" } });
     const connector = new ComposioConnector(
       { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
-      { client: fake.client },
+      { client: stub.client },
     );
     await expect(connector.upstream(["gmail"], "read")).rejects.toMatchObject({ code: "upstream" });
   });
 
-  it("allows a loopback http endpoint only when the base URL is loopback", async () => {
+  it("refuses a plain-http session endpoint, on loopback too", async () => {
     const loopbackMcp = "http://127.0.0.1:4450/tool_router/trs_1/mcp";
-    const local = fakeComposio({ mcp: { url: loopbackMcp } });
-    const fakes = new ComposioConnector(
-      { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "http://127.0.0.1:4450" },
-      { client: local.client },
-    );
-    await expect(fakes.upstream(["gmail"], "read")).resolves.toMatchObject({
-      config: { url: loopbackMcp },
-      endpointLabel: "127.0.0.1:4450",
-    });
     const production = new ComposioConnector(
       { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
-      { client: fakeComposio({ mcp: { url: loopbackMcp } }).client },
+      { client: stubComposio({ mcp: { url: loopbackMcp } }).client },
     );
     await expect(production.upstream(["gmail"], "read")).rejects.toMatchObject({
       code: "destination",
@@ -223,10 +218,10 @@ describe("ComposioConnector", () => {
   });
 
   it("reports per-toolkit status from a read-only session and probes map it", async () => {
-    const fake = fakeComposio();
+    const stub = stubComposio();
     const connector = new ComposioConnector(
       { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
-      { client: fake.client },
+      { client: stub.client },
     );
     const signal = new AbortController().signal;
     await expect(probeComposio(connector, "gmail", signal)).resolves.toEqual({
@@ -244,8 +239,8 @@ describe("ComposioConnector", () => {
     await expect(probeComposio(connector, "slack", signal)).resolves.toMatchObject({
       state: "needs_auth",
     });
-    expect(fake.createSession).toHaveBeenCalledTimes(1);
-    expect(fake.createSession).toHaveBeenCalledWith(
+    expect(stub.createSession).toHaveBeenCalledTimes(1);
+    expect(stub.createSession).toHaveBeenCalledWith(
       USER_ID,
       expect.objectContaining({
         toolkits: ["gmail", "googlecalendar", "quickbooks", "slack"],
@@ -257,14 +252,14 @@ describe("ComposioConnector", () => {
         },
       }),
     );
-    expect(fake.sessions[0]?.authorize).not.toHaveBeenCalled();
+    expect(stub.sessions[0]?.authorize).not.toHaveBeenCalled();
   });
 
   it("reports a failed check as error without the key", async () => {
-    const fake = fakeComposio({ toolkits: new Error(`boom ${API_KEY}`) });
+    const stub = stubComposio({ toolkits: new Error(`boom ${API_KEY}`) });
     const connector = new ComposioConnector(
       { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
-      { client: fake.client },
+      { client: stub.client },
     );
     const result = await probeComposio(connector, "gmail", new AbortController().signal);
     expect(result.state).toBe("error");
@@ -283,10 +278,10 @@ describe("ComposioConnector", () => {
   });
 
   it("starts a sign-in only through authorize, with the given callback", async () => {
-    const fake = fakeComposio();
+    const stub = stubComposio();
     const connector = new ComposioConnector(
       { apiKey: secret(API_KEY), userId: USER_ID, baseUrl: "https://backend.composio.dev" },
-      { client: fake.client },
+      { client: stub.client },
     );
     await expect(
       connector.authorize(
@@ -297,7 +292,7 @@ describe("ComposioConnector", () => {
       redirectUrl: "https://connect.composio.test/link/1",
       connectionRequestId: "cr_1",
     });
-    expect(fake.sessions[0]?.authorize).toHaveBeenCalledWith("googlecalendar", {
+    expect(stub.sessions[0]?.authorize).toHaveBeenCalledWith("googlecalendar", {
       callbackUrl: "http://127.0.0.1:4320/api/connections/google_calendar/callback",
     });
   });
@@ -305,8 +300,8 @@ describe("ComposioConnector", () => {
 
 describe("ComposioConnectors", () => {
   it("shares one connector between Gmail and Calendar for the same configuration", async () => {
-    const fake = fakeComposio();
-    const connectors = new ComposioConnectors({ client: fake.client });
+    const stub = stubComposio();
+    const connectors = new ComposioConnectors({ client: stub.client });
     const gmail = createGmailIntegration(connectors);
     const calendar = createGoogleCalendarIntegration(connectors);
     expect(gmail.connector(gmailConnection())).toBe(calendar.connector(calendarConnection()));
@@ -317,11 +312,11 @@ describe("ComposioConnectors", () => {
     await expect(calendar.probe(calendarConnection(), signal)).resolves.toMatchObject({
       state: "expired",
     });
-    expect(fake.createSession).toHaveBeenCalledTimes(1);
+    expect(stub.createSession).toHaveBeenCalledTimes(1);
   });
 
   it("keeps separate connectors for different users, keys or base URLs", () => {
-    const connectors = new ComposioConnectors({ client: fakeComposio().client });
+    const connectors = new ComposioConnectors({ client: stubComposio().client });
     const base = gmailConnection();
     const other = connectors.forConnection({
       ...base,
@@ -331,7 +326,7 @@ describe("ComposioConnectors", () => {
       ...base,
       composio: { ...base.composio, apiKey: secret("ak_other_key_000000") },
     });
-    const otherUrl = connectors.forConnection(gmailConnection("http://127.0.0.1:4450"));
+    const otherUrl = connectors.forConnection(gmailConnection("https://composio.internal.example"));
     expect(new Set([connectors.forConnection(base), other, otherKey, otherUrl]).size).toBe(4);
   });
 });

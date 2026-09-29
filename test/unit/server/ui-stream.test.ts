@@ -127,7 +127,7 @@ function toolPart(message: ChatUIMessage | undefined, toolCallId: string): Dynam
 
 const descriptor = refundDescriptor();
 
-/** The approved refund turn of the scripted core, as events. */
+/** The approved refund turn of the stubbed core, as events. */
 function approvedRefund(): AgentEvent[] {
   return [
     RUN_STARTED,

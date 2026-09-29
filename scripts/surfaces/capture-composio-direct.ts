@@ -16,7 +16,7 @@
 //      (parsed locally; process.env is not modified; values are never printed).
 //   2. Checks every allowlisted slug against the Composio tool catalog (read-only).
 //   3. Creates one Composio session (the four toolkits, the full allowlist,
-//      sessionPreset direct_tools, no sandbox, mcp: true) and reads its
+//      sessionPreset direct_tools, no Composio code sandbox, mcp: true) and reads its
 //      per-toolkit connection state.
 //   4. Connects an MCP client to the session's hosted MCP URL and calls
 //      tools/list only. No tool is called. No OAuth flow is started.

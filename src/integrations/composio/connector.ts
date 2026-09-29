@@ -38,7 +38,7 @@ export type ComposioSettings = {
 };
 
 export type ComposioConnectorDeps = {
-  /** Injected Composio client (tests and fakes). Defaults to the real SDK client. */
+  /** Injected Composio client. Defaults to the real SDK client. */
   readonly client?: ComposioClientLike;
   readonly logger?: ComposioLogger;
   readonly ttlMs?: number;

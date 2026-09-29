@@ -5,7 +5,8 @@
 //   read-only probes in the background.
 //
 // The agent core (runTurn) and the integration definitions are injected: they
-// come from the core and integration workstreams, and tests pass fakes. The
+// come from the core and integration workstreams, and unit tests pass
+// in-process stubs of both (test/unit/server/harness.ts). The
 // redactor defaults to the one built from the snapshot; the approval gate is
 // the policy's (src/policy/approvals.ts) over the server's approvals table.
 

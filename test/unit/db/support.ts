@@ -47,7 +47,7 @@ export function refundDescriptor(expiresInMs = 60_000): ApprovalDescriptor {
     connectionKind: "api",
     operation: "stripe.refunds.create",
     title: "Refund charge in Stripe",
-    consequence: "Refund $49.00 to Kestrel Analytics",
+    consequence: "Refund $49.00 to Contoso Ltd",
     facts: [
       { label: "Amount", value: "$49.00 USD" },
       { label: "Charge", value: "ch_dup_0002" },
@@ -59,7 +59,7 @@ export function refundDescriptor(expiresInMs = 60_000): ApprovalDescriptor {
 }
 
 // ---------------------------------------------------------------------------
-// Run owners (src/db/owner.ts) with a scripted view of the system's processes
+// Run owners (src/db/owner.ts) with a stubbed view of the system's processes
 // ---------------------------------------------------------------------------
 
 /** The process under test, as tests record it. */

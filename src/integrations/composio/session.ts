@@ -1,6 +1,5 @@
 import { format } from "node:util";
 import { Composio, type ComposioLogger, type ToolRouterCreateSessionConfig } from "@composio/core";
-import { isLoopbackHost } from "../shared/url.js";
 
 // ---------------------------------------------------------------------------
 // Composio session for Gmail, Google Calendar, QuickBooks and Slack.
@@ -12,16 +11,14 @@ import { isLoopbackHost } from "../shared/url.js";
 //   - sessionPreset 'direct_tools', so the session's hosted MCP server lists
 //     the real operations (GMAIL_FETCH_EMAILS, QUICKBOOKS_CREATE_INVOICE, ...)
 //     instead of router meta-tools,
-//   - no sandbox or workbench, no in-chat connection management,
+//   - no Composio code sandbox or workbench, no in-chat connection management,
 //   - mcp: true, so the session carries its hosted MCP endpoint.
 // It also reports per-toolkit connection state and can produce a Connect link.
 //
 // It never executes a Composio tool. Tool calls travel over the session's MCP
 // endpoint through the gateway, where the approval policy applies.
 //
-// The session MCP endpoint must be HTTPS. Plain HTTP is accepted only when
-// COMPOSIO_BASE_URL itself is a loopback URL (local fakes and the sandbox
-// demo) and the endpoint is on a loopback host too.
+// The session MCP endpoint must be HTTPS.
 //
 // Secrets: the API key and the session MCP headers (which carry the key) are
 // never logged. Use describeEndpoint() for anything that is printed or stored.
@@ -389,21 +386,11 @@ export function describeEndpoint(endpoint: Pick<ComposioMcpEndpoint, "type" | "u
   return { type: endpoint.type, host: new URL(endpoint.url).host };
 }
 
-/** True for an http(s) URL on a loopback host. */
-export function isLoopbackUrl(raw: string): boolean {
-  try {
-    const url = new URL(raw);
-    return (url.protocol === "http:" || url.protocol === "https:") && isLoopbackHost(url.hostname);
-  } catch {
-    return false;
-  }
-}
-
 export interface ComposioSessionManagerOptions {
   apiKey: string;
   /** COMPOSIO_USER_ID. Required; there is no default. */
   userId: string;
-  /** COMPOSIO_BASE_URL. When it is loopback, loopback http session endpoints are accepted. */
+  /** COMPOSIO_BASE_URL. */
   baseURL?: string;
   logger?: ComposioLogger;
   /**
@@ -429,7 +416,6 @@ export class ComposioSessionManager {
   private readonly ttlMs: number;
   private readonly now: () => number;
   private readonly selection: SessionSelection;
-  private readonly loopbackBase: boolean;
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(options: ComposioSessionManagerOptions) {
@@ -440,7 +426,6 @@ export class ComposioSessionManager {
     this.ttlMs = options.ttlMs ?? COMPOSIO_SESSION_TTL_MS;
     this.now = options.now ?? Date.now;
     this.selection = resolveSelection(options.selection);
-    this.loopbackBase = options.baseURL !== undefined && isLoopbackUrl(options.baseURL);
     this.client =
       options.client ??
       createComposioClient({
@@ -499,9 +484,7 @@ export class ComposioSessionManager {
     } catch {
       throw new ComposioSessionError("destination", "Composio returned an invalid MCP URL");
     }
-    const loopbackHttp =
-      parsed.protocol === "http:" && this.loopbackBase && isLoopbackHost(parsed.hostname);
-    if (parsed.protocol !== "https:" && !loopbackHttp) {
+    if (parsed.protocol !== "https:") {
       throw new ComposioSessionError("destination", "Composio returned a non-HTTPS MCP URL");
     }
     if (type !== "http" && type !== "sse") {

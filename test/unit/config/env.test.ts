@@ -1,12 +1,6 @@
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
-import {
-  configuredSecrets,
-  loadAgentEnv,
-  sandboxEndpointProblems,
-  withDotenvFile,
-} from "../../../src/config/env.js";
-import { isLoopbackHost, isLoopbackUrl } from "../../../src/config/loopback.js";
+import { configuredSecrets, loadAgentEnv, withDotenvFile } from "../../../src/config/env.js";
 import { isSecretValue, REDACTED, secretValue } from "../../../src/config/secret.js";
 import { ENV_DEFAULTS, ENV_VAR_NAMES, ENV_VARS } from "../../../src/contracts/env.js";
 
@@ -27,7 +21,6 @@ describe("loadAgentEnv", () => {
     const env = ok({});
     expect(env.model).toEqual({
       apiKey: null,
-      baseUrl: null,
       model: ENV_DEFAULTS.AGENT_MODEL,
       effort: "medium",
       thinkingDisplay: null,
@@ -40,7 +33,6 @@ describe("loadAgentEnv", () => {
       policyOverrides: {},
       businessDate: null,
       approvalTimeoutMs: 900_000,
-      sandbox: false,
       dotenvPath: null,
     });
     expect(env.composio).toEqual({
@@ -54,7 +46,6 @@ describe("loadAgentEnv", () => {
       apiBaseUrl: null,
       mcpUrl: null,
       mcpToken: null,
-      command: null,
     });
     expect(env.passthrough).toEqual({
       HTTP_PROXY: null,
@@ -67,7 +58,6 @@ describe("loadAgentEnv", () => {
   it("parses every value it owns, trims them, and treats blanks as unset", () => {
     const env = ok({
       ANTHROPIC_API_KEY: "  sk-ant-test-key-1234567890  ",
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:9999",
       AGENT_MODEL: "claude-opus-5",
       AGENT_EFFORT: "HIGH",
       AGENT_THINKING_DISPLAY: "omitted",
@@ -79,8 +69,6 @@ describe("loadAgentEnv", () => {
       AGENT_BUSINESS_DATE: "2026-02-28",
       AGENT_APPROVAL_TIMEOUT_MS: "60000",
       COMPOSIO_USER_ID: "  ",
-      HUBSPOT_MCP_COMMAND: "node",
-      HUBSPOT_MCP_ARGS: '["server.js","--flag"]',
       STRIPE_SECRET_KEY: "sk_test_abcdefgh",
       ALLOW_LIVE_STRIPE: "1",
       HTTP_PROXY: "http://127.0.0.1:1",
@@ -88,7 +76,6 @@ describe("loadAgentEnv", () => {
     });
     expect(env.model.apiKey?.reveal()).toBe("sk-ant-test-key-1234567890");
     expect(env.model).toMatchObject({
-      baseUrl: "http://127.0.0.1:9999",
       model: "claude-opus-5",
       effort: "high",
       thinkingDisplay: "omitted",
@@ -103,7 +90,6 @@ describe("loadAgentEnv", () => {
       approvalTimeoutMs: 60_000,
     });
     expect(env.composio.userId).toBeNull();
-    expect(env.hubspot.command).toEqual({ command: "node", args: ["server.js", "--flag"] });
     expect(env.stripe.allowLive).toBe(true);
     expect(env.passthrough).toMatchObject({
       HTTP_PROXY: "http://127.0.0.1:1",
@@ -121,9 +107,7 @@ describe("loadAgentEnv", () => {
       AGENT_POLICY: '{"refunds":"auto"}',
       AGENT_BUSINESS_DATE: "2026-02-30",
       AGENT_APPROVAL_TIMEOUT_MS: "abc",
-      ANTHROPIC_BASE_URL: "ftp://secret-host.example/x",
       ALLOW_LIVE_STRIPE: "yes-please",
-      HUBSPOT_MCP_ARGS: '["x"]',
     });
     expect(found.map((problem) => problem.variable).sort()).toEqual(
       [
@@ -135,21 +119,16 @@ describe("loadAgentEnv", () => {
         "AGENT_POLICY",
         "AGENT_THINKING_DISPLAY",
         "ALLOW_LIVE_STRIPE",
-        "ANTHROPIC_BASE_URL",
-        "HUBSPOT_MCP_ARGS",
         "PORT",
       ].sort(),
     );
     const text = JSON.stringify(found);
-    for (const value of ["extreme", "loud", "70000", "secret-host", "yes-please", "abc"]) {
+    for (const value of ["extreme", "loud", "70000", "yes-please", "abc"]) {
       expect(text).not.toContain(value);
     }
   });
 
-  it("refuses malformed HubSpot arguments and a policy that is not an object", () => {
-    expect(problems({ HUBSPOT_MCP_COMMAND: "node", HUBSPOT_MCP_ARGS: "[1,2]" })).toEqual([
-      { variable: "HUBSPOT_MCP_ARGS", message: "must be a JSON array of strings." },
-    ]);
+  it("refuses a policy that is not an object", () => {
     expect(problems({ AGENT_POLICY: "[]" })[0]?.variable).toBe("AGENT_POLICY");
     expect(problems({ AGENT_POLICY: '{"read":"sometimes"}' })[0]?.message).toContain(
       "unknown mode",
@@ -205,65 +184,24 @@ describe("configuredSecrets", () => {
   });
 });
 
-describe("the AGENT_SANDBOX loopback rule", () => {
-  const configured = {
-    AGENT_SANDBOX: "1",
-    COMPOSIO_API_KEY: "composio-key",
-    COMPOSIO_USER_ID: "user",
-    HUBSPOT_ACCESS_TOKEN: "pat-na1-token",
-    STRIPE_SECRET_KEY: "sk_test_key",
-  };
-
-  it("refuses every configured integration whose endpoint is not loopback", () => {
-    expect(
-      problems(configured)
-        .map((problem) => problem.variable)
-        .sort(),
-    ).toEqual(["COMPOSIO_BASE_URL", "HUBSPOT_API_BASE_URL", "STRIPE_API_BASE_URL"]);
-  });
-
-  it("accepts loopback endpoints and ignores unconfigured integrations", () => {
-    const env = ok({
-      ...configured,
-      COMPOSIO_BASE_URL: "http://127.0.0.1:4001",
-      HUBSPOT_API_BASE_URL: "http://localhost:4002/hubspot",
-      STRIPE_API_BASE_URL: "http://[::1]:4003",
-    });
-    expect(env.runtime.sandbox).toBe(true);
-    expect(ok({ AGENT_SANDBOX: "1" }).runtime.sandbox).toBe(true);
-  });
-
-  it("checks HUBSPOT_MCP_URL when set, allows a stdio command override, and the real model", () => {
-    expect(
-      problems({ AGENT_SANDBOX: "1", HUBSPOT_MCP_URL: "https://mcp.hubspot.com" }),
-    ).toHaveLength(1);
-    expect(
-      ok({ AGENT_SANDBOX: "1", HUBSPOT_ACCESS_TOKEN: "t", HUBSPOT_MCP_COMMAND: "node" }).runtime
-        .sandbox,
-    ).toBe(true);
-    expect(ok({ AGENT_SANDBOX: "1", ANTHROPIC_API_KEY: "k" }).model.baseUrl).toBeNull();
-    expect(problems({ AGENT_SANDBOX: "1", ANTHROPIC_BASE_URL: "https://api.example.com" })).toEqual(
-      [expect.objectContaining({ variable: "ANTHROPIC_BASE_URL" })],
-    );
-  });
-
-  it("does not apply outside sandbox mode", () => {
-    const env = ok({ ...configured, AGENT_SANDBOX: "0" });
-    expect(sandboxEndpointProblems(env)).toHaveLength(3);
-  });
-});
-
-describe("loopback detection", () => {
-  it("knows loopback hosts and URLs", () => {
-    for (const host of ["localhost", "api.localhost", "127.0.0.1", "127.8.9.10", "::1", "[::1]"]) {
-      expect(isLoopbackHost(host)).toBe(true);
+describe("variables that exist only for tests", () => {
+  it("are gone: the model endpoint, the sandbox flag and the HubSpot command override", () => {
+    for (const name of [
+      "ANTHROPIC_BASE_URL",
+      "AGENT_SANDBOX",
+      "HUBSPOT_MCP_COMMAND",
+      "HUBSPOT_MCP_ARGS",
+    ]) {
+      expect(ENV_VAR_NAMES).not.toContain(name);
     }
-    for (const host of ["example.com", "10.0.0.1", "128.0.0.1", "localhost.example.com"]) {
-      expect(isLoopbackHost(host)).toBe(false);
-    }
-    expect(isLoopbackUrl("http://127.0.0.1:1/x")).toBe(true);
-    expect(isLoopbackUrl("ftp://127.0.0.1")).toBe(false);
-    expect(isLoopbackUrl("not a url")).toBe(false);
+    // Setting them changes nothing: they are not read.
+    expect(
+      ok({
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:9999",
+        AGENT_SANDBOX: "1",
+        HUBSPOT_MCP_COMMAND: "node",
+      }),
+    ).toEqual(ok({}));
   });
 });
 

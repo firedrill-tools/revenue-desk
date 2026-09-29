@@ -31,7 +31,7 @@ const context = (idempotencyKey: string): ExecutionContext => ({
 });
 
 /** A fetch that answers from a list of outcomes, in order. */
-function scriptedFetch(outcomes: readonly (number | Error)[], delayMs = 0): FetchLike {
+function sequencedFetch(outcomes: readonly (number | Error)[], delayMs = 0): FetchLike {
   let index = 0;
   return async () => {
     const outcome = outcomes[Math.min(index, outcomes.length - 1)] ?? 200;
@@ -107,38 +107,38 @@ function httpTools(fetch: FetchLike, options: { refuseBeforeSending?: boolean } 
 
 describe("an API call's HTTP report", () => {
   it("records a successful write's 2xx status and the key it sent", async () => {
-    const { write } = httpTools(scriptedFetch([200]));
+    const { write } = httpTools(sequencedFetch([200]));
     const execution = await write.execute({ charge: "ch_1" }, context("key_write"));
     expect(execution).toMatchObject({ error: null, httpStatus: 200, idempotencyKey: "key_write" });
   });
 
   it("records a read's final status after a retried 429, and no key", async () => {
-    const { read } = httpTools(scriptedFetch([429, 200]));
+    const { read } = httpTools(sequencedFetch([429, 200]));
     const execution = await read.execute({}, context("key_read"));
     expect(execution).toMatchObject({ error: null, httpStatus: 200, idempotencyKey: null });
   });
 
   it("records the provider's error status and the key of a write that reached it", async () => {
-    const { write } = httpTools(scriptedFetch([500]));
+    const { write } = httpTools(sequencedFetch([500]));
     const execution = await write.execute({ charge: "ch_1" }, context("key_500"));
     expect(execution).toMatchObject({ httpStatus: 500, idempotencyKey: "key_500" });
     expect(execution.error?.status).toBe(500);
   });
 
   it("records no key for a write refused before anything was sent", async () => {
-    const { write } = httpTools(scriptedFetch([200]), { refuseBeforeSending: true });
+    const { write } = httpTools(sequencedFetch([200]), { refuseBeforeSending: true });
     const execution = await write.execute({ charge: "ch_1" }, context("key_refused"));
     expect(execution).toMatchObject({ httpStatus: null, idempotencyKey: null });
     expect(execution.error?.code).toBe("invalid");
   });
 
   it("records no key when the connection failed before sending, and the key when it may have been sent", async () => {
-    const refused = httpTools(scriptedFetch([networkError("ECONNREFUSED")])).write;
+    const refused = httpTools(sequencedFetch([networkError("ECONNREFUSED")])).write;
     expect(await refused.execute({ charge: "ch_1" }, context("key_refused"))).toMatchObject({
       httpStatus: null,
       idempotencyKey: null,
     });
-    const reset = httpTools(scriptedFetch([networkError("ECONNRESET")])).write;
+    const reset = httpTools(sequencedFetch([networkError("ECONNRESET")])).write;
     expect(await reset.execute({ charge: "ch_1" }, context("key_reset"))).toMatchObject({
       httpStatus: null,
       idempotencyKey: "key_reset",
@@ -146,8 +146,8 @@ describe("an API call's HTTP report", () => {
   });
 
   it("keeps concurrent calls' reports apart", async () => {
-    const slow = httpTools(scriptedFetch([201], 30)).write;
-    const fast = httpTools(scriptedFetch([404], 5)).read;
+    const slow = httpTools(sequencedFetch([201], 30)).write;
+    const fast = httpTools(sequencedFetch([404], 5)).read;
     const [written, listed] = await Promise.all([
       slow.execute({ charge: "ch_1" }, context("key_slow")),
       fast.execute({}, context("key_fast")),

@@ -194,7 +194,7 @@ describe("reads", () => {
 
 describe("GET /api/session", () => {
   it("sets the HttpOnly SameSite=Strict cookie and returns the matching token", async () => {
-    const server = createTestServer({ runtime: { sandbox: true } });
+    const server = createTestServer();
     const response = await server.request("GET", "/api/session");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -207,7 +207,6 @@ describe("GET /api/session", () => {
     expect(info).toEqual({
       csrfToken: server.services.secrets.csrfToken,
       version: "0.0.0-test",
-      mode: "sandbox",
       model: "claude-sonnet-5",
       effort: "medium",
       businessDate: "2026-09-28",
@@ -245,7 +244,8 @@ describe("GET /api/session", () => {
       timezone: "Pacific/Kiritimati",
     });
     const info = (await (await server.request("GET", "/api/session")).json()) as SessionInfo;
-    expect(info).toMatchObject({ mode: "normal", model: "claude-opus-5", effort: "high" });
+    expect(info).toMatchObject({ model: "claude-opus-5", effort: "high" });
+    expect(info).not.toHaveProperty("mode");
     expect(info.businessDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

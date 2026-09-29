@@ -1,10 +1,9 @@
 import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { navigate } from "@/app/router";
-import { useSession } from "@/app/session";
 import { useNotify } from "@/components/app/notices";
 import { ErrorState, Page, PageHeader, Panel } from "@/components/app/page";
-import { KindChip, MetaChip, StatusText } from "@/components/app/status";
+import { KindChip, StatusText } from "@/components/app/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -294,7 +293,6 @@ function ListSkeleton() {
 }
 
 export default function ConnectionsRoute() {
-  const session = useSession();
   const notify = useNotify();
   const { data, error, loading, reload, mutate } = useConnections();
   const [checking, setChecking] = useState<ReadonlySet<IntegrationId>>(new Set());
@@ -430,22 +428,19 @@ export default function ConnectionsRoute() {
         title="Connections"
         description="How Revenue Desk reaches each system. Checks are read-only; configuration comes from the server's environment, and a changed variable needs a restart."
         actions={
-          <>
-            {session?.mode === "sandbox" ? <MetaChip>Local sandbox</MetaChip> : null}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={checkAll}
-              disabled={!data || checking.size > 0}
-            >
-              {checking.size > 0 ? (
-                <Spinner aria-hidden="true" className="size-3.5" />
-              ) : (
-                <RefreshCwIcon />
-              )}
-              Check all
-            </Button>
-          </>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={checkAll}
+            disabled={!data || checking.size > 0}
+          >
+            {checking.size > 0 ? (
+              <Spinner aria-hidden="true" className="size-3.5" />
+            ) : (
+              <RefreshCwIcon />
+            )}
+            Check all
+          </Button>
         }
       />
       <KindLegend />

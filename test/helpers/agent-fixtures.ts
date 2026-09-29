@@ -1,8 +1,10 @@
 /**
  * Minimal in-test integrations, settings and environments for the agent core
- * tests (W1). The integration definitions here are deliberately tiny stand-ins
- * shaped like the §2 profiles (W2 builds the real ones, W5 the realistic
- * fakes); they only need to exercise every connection kind and action class.
+ * and gateway unit tests. The integration definitions here are deliberately
+ * tiny in-process stubs shaped like the §2 profiles (src/integrations builds
+ * the real ones); they exist to exercise the gateway's handling of every
+ * connection kind and action class, and stand for no real service or
+ * business. Real services are exercised by `pnpm test:live`.
  */
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,11 +37,11 @@ import { noteHttpRequest, noteHttpResponse } from "../../src/gateway/http-report
 import type { UpstreamConfig } from "../../src/gateway/mcp-proxy.js";
 
 export const TEST_SETTINGS: WorkspaceSettings = {
-  companyName: "Kestrel Analytics",
+  companyName: "Contoso Ltd",
   agentName: "Revenue Desk",
-  senderName: "Dana Reyes",
-  emailSignature: "Dana Reyes\nBilling, Kestrel Analytics",
-  internalEmailDomains: ["kestrel.test"],
+  senderName: "Morgan Rivera",
+  emailSignature: "Morgan Rivera\nBilling, Contoso Ltd",
+  internalEmailDomains: ["contoso.example"],
   notifySlackChannel: "#billing",
   allowedSlackChannels: ["#billing", "#sales-ops"],
   internalCalendarIds: [],
@@ -183,7 +185,6 @@ function plain(args: object): JsonObject {
 
 export type StripeCall = { readonly tool: string; readonly args: JsonObject; readonly key: string };
 
-/** A catalog whose Stripe tools record every run (with the idempotency key they received). */
 /** Where the test's Composio session MCP lives, per the run's toolkits and exposure. */
 export type ComposioTestSession = (
   toolkits: readonly ComposioToolkitSlug[],
@@ -199,22 +200,15 @@ const noComposio: ComposioTestSession = async () => {
   throw new Error("Composio is not set up in this test.");
 };
 
-/** HubSpot over HTTP with its bearer token, or a stdio command override with the token in its env. */
+/** HubSpot over HTTP with its bearer token (the stdio launch is src/integrations/hubspot). */
 function hubspotUpstream(connection: HubSpotConnection): UpstreamConfig {
   const { mcp } = connection;
-  if (mcp.transport === "http") {
-    return {
-      transport: "http",
-      url: mcp.url,
-      headers: mcp.token === null ? {} : { Authorization: `Bearer ${mcp.token.reveal()}` },
-    };
-  }
-  if (mcp.command === null) throw new Error("The test catalog launches only a command override.");
+  if (mcp.transport !== "http")
+    throw new Error("The test catalog connects to HTTP upstreams only.");
   return {
-    transport: "stdio",
-    command: mcp.command.command,
-    args: mcp.command.args,
-    env: { PRIVATE_APP_ACCESS_TOKEN: mcp.accessToken.reveal() },
+    transport: "http",
+    url: mcp.url,
+    headers: mcp.token === null ? {} : { Authorization: `Bearer ${mcp.token.reveal()}` },
   };
 }
 
@@ -321,9 +315,9 @@ export function stripeConnection(): StripeConnection {
     integration: "stripe",
     kind: "api",
     profile: "stripe-api",
-    endpointLabel: "api.stripe.test",
+    endpointLabel: "api.stripe.com",
     api: {
-      baseUrl: "http://127.0.0.1:9",
+      baseUrl: "https://api.stripe.com",
       secretKey: secretValue(STRIPE_KEY),
       keyMode: "test",
       apiVersion: null,
@@ -346,11 +340,11 @@ export function gmailConnection(): ComposioConnection<"gmail"> {
     integration: "gmail",
     kind: "composio",
     profile: "composio",
-    endpointLabel: "backend.composio.test",
+    endpointLabel: "backend.composio.dev",
     composio: {
       apiKey: secretValue(`composio-key-${"c".repeat(20)}`),
-      userId: "user_kestrel",
-      baseUrl: "http://127.0.0.1:9",
+      userId: "user_test",
+      baseUrl: "https://backend.composio.dev",
       toolkit: "gmail",
     },
   };

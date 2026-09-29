@@ -150,7 +150,7 @@ describe("ProgressPrinter", () => {
         type: "tool.input.available",
         toolCallId: "t2",
         toolName: "mcp__stripe__create_refund",
-        title: "Refund $49.00 to Kestrel",
+        title: "Refund $49.00 to Contoso",
         input: {},
         tool: refund,
       },
@@ -208,14 +208,14 @@ describe("ProgressPrinter", () => {
     progress.finish({ ...SUMMARY, reply: null });
     expect(stderr.text().split("\n")).toEqual([
       "> List charges in Stripe [API]",
-      "> Refund $49.00 to Kestrel [API]",
+      "> Refund $49.00 to Contoso [API]",
       "> Read balance",
       "  List charges in Stripe: done in 1.3 s",
       "  Read balance: failed: Invalid key [redacted]",
-      `  Refund $49.00 to Kestrel: blocked by policy: ${HEADLESS_ASK_DENIAL}`,
+      `  Refund $49.00 to Contoso: blocked by policy: ${HEADLESS_ASK_DENIAL}`,
       "Model busy (HTTP 529), retrying 2/10 in 3.0 s",
       "Done in 3.3 s · 0 tool calls",
-      "Not run because they need approval, which the CLI cannot ask for: Refund $49.00 to Kestrel. " +
+      "Not run because they need approval, which the CLI cannot ask for: Refund $49.00 to Contoso. " +
         `To allow financial actions for one run, pass --policy '{"financial":"auto"}'.`,
       "",
     ]);

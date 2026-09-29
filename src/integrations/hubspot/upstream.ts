@@ -33,7 +33,6 @@ export function hubspotUpstreamConfig(
   const launch = buildHubSpotStdioLaunch({
     accessToken: mcp.accessToken.reveal(),
     ...(mcp.apiBaseUrl === null ? {} : { apiBaseUrl: mcp.apiBaseUrl }),
-    ...(mcp.command === null ? {} : { command: mcp.command.command, args: mcp.command.args }),
     ...(overrides.execPath === undefined ? {} : { execPath: overrides.execPath }),
     ...(overrides.resolveFrom === undefined ? {} : { resolveFrom: overrides.resolveFrom }),
   });

@@ -25,8 +25,8 @@ export type NewToolCall = Pick<
 
 /**
  * A call is identified by its run and the model's tool_use id: a tool_use id
- * is unique only within a run (a scripted model, or a replayed transcript,
- * can repeat one), so no write may ever reach another run's row.
+ * is unique only within a run (a replayed or resumed transcript can repeat
+ * one), so no write may ever reach another run's row.
  */
 export type ToolCallKey = { readonly runId: string; readonly toolUseId: string };
 

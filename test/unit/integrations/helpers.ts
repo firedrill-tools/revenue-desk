@@ -22,7 +22,6 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
   const base: AgentEnv = {
     model: {
       apiKey: null,
-      baseUrl: null,
       model: "claude-sonnet-5",
       effort: "medium",
       thinkingDisplay: null,
@@ -35,7 +34,6 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
       policyOverrides: {},
       businessDate: null,
       approvalTimeoutMs: 900_000,
-      sandbox: false,
       dotenvPath: null,
     },
     passthrough: {
@@ -45,7 +43,7 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
       CLAUDE_CODE_MAX_RETRIES: null,
     },
     composio: { apiKey: null, userId: null, baseUrl: "https://backend.composio.dev" },
-    hubspot: { accessToken: null, apiBaseUrl: null, mcpUrl: null, mcpToken: null, command: null },
+    hubspot: { accessToken: null, apiBaseUrl: null, mcpUrl: null, mcpToken: null },
     stripe: {
       secretKey: null,
       allowLive: false,
@@ -64,7 +62,7 @@ export function testEnv(overrides: DeepPartialEnv = {}): AgentEnv {
 }
 
 export const SETTINGS: ClassifierSettings = {
-  internalEmailDomains: ["kestrel.test"],
+  internalEmailDomains: ["contoso.example"],
   allowedSlackChannels: ["#billing", "#sales-ops"],
   internalCalendarIds: [],
   currency: "USD",
@@ -94,7 +92,7 @@ export type Reply = {
   readonly headers?: Readonly<Record<string, string>>;
 };
 
-export type FetchMock = {
+export type FetchStub = {
   readonly fetch: FetchLike;
   readonly requests: RecordedRequest[];
   /** http deps with this fetch and instant sleeps. */
@@ -103,9 +101,9 @@ export type FetchMock = {
 };
 
 /** A fetch that records every request and answers with `reply` (or throws what it throws). */
-export function mockFetch(
+export function stubFetch(
   reply: (request: RecordedRequest, index: number) => Reply | Error,
-): FetchMock {
+): FetchStub {
   const requests: RecordedRequest[] = [];
   const sleeps: number[] = [];
   const fetch: FetchLike = async (input, init) => {

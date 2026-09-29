@@ -58,7 +58,7 @@ export function KindChip({ kind, className }: { kind: ConnectionKind; className?
   );
 }
 
-/** A quiet label chip (for example "CLI" or "Local sandbox"). */
+/** A quiet label chip (for example "CLI"). */
 export function MetaChip({ children, className }: { children: string; className?: string }) {
   return (
     <span

@@ -72,7 +72,6 @@ export function childEnvironment(input: {
     CLAUDE_AGENT_SDK_CLIENT_APP: input.clientApp,
   };
   if (env.model.apiKey !== null) child.ANTHROPIC_API_KEY = env.model.apiKey.reveal();
-  if (env.model.baseUrl !== null) child.ANTHROPIC_BASE_URL = env.model.baseUrl;
   for (const name of SDK_CHILD_PASSTHROUGH_VARS) {
     const value = env.passthrough[name];
     if (value !== null) child[name] = value;

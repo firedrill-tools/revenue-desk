@@ -19,7 +19,7 @@ import {
   statusFromResolution,
   toolDescriptors,
 } from "../../../src/integrations/registry.js";
-import { mockFetch, SETTINGS, secret, testEnv } from "./helpers.js";
+import { SETTINGS, secret, stubFetch, testEnv } from "./helpers.js";
 
 /** docs/ARCHITECTURE.md §2, the frozen tool tables: name, operation, base class. */
 const SECTION_2: {
@@ -194,7 +194,7 @@ describe("definitions and profiles", () => {
 
 describe("resolution and availability", () => {
   const env = testEnv({
-    stripe: { secretKey: secret(STRIPE_KEY), apiBaseUrl: "http://127.0.0.1:4410" },
+    stripe: { secretKey: secret(STRIPE_KEY), apiBaseUrl: "https://proxy.example" },
     composio: { apiKey: secret("ak_registry_key"), userId: "u1" },
   });
 
@@ -267,12 +267,12 @@ describe("resolution and availability", () => {
 
 describe("checking connections", () => {
   const env = testEnv({
-    stripe: { secretKey: secret(STRIPE_KEY), apiBaseUrl: "http://127.0.0.1:4410" },
+    stripe: { secretKey: secret(STRIPE_KEY), apiBaseUrl: "https://proxy.example" },
   });
   const now = () => new Date("2026-09-28T12:00:00Z");
 
   it("probes a configured integration and stamps the check", async () => {
-    const mock = mockFetch(() => ({ json: { livemode: false } }));
+    const mock = stubFetch(() => ({ json: { livemode: false } }));
     const status = await checkConnection(
       createIntegrations({ http: mock.http }),
       "stripe",
@@ -286,7 +286,7 @@ describe("checking connections", () => {
       profile: "stripe-api",
       state: "connected",
       detail: "Stripe test-mode key accepted; balance is readable.",
-      endpointLabel: "127.0.0.1:4410",
+      endpointLabel: "proxy.example",
       accountHint: null,
       missing: [],
       checkedAt: "2026-09-28T12:00:00.000Z",
@@ -295,7 +295,7 @@ describe("checking connections", () => {
   });
 
   it("never contacts an unconfigured integration, and turns a throwing probe into an error", async () => {
-    const mock = mockFetch(() => ({ json: {} }));
+    const mock = stubFetch(() => ({ json: {} }));
     const set = createIntegrations({ http: mock.http });
     await expect(
       checkConnection(set, "slack", env, new AbortController().signal, now),
@@ -323,7 +323,7 @@ describe("checking connections", () => {
   });
 
   it("checks all six in the fixed order", async () => {
-    const mock = mockFetch(() => ({ json: { livemode: false } }));
+    const mock = stubFetch(() => ({ json: { livemode: false } }));
     const statuses = await checkConnections(
       createIntegrations({ http: mock.http }),
       env,

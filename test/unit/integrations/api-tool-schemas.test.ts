@@ -20,7 +20,7 @@ import {
   type Integrations,
 } from "../../../src/integrations/registry.js";
 import type { ApiTool } from "../../../src/integrations/shared/api-tool.js";
-import { mockFetch, paramsOf, secret } from "./helpers.js";
+import { paramsOf, secret, stubFetch } from "./helpers.js";
 
 const stripe: StripeConnection = {
   integration: "stripe",
@@ -45,14 +45,14 @@ function allTools(set: Integrations): Map<string, ApiTool> {
 
 /** One realistic call per API tool, as the model would make it. */
 const VALID: Readonly<Record<string, JsonObject>> = {
-  mcp__stripe__find_customers: { email: "dana@harborpine.test", limit: 5 },
-  mcp__stripe__get_customer: { customer: "cus_KAharborpine" },
+  mcp__stripe__find_customers: { email: "jamie@fabrikam.example", limit: 5 },
+  mcp__stripe__get_customer: { customer: "cus_Fabrikam001" },
   mcp__stripe__list_charges: {
-    customer: "cus_KAharborpine",
+    customer: "cus_Fabrikam001",
     created_after: "2026-09-01",
     created_before: "2026-10-01T00:00:00Z",
   },
-  mcp__stripe__list_payment_intents: { customer: "cus_KAharborpine" },
+  mcp__stripe__list_payment_intents: { customer: "cus_Fabrikam001" },
   mcp__stripe__list_invoices: { status: "open", limit: 20 },
   mcp__stripe__get_invoice: { invoice: "in_KAhp_202609" },
   mcp__stripe__list_subscriptions: { status: "all" },
@@ -65,7 +65,7 @@ const VALID: Readonly<Record<string, JsonObject>> = {
     metadata: { thread: "18c2f" },
   },
   mcp__stripe__cancel_subscription: {
-    subscription: "sub_KAlumenyoga",
+    subscription: "sub_KAcyberdyne",
     prorate: true,
     comment: "Closing",
   },
@@ -127,7 +127,7 @@ describe("the gateway seam", () => {
   });
 
   it("a refund through the gateway's API tool wrapper carries the gateway's idempotency key", async () => {
-    const mock = mockFetch(() => ({
+    const mock = stubFetch(() => ({
       json: {
         id: "re_1",
         object: "refund",
@@ -165,7 +165,7 @@ describe("the gateway seam", () => {
   });
 
   it("a provider error through the wrapper becomes the normalised ToolFailure", async () => {
-    const mock = mockFetch(() => ({
+    const mock = stubFetch(() => ({
       status: 402,
       json: {
         error: {

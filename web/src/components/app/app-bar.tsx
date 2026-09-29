@@ -10,7 +10,7 @@ import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { BrandMark, Wordmark } from "./brand";
 import { ConnectionsHealth } from "./connections-health";
-import { MetaChip, StatusDot } from "./status";
+import { StatusDot } from "./status";
 
 export function isNavActive(route: Route, name: (typeof NAV_ITEMS)[number]["name"]): boolean {
   return route.name === name;
@@ -111,9 +111,7 @@ export function AppBar({
   route: Route;
   waitingApprovals?: number;
 }) {
-  const state = useSessionState();
   const { setRailOpen, inspectorAvailable, inspectorOpen, setInspectorOpen } = useShell();
-  const sandbox = state.status === "ready" && state.session.mode === "sandbox";
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-2 sm:px-3">
@@ -146,7 +144,6 @@ export function AppBar({
         <BrandMark className="max-sm:hidden" />
         <Wordmark />
       </Link>
-      {sandbox ? <MetaChip className="ml-1">Local sandbox</MetaChip> : null}
 
       <PrimaryNav route={route} className="ml-4 hidden md:flex" />
 

@@ -18,7 +18,7 @@ export type HubSpotProbeDeps = {
   readonly connect?: ConnectUpstream;
   readonly launch?: HubSpotLaunchOverrides;
   readonly timeoutMs?: number;
-  /** The HTTP layer of the in-process REST tools (owners.ts); tests pass a fake fetch. */
+  /** The HTTP layer of the in-process REST tools (owners.ts). */
   readonly http?: HttpDeps;
 };
 

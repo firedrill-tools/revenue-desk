@@ -1,6 +1,6 @@
 // What `revenue-desk ask` needs from the agent core (W1), the integrations
 // (W2) and the database (W3). The CLI imports no implementation module
-// directly: src/cli/services.ts wires the real ones, and tests pass fakes.
+// directly: src/cli/services.ts wires them.
 //
 // Types only; no runtime code.
 

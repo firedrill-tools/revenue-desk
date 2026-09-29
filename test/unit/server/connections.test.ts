@@ -1,5 +1,5 @@
 // The server's ConnectionService over the production integrations
-// (createIntegrations) with a fake Composio client: statuses, checks and run
+// (createIntegrations) with a stub Composio client: statuses, checks and run
 // plans come from the integrations' registry rules, and Connect goes through
 // each Composio integration's own connector (Gmail, Calendar, QuickBooks,
 // Slack), sharing its Composio session with the checks. Nothing but Connect
@@ -92,8 +92,8 @@ function service(client: ComposioClientLike, env = composioEnv()) {
 
 describe("ConnectionService over the production integrations", () => {
   it("checks Composio through the integration and plans runs with the registry's rule", async () => {
-    const fake = composioClient();
-    const { connections, catalog, env } = service(fake.client);
+    const stub = composioClient();
+    const { connections, catalog, env } = service(stub.client);
     connections.syncConfiguration();
     expect(connections.get("gmail")).toMatchObject({
       state: "unknown",
@@ -152,12 +152,12 @@ describe("ConnectionService over the production integrations", () => {
       status: "unavailable",
       state: "needs_auth",
     });
-    expect(fake.authorize).not.toHaveBeenCalled();
+    expect(stub.authorize).not.toHaveBeenCalled();
   });
 
   it("connects through the integration's connector, on the session its checks use", async () => {
-    const fake = composioClient();
-    const { connections } = service(fake.client);
+    const stub = composioClient();
+    const { connections } = service(stub.client);
     await connections.check("google_calendar");
     const outcome = await connections.connect(
       "google_calendar",
@@ -168,17 +168,17 @@ describe("ConnectionService over the production integrations", () => {
       redirectUrl:
         "https://connect.composio.test/link/googlecalendar?next=http://127.0.0.1:4320/connections?connected=google_calendar",
     });
-    expect(fake.authorize).toHaveBeenCalledTimes(1);
-    expect(fake.authorize).toHaveBeenCalledWith("googlecalendar", {
+    expect(stub.authorize).toHaveBeenCalledTimes(1);
+    expect(stub.authorize).toHaveBeenCalledWith("googlecalendar", {
       callbackUrl: "http://127.0.0.1:4320/connections?connected=google_calendar",
     });
     // One Composio session, shared by the check and Connect: no second session manager.
-    expect(fake.createSession).toHaveBeenCalledTimes(1);
+    expect(stub.createSession).toHaveBeenCalledTimes(1);
   });
 
   it("connects QuickBooks and Slack through Composio like Gmail and Calendar", async () => {
-    const fake = composioClient();
-    const { connections } = service(fake.client);
+    const stub = composioClient();
+    const { connections } = service(stub.client);
     for (const [integration, toolkit] of [
       ["quickbooks", "quickbooks"],
       ["slack", "slack"],
@@ -188,9 +188,9 @@ describe("ConnectionService over the production integrations", () => {
         ok: true,
         redirectUrl: `https://connect.composio.test/link/${toolkit}?next=${callback}`,
       });
-      expect(fake.authorize).toHaveBeenLastCalledWith(toolkit, { callbackUrl: callback });
+      expect(stub.authorize).toHaveBeenLastCalledWith(toolkit, { callbackUrl: callback });
     }
-    expect(fake.authorize).toHaveBeenCalledTimes(2);
+    expect(stub.authorize).toHaveBeenCalledTimes(2);
   });
 
   it("offers Connect only for configured Composio integrations and reports failures redacted", async () => {

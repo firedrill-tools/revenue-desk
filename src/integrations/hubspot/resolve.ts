@@ -1,8 +1,7 @@
 // HubSpot configuration (docs/ARCHITECTURE.md §3). HUBSPOT_MCP_URL (with an
 // optional HUBSPOT_MCP_TOKEN) selects any Streamable HTTP MCP server;
 // otherwise the pinned @hubspot/mcp-server runs over stdio with
-// HUBSPOT_ACCESS_TOKEN, HUBSPOT_API_BASE_URL and, in tests,
-// HUBSPOT_MCP_COMMAND / HUBSPOT_MCP_ARGS.
+// HUBSPOT_ACCESS_TOKEN and HUBSPOT_API_BASE_URL.
 
 import type { AgentEnv, ConfigProblem } from "../../contracts/env.js";
 import type { ConnectionResolution } from "../../contracts/integration.js";
@@ -14,7 +13,7 @@ export const HUBSPOT_DEFAULT_API_HOST = "api.hubspot.com";
 function resolveHttp(env: AgentEnv, mcpUrl: string): ConnectionResolution<"hubspot"> {
   const { mcpToken } = env.hubspot;
   const problems: ConfigProblem[] = [];
-  const url = checkUrlVariable("HUBSPOT_MCP_URL", mcpUrl);
+  const url = checkUrlVariable("HUBSPOT_MCP_URL", mcpUrl, { allowLoopbackHttp: true });
   if (!url.ok) problems.push(url.problem);
   const token = hasSecret(mcpToken) ? mcpToken : null;
   if (token !== null) {
@@ -35,7 +34,7 @@ function resolveHttp(env: AgentEnv, mcpUrl: string): ConnectionResolution<"hubsp
 }
 
 export function resolveHubSpot(env: AgentEnv): ConnectionResolution<"hubspot"> {
-  const { accessToken, apiBaseUrl, mcpUrl, command } = env.hubspot;
+  const { accessToken, apiBaseUrl, mcpUrl } = env.hubspot;
   if (hasValue(mcpUrl)) return resolveHttp(env, mcpUrl);
   if (!hasSecret(accessToken)) {
     return { status: "not_configured", missing: ["HUBSPOT_ACCESS_TOKEN"] };
@@ -55,9 +54,6 @@ export function resolveHubSpot(env: AgentEnv): ConnectionResolution<"hubspot"> {
       problems.push(url.problem);
     }
   }
-  if (command !== null && command.command.trim() === "") {
-    problems.push({ variable: "HUBSPOT_MCP_COMMAND", message: "HUBSPOT_MCP_COMMAND is empty" });
-  }
 
   if (problems.length > 0) return { status: "invalid", problems };
   return {
@@ -71,8 +67,6 @@ export function resolveHubSpot(env: AgentEnv): ConnectionResolution<"hubspot"> {
         transport: "stdio",
         accessToken,
         apiBaseUrl: apiUrl,
-        command:
-          command === null ? null : { command: command.command.trim(), args: [...command.args] },
       },
     },
   };

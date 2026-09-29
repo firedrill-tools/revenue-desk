@@ -4,7 +4,7 @@ import { ASK_FLAGS, type AskCommand } from "../../../src/contracts/cli.js";
 
 const DEFAULTS: AskCommand = {
   command: "ask",
-  prompt: { source: "argument", text: "Why was Kestrel charged twice?" },
+  prompt: { source: "argument", text: "Why was Contoso charged twice?" },
   json: false,
   conversationId: null,
   policy: {},
@@ -30,7 +30,7 @@ function usageError(argv: readonly string[]): string {
 
 describe("parseCliArgs: ask", () => {
   it("takes the prompt as one argument and leaves every flag unset", () => {
-    expect(command(["ask", "Why was Kestrel charged twice?"])).toEqual(DEFAULTS);
+    expect(command(["ask", "Why was Contoso charged twice?"])).toEqual(DEFAULTS);
   });
 
   it("reads the prompt from stdin for '-'", () => {

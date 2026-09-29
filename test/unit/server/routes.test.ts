@@ -61,13 +61,13 @@ describe("conversations", () => {
     expect(detail).toEqual({ conversation, messages: [], pendingApprovals: [] });
 
     const renamed = await server.request("PATCH", `/api/conversations/${conversation.id}`, {
-      title: "Refund Kestrel",
+      title: "Refund Contoso",
       archived: true,
     });
     expect(renamed.status).toBe(200);
     expect((await json<{ conversation: ConversationSummary }>(renamed)).conversation).toMatchObject(
       {
-        title: "Refund Kestrel",
+        title: "Refund Contoso",
         archivedAt: expect.any(String),
       },
     );
@@ -97,7 +97,7 @@ describe("conversations", () => {
       id: "m0",
       conversationId: "c0",
       runId: null,
-      parts: [{ type: "text", text: "Why was Kestrel charged twice?" }],
+      parts: [{ type: "text", text: "Why was Contoso charged twice?" }],
       now,
     });
     const ids = async (query: string) =>
@@ -108,7 +108,7 @@ describe("conversations", () => {
       ).items.map((item) => item.id);
     expect(await ids("")).toEqual(["c2", "c1", "c0"]);
     expect(await ids("?q=digest")).toEqual(["c1"]);
-    expect(await ids("?q=KESTREL")).toEqual(["c0"]);
+    expect(await ids("?q=CONTOSO")).toEqual(["c0"]);
     const first = await json<Page<ConversationSummary>>(
       await server.request("GET", "/api/conversations?limit=2"),
     );
@@ -454,8 +454,8 @@ describe("settings and policies", () => {
     });
 
     const response = await server.request("PATCH", "/api/settings", {
-      companyName: " Kestrel Ops ",
-      internalEmailDomains: ["Kestrel.TEST", "@kestrel.test", "ops.kestrel.test"],
+      companyName: " Contoso Ops ",
+      internalEmailDomains: ["Contoso.EXAMPLE", "@contoso.example", "ops.contoso.example"],
       allowedSlackChannels: ["Billing", "#billing", "C0123ABC"],
       internalCalendarIds: ["Team@Group.Calendar.Google.com", "team@group.calendar.google.com"],
       notifySlackChannel: "#Sales-Ops",
@@ -467,8 +467,8 @@ describe("settings and policies", () => {
     expect(response.status).toBe(200);
     const { settings } = await json<{ settings: WorkspaceSettings }>(response);
     expect(settings).toMatchObject({
-      companyName: "Kestrel Ops",
-      internalEmailDomains: ["kestrel.test", "ops.kestrel.test"],
+      companyName: "Contoso Ops",
+      internalEmailDomains: ["contoso.example", "ops.contoso.example"],
       allowedSlackChannels: ["#billing", "C0123ABC"],
       internalCalendarIds: ["team@group.calendar.google.com"],
       notifySlackChannel: "#sales-ops",
@@ -486,7 +486,7 @@ describe("settings and policies", () => {
     expect(cleared.settings).toMatchObject({
       defaultModel: null,
       notifySlackChannel: null,
-      companyName: "Kestrel Ops",
+      companyName: "Contoso Ops",
     });
   });
 

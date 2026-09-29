@@ -19,7 +19,6 @@ export function registerSessionRoutes(app: Hono, services: ApiServices): void {
     const info: SessionInfo = {
       csrfToken: services.secrets.csrfToken,
       version: services.version,
-      mode: env.runtime.sandbox ? "sandbox" : "normal",
       model: model.model,
       effort: model.effort,
       businessDate: businessDate(env, settings, services.now()),

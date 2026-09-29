@@ -48,7 +48,7 @@ describe("Slack channels and mentions", () => {
     ]) {
       expect(mentionsEveryone(text), text).toBe(true);
     }
-    for (const text of ["mail maya@kestrel.test", "<@U0MAYA0001> done", "channel is fine"]) {
+    for (const text of ["mail maya@contoso.example", "<@U0MAYA0001> done", "channel is fine"]) {
       expect(mentionsEveryone(text), text).toBe(false);
     }
   });
@@ -117,7 +117,7 @@ describe("classifySlack", () => {
       ).toBe("internal_write");
     }
     expect(
-      post({ channel: "billing", markdown_text: "Refunded **$490.00**.\n- Harbor & Pine" }),
+      post({ channel: "billing", markdown_text: "Refunded **$490.00**.\n- Fabrikam" }),
     ).toEqual({
       actionClass: "internal_write",
       operation: "slack.chat.post_message",
@@ -126,7 +126,7 @@ describe("classifySlack", () => {
         consequence: "Post a message to #billing in Slack",
         facts: [
           { label: "Channel", value: "#billing" },
-          { label: "Message", value: "Refunded **$490.00**.\n- Harbor & Pine" },
+          { label: "Message", value: "Refunded **$490.00**.\n- Fabrikam" },
         ],
         recipients: ["#billing"],
       },
@@ -216,7 +216,7 @@ describe("Slack input rules", () => {
       issues({
         channel: "#revenue",
         markdown_text:
-          "# Weekly digest\n\n| Deal | Amount |\n|---|---|\n| Solstice | $18,000 |\n\n**Owner:** <@U0MAYA0001>, mail maya@kestrel.test <!here>",
+          "# Weekly digest\n\n| Deal | Amount |\n|---|---|\n| Umbrella | $18,000 |\n\n**Owner:** <@U0MAYA0001>, mail maya@contoso.example <!here>",
       }),
     ).toEqual([]);
   });
