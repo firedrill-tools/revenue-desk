@@ -9,6 +9,7 @@ dist/
 # Local state: SQLite databases, per-run state, CLAUDE_CONFIG_DIR and work dirs
 # (the default AGENT_STATE_DIR is ./data; database files are ignored anywhere).
 data/
+.firedrill/
 *.sqlite
 *.sqlite-*
 *.db
