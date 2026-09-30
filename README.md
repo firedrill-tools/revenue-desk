@@ -176,6 +176,13 @@ The server listens on 127.0.0.1 only; `PORT` changes the port. The server and
 the CLI share the state directory (`AGENT_STATE_DIR`, default `./data`), so
 CLI conversations and runs appear in the app with source `cli`.
 
+### Synthetic Tool demo
+
+Revenue Desk also has an explicit, local [Firedrill demo mode](docs/FIREDRILL_DEMO.md).
+It runs the same agent and approval gateway against six synthetic Tools without
+connecting real provider accounts. The regular commands above are unchanged;
+synthetic mode starts only with `pnpm demo:firedrill`.
+
 ## Command line
 
 ```text

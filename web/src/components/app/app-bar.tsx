@@ -148,6 +148,7 @@ export function AppBar({
       <PrimaryNav route={route} className="ml-4 hidden md:flex" />
 
       <div className="ml-auto flex items-center gap-1">
+        <SyntheticToolsLabel />
         <ModelLabel />
         <ConnectionsHealth />
         {/* On phones the toggle lives in the navigation sheet, so the bar keeps 44px targets. */}
@@ -169,5 +170,15 @@ export function AppBar({
         ) : null}
       </div>
     </header>
+  );
+}
+
+function SyntheticToolsLabel() {
+  const state = useSessionState();
+  if (state.status !== "ready" || !state.session.version.endsWith("-firedrill-demo")) return null;
+  return (
+    <span className="mr-2 inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 font-medium text-blue-800 text-meta dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+      Synthetic Tools
+    </span>
   );
 }

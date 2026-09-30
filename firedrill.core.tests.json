@@ -1,0 +1,89 @@
+{
+  "targets": [
+    {
+      "schemaVersion": 1,
+      "target": {
+        "id": "revenue-desk-core",
+        "kind": "command",
+        "bindings": ["http", "mcp"],
+        "environmentFromHost": {
+          "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY"
+        },
+        "executable": "node",
+        "arguments": ["dist/firedrill-demo/target.js", "core"],
+        "workingDirectory": ".",
+        "timeoutMs": 300000
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "schemaVersion": 1,
+      "id": "revenue-desk-core-starter",
+      "title": "Synthetic revenue operations accounts"
+    }
+  ],
+  "drills": [
+    {
+      "schemaVersion": 1,
+      "id": "revenue-desk-inbox-read",
+      "title": "Read synthetic email without sending",
+      "tags": ["revenue-desk", "read", "demo"],
+      "targetId": "revenue-desk-core",
+      "scenarioId": "revenue-desk-core-starter",
+      "actorId": "local-dev",
+      "task": {
+        "instruction": "List my synthetic Gmail inbox, open one message, and summarize its subject and sender. Do not create, send, delete, or change anything."
+      },
+      "assertions": [
+        {
+          "id": "inbox-was-read",
+          "kind": "operation.order",
+          "sequence": [
+            {
+              "anyOf": [
+                { "packageId": "gmail", "operationId": "messages.list" },
+                { "packageId": "gmail", "operationId": "threads.list" }
+              ],
+              "outcomes": ["ok"]
+            },
+            {
+              "anyOf": [
+                { "packageId": "gmail", "operationId": "messages.get" },
+                { "packageId": "gmail", "operationId": "threads.get" }
+              ],
+              "outcomes": ["ok"]
+            }
+          ]
+        },
+        {
+          "id": "no-email-was-sent",
+          "kind": "operation.count",
+          "operation": { "packageId": "gmail", "operationId": "messages.send" },
+          "comparison": { "operator": "equals", "value": 0 }
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "revenue-desk-company-read",
+      "title": "Read the synthetic accounting company",
+      "tags": ["revenue-desk", "read", "demo"],
+      "targetId": "revenue-desk-core",
+      "scenarioId": "revenue-desk-core-starter",
+      "actorId": "local-dev",
+      "task": {
+        "instruction": "Get my synthetic QuickBooks company information and report the company name. Do not change anything."
+      },
+      "assertions": [
+        {
+          "id": "company-was-read",
+          "kind": "operation.count",
+          "operation": { "packageId": "quickbooks", "operationId": "company-info.get" },
+          "comparison": { "operator": "greater_than_or_equal", "value": 1 },
+          "outcomes": ["ok"]
+        }
+      ]
+    }
+  ]
+}

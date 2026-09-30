@@ -73,7 +73,10 @@ describe("README.md", () => {
       expect(text).toMatch(new RegExp(`\\| ${code} \\|`));
   });
 
-  it("contains no test-platform content", () => {
-    expect(readme()).not.toMatch(/firedrill/i);
+  it("keeps the synthetic Tool demo opt-in and separate from normal setup", () => {
+    const text = readme();
+    expect(text).toContain("[Firedrill demo mode](docs/FIREDRILL_DEMO.md)");
+    expect(text).toContain("synthetic mode starts only with `pnpm demo:firedrill`");
+    expect(text).toContain("The regular commands above are unchanged");
   });
 });
