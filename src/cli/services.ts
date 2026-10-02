@@ -36,6 +36,7 @@ import type { ConversationRow } from "../db/schema.js";
 import { seedDatabase } from "../db/seed.js";
 import { recordedUsageBaselines, stateDirUsageBaselines } from "../db/usage-baseline.js";
 import type { IntegrationCatalog } from "../gateway/catalog.js";
+import type { UpstreamConnector } from "../gateway/mcp-proxy.js";
 import {
   connectionFromFailure,
   connectionSnapshot,
@@ -56,6 +57,8 @@ export type ServiceOptions = {
   readonly newId?: () => string;
   /** Explicit alternate composition for a local synthetic-only invocation. */
   readonly catalog?: IntegrationCatalog;
+  /** Explicit startup connector override; ordinary provider connections are unchanged. */
+  readonly connectUpstream?: UpstreamConnector;
 };
 
 export function createServices(options: ServiceOptions = {}): Promise<AskServices> {
@@ -81,6 +84,9 @@ export function createServices(options: ServiceOptions = {}): Promise<AskService
     runTurn: createRunTurn({
       catalog,
       version: packageVersion(),
+      ...(options.connectUpstream === undefined
+        ? {}
+        : { connectUpstream: options.connectUpstream }),
       // A resumed session's usage is measured against what the database recorded.
       usageStore: (stateDir) =>
         workspaceDb === null

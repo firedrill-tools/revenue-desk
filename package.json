@@ -68,7 +68,7 @@
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@biomejs/biome": "2.5.14",
-    "@firedrill-run/cloud": "0.1.13",
+    "@firedrill-run/cloud": "0.1.15",
     "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/better-sqlite3": "9.6.0",

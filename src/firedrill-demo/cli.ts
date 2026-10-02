@@ -9,7 +9,10 @@ const { demoAgentEnvironment, catalogBindingsFromEnvironment } = await import(".
 const { createFiredrillDemoCatalog } = await import("./catalog.js");
 const { createServices } = await import("../cli/services.js");
 const { runCliProcess } = await import("../cli/process.js");
+const { connectDemoMcpUpstream } = await import("./mcp-startup.js");
 
 demoAgentEnvironment();
 const catalog = createFiredrillDemoCatalog(catalogBindingsFromEnvironment());
-await runCliProcess(stdout, { loadServices: () => createServices({ catalog }) });
+await runCliProcess(stdout, {
+  loadServices: () => createServices({ catalog, connectUpstream: connectDemoMcpUpstream }),
+});

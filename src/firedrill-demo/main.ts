@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { createRunTurn } from "../agent/run-turn.js";
 import { createRedactor } from "../config/redact.js";
 import { stateDirUsageBaselines } from "../db/usage-baseline.js";
-import { connectUpstream } from "../gateway/mcp-proxy.js";
 import { listeningLines } from "../server/app.js";
 import { startServer } from "../server/runtime.js";
 import {
@@ -13,10 +12,11 @@ import {
   type DemoBindings,
   FIREDRILL_NATIVE_UPSTREAMS,
 } from "./catalog.js";
+import { connectDemoMcpUpstream } from "./mcp-startup.js";
 import { demoAgentEnvironment, demoBindingsFromEnvironment } from "./runtime.js";
 
 async function preflight(bindings: DemoBindings): Promise<void> {
-  const upstream = await connectUpstream({
+  const upstream = await connectDemoMcpUpstream({
     transport: "http",
     url: bindings.core.worldMcpUrl,
     headers: { Authorization: `Bearer ${bindings.core.credential}` },
@@ -58,6 +58,7 @@ async function main(): Promise<void> {
     runTurn: createRunTurn({
       catalog,
       version: "0.0.0-firedrill-demo",
+      connectUpstream: connectDemoMcpUpstream,
       usageStore: stateDirUsageBaselines,
     }),
     integrations: Object.values(catalog),
