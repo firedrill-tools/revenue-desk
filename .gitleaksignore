@@ -1,0 +1,19 @@
+# Reviewed non-secret test vectors only. Each exception pins one commit, file,
+# rule and line. There is no directory-wide or credential-pattern exemption.
+# Config vectors test redaction, Stripe key-mode checks and fake-service auth.
+# The web-stub vector is a fixed idempotency key, not an authentication key.
+60c0157ff88d52b09f1b7e042b016a9f337c380f:test/unit/config/env.test.ts:generic-api-key:162
+469c8ff164a0e10098c6e1a858e5e8f45453fc8d:test/support/web-stub/scenario.ts:generic-api-key:471
+7555ce0a36714952f9d27f81c52a037d5765ab5a:test/unit/fakes/stripe.test.ts:stripe-access-token:84
+7555ce0a36714952f9d27f81c52a037d5765ab5a:test/unit/fakes/stripe.test.ts:stripe-access-token:87
+be1224b0ecda09644ee549727a28f0532d902d57:test/unit/server/harness.ts:stripe-access-token:50
+d2f68a070e640c9f6e4b6b53f621d500e3a904a8:test/unit/config/redact.test.ts:stripe-access-token:23
+d2f68a070e640c9f6e4b6b53f621d500e3a904a8:test/unit/config/redact.test.ts:stripe-access-token:24
+d2f68a070e640c9f6e4b6b53f621d500e3a904a8:test/unit/config/redact.test.ts:stripe-access-token:25
+dc6c6a8d0be2f64b536808851aed20e77dfd4a92:test/unit/cli/human-output.test.ts:stripe-access-token:26
+dc6c6a8d0be2f64b536808851aed20e77dfd4a92:test/unit/cli/human-output.test.ts:stripe-access-token:185
+d3797c3965d765d40d748e925bf181925bdc3f12:test/unit/integrations/stripe-definition.test.ts:stripe-access-token:55
+d3797c3965d765d40d748e925bf181925bdc3f12:test/unit/integrations/stripe-definition.test.ts:stripe-access-token:61
+7555ce0a36714952f9d27f81c52a037d5765ab5a:test/support/fakes/credentials.ts:slack-bot-token:14
+7555ce0a36714952f9d27f81c52a037d5765ab5a:test/support/fakes/credentials.ts:stripe-access-token:12
+dc6c6a8d0be2f64b536808851aed20e77dfd4a92:test/integration/cli/support/fake-services.ts:stripe-access-token:214

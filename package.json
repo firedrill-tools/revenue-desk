@@ -32,7 +32,8 @@
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm test:cli && pnpm test:e2e",
     "cli": "node --import tsx src/cli/main.ts",
     "demo:firedrill": "node scripts/firedrill-demo.mjs",
-    "demo:firedrill:test": "node scripts/firedrill-demo-test.mjs"
+    "demo:firedrill:test": "node scripts/firedrill-demo-test.mjs",
+    "demo:firedrill:sdk": "node scripts/demo-cto-sdk.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "4.0.121",

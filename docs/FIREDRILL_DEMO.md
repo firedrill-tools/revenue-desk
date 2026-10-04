@@ -1,44 +1,79 @@
-# Revenue Desk with Firedrill Tools
+# Try Revenue Desk with Firedrill
 
-This is an opt-in local demo composition. Revenue Desk's agent and web app run on
-your computer; Gmail, Calendar, QuickBooks, Slack, HubSpot and Stripe are
-synthetic Tools running in Firedrill. The normal `pnpm dev`, `pnpm start` and
-`revenue-desk ask` paths still use Revenue Desk's ordinary integrations. No
-provider account or provider API key is used by this demo command.
+Run Revenue Desk's existing agent and UI on your computer while synthetic Gmail,
+Google Calendar, QuickBooks, Slack, HubSpot and Stripe run in Firedrill. This is
+an explicit test mode: ordinary `pnpm dev`, `pnpm start` and `revenue-desk ask`
+still use real services.
 
-## Start the demo
+You need Node.js 22.22.3+, pnpm 9.15.4, a Firedrill account and your Anthropic API
+key. Synthetic integrations do not need Composio OAuth or real vendor keys.
+**The model still uses your Anthropic account and incurs usage.**
 
-Install dependencies with `pnpm install`. Sign in with the Firedrill CLI once
-(`pnpm exec firedrill login`); the demo launcher uses that existing login.
-Create a file outside this repository containing only `ANTHROPIC_API_KEY`, or
-provide that variable in your shell. Never put the key or a world credential
-in this repository.
-
-The prepared demo project has two ready Tool setups. The first contains Gmail,
-Google Calendar, QuickBooks, Slack and HubSpot. Stripe is in the second setup
-because the current QuickBooks and Stripe Tool packages both declare the MCP
-aliases `create_customer` and `create_invoice`; the six-package world build
-rejects that collision. Revenue Desk joins the two actor-scoped connections
-locally. This is one agent with six synthetic integrations, **not** a claim that
-one Firedrill test case covers both worlds.
+## Install and create your own Tools
 
 ```sh
-export FIREDRILL_DEMO_PROJECT_ID=prj_1ba42b556f01c8adf7ca0a19
-export FIREDRILL_DEMO_CORE_ENVIRONMENT_ID=env_50dccd8236fedad96cc557b5
-export FIREDRILL_DEMO_STRIPE_ENVIRONMENT_ID=env_29b27458d2448d1b7c5c0824
-export REVENUE_DESK_MODEL_ENV_PATH=/absolute/path/to/model-only.env
+git clone https://github.com/firedrill-tools/revenue-desk.git
+cd revenue-desk
+pnpm install --frozen-lockfile
+pnpm build
+pnpm exec firedrill init
+```
+
+During `init`, create or select your project, then choose **Gmail**, **Google
+Calendar**, **QuickBooks**, **Slack** and **HubSpot**, starter data and a
+persistent connection. Keep the project, ready setup and environment IDs.
+If you already initialized, select the same project and use `tools add`.
+
+Add **Stripe** in a second persistent setup:
+
+```sh
+pnpm exec firedrill library list
+pnpm exec firedrill tools add --tool YOUR_STRIPE_LIBRARY_ID --initial-state starter --use reusable --name "Revenue Desk Stripe" --compute-ttl-ms 7200000 --wait
+```
+
+Replace the library ID with Stripe's actual ID from the list. Keep this setup's
+ID and environment ID too. The five-Tool setup and Stripe are separate because
+the current QuickBooks and Stripe Tools both expose the MCP aliases
+`create_customer` and `create_invoice`; a combined build rejects that
+collision. The local agent can connect to both, but the saved tests below
+evaluate each setup separately. Do not claim one six-Tool isolated case.
+
+Set your own returned values—not example-account IDs:
+
+```sh
+export FIREDRILL_DEMO_PROJECT_ID=YOUR_PROJECT_ID
+export FIREDRILL_DEMO_CORE_ENVIRONMENT_ID=YOUR_FIVE_TOOL_ENVIRONMENT_ID
+export FIREDRILL_DEMO_STRIPE_ENVIRONMENT_ID=YOUR_STRIPE_ENVIRONMENT_ID
+```
+
+Provide `ANTHROPIC_API_KEY` in your shell through your normal secret manager.
+Alternatively, set `REVENUE_DESK_MODEL_ENV_PATH` to a private file outside this
+repository containing only `ANTHROPIC_API_KEY`. Do not use a production-service
+credential file for this test mode.
+
+## Use the agent manually
+
+```sh
 pnpm demo:firedrill
 ```
 
-Open [the local Revenue Desk app](http://127.0.0.1:4321). The **Synthetic
-Tools** label confirms this composition. Open **Connections** to see all six
-connections pointing to `world.firedrill.run`. Chat with Revenue Desk normally;
-its existing agent, gateway, policy checks, approvals and run history remain in
-use. A separate demo state directory keeps these conversations out of ordinary
-Revenue Desk data.
+Open http://127.0.0.1:4321. **Synthetic Tools** identifies this mode.
+**Connections** shows the six synthetic connections. Start with:
 
-For a repeatable headless run, use the same exports and pass Revenue Desk's
-existing `ask` command through the launcher:
+> List my synthetic Gmail inbox and summarize one message. Do not change anything.
+
+Then ask it to read the Stripe balance or QuickBooks company information.
+Revenue Desk's normal gateway, approval policy and local run history remain
+active. The launcher starts or resumes paused Tool compute as needed, issues
+short-lived `local-dev` actor bindings, and forwards the model key and these
+bindings—not real Composio, HubSpot or Stripe credentials.
+
+The starter setups use the `local-dev` actor expected by this adapter. The
+credentials last at most an hour; restart the launcher to refresh them. Compute
+and credential lifetimes are separate. Pausing preserves Tool data, and
+restarting your agent does not reset it. Stop the local app with Ctrl-C.
+
+A headless read-only task uses the same connections:
 
 ```sh
 pnpm demo:firedrill ask --json \
@@ -46,133 +81,136 @@ pnpm demo:firedrill ask --json \
   'Read the synthetic Gmail inbox, Stripe balance and QuickBooks company info. Do not change anything.'
 ```
 
-The launcher resumes paused Tool compute when necessary, requests fresh
-actor-scoped credentials, builds locally, and starts the app or command. It
-passes only the model key and synthetic bindings to Revenue Desk; real
-Composio, HubSpot and Stripe credentials are rejected. The world credentials
-expire after at most one hour. Restart the command to renew them. The reusable
-Tools retain their state across compute pauses; restarting the local agent
-does not reset them. Use Ctrl-C to stop the local app.
+Open the corresponding Tool instance in Firedrill to see availability, recorded
+activity and its **Open app** action when a browser app is available. Its UI,
+HTTP and MCP operations use the same seeded state. Issued Tool-app links are
+short-lived access links, not permanent public URLs.
+[Tool apps](https://docs.firedrill.run/guides/tool-apps)
 
-## Run saved tests and simulations
+## Save and run the supplied tests
 
-The repository also has two saved read-only test setups. They derive from the
-same selected Tools but allocate **fresh case-scoped state** for each run, so
-the test adapter does not borrow a reusable demo credential. The five-Tool
-setup has an inbox-reading test and an accounting-company test; the Stripe
-setup has a balance-reading test. Their source is in
-[`firedrill.core.tests.json`](../firedrill.core.tests.json) and
-[`firedrill.stripe.tests.json`](../firedrill.stripe.tests.json). Each check
-requires an observed successful Tool operation. A completed model reply by
-itself does not pass a check.
+The files `firedrill.core.tests.json` and `firedrill.stripe.tests.json` define
+three read-only tasks: list and open email, read accounting company info, and
+read a Stripe balance. Assertions require successful observed operations; a
+convincing model reply cannot pass them.
+
+Derive a test setup from each original ready setup:
 
 ```sh
-export FIREDRILL_DEMO_PROJECT_ID=prj_1ba42b556f01c8adf7ca0a19
-export FIREDRILL_DEMO_CORE_TEST_SETUP_ID=setup_aa6ebe3e885ddbd15da0329c
-export FIREDRILL_DEMO_STRIPE_TEST_SETUP_ID=setup_08de323e7adcf377942cbdcc
-export REVENUE_DESK_MODEL_ENV_PATH=/absolute/path/to/model-only.env
+pnpm exec firedrill tools add --from-setup YOUR_FIVE_TOOL_SETUP_ID --tests firedrill.core.tests.json --wait
+pnpm exec firedrill tools add --from-setup YOUR_STRIPE_SETUP_ID --tests firedrill.stripe.tests.json --wait
+```
+
+These commands save new immutable setups. They do not modify your original
+connections or execute the agent. Set the **new** returned setup IDs:
+
+```sh
+export FIREDRILL_DEMO_CORE_TEST_SETUP_ID=YOUR_NEW_CORE_TEST_SETUP_ID
+export FIREDRILL_DEMO_STRIPE_TEST_SETUP_ID=YOUR_NEW_STRIPE_TEST_SETUP_ID
 pnpm demo:firedrill:test
 ```
 
-Pass `core` or `stripe` after the command to run one setup. The script builds
-Revenue Desk, invokes the installed Firedrill CLI, and prints the Results link.
-It needs your Firedrill CLI login; it forwards the model key but no real
-provider keys. The command target receives only its case's scoped HTTP/MCP
-binding and runs Revenue Desk's actual agent and approval gateway. It denies
-all write classes for these read-only tests. The target returns an execution
-result; Firedrill, not the agent, evaluates the saved assertions. For repeated
-or parallel independent cases, use the same saved setups and command target in
-the Firedrill Simulator or a `firedrill run` batch; see the
-[simulation guide](https://docs.firedrill.run/guides/simulations).
+Use `pnpm demo:firedrill:test core` or `stripe` to run one setup. The script
+builds the local agent and invokes the published CLI. For each case, the
+adapter creates fresh local agent state and receives only its isolated case's
+Tool bindings. These read-only tests deny all write categories.
 
-The prepared account currently allows two concurrent Tool sessions. The two
-ready reusable demo environments occupy both slots, so a fresh isolated test
-case cannot start at the same time. Before running the saved tests, stop the
-local demo and suspend the reusable environments; suspension keeps their data.
-After testing, wake both and restart `pnpm demo:firedrill` to obtain fresh
-credentials:
+Firedrill retains saved tests, simulation history, verdicts and Tool evidence.
+Open the result URL printed by the CLI. For automated-first records without a
+reusable source environment, select **All project tests**, **All project
+simulations**, or project-wide Results history; do not assume they belong to
+Default. [History scope](https://docs.firedrill.run/guides/simulations#history-scope)
+
+If your account's concurrent-session allowance is occupied by reusable
+connections, stop the local app and deliberately suspend those environments
+before testing. Do not pause a shared connection without coordinating with
+its users:
 
 ```sh
-pnpm exec firedrill environment suspend --project "$FIREDRILL_DEMO_PROJECT_ID" --environment "$FIREDRILL_DEMO_CORE_ENVIRONMENT_ID" --wait
-pnpm exec firedrill environment suspend --project "$FIREDRILL_DEMO_PROJECT_ID" --environment "$FIREDRILL_DEMO_STRIPE_ENVIRONMENT_ID" --wait
-pnpm demo:firedrill:test core
-pnpm demo:firedrill:test stripe
-pnpm exec firedrill environment wake --project "$FIREDRILL_DEMO_PROJECT_ID" --environment "$FIREDRILL_DEMO_CORE_ENVIRONMENT_ID" --ttl-ms 7200000 --wait
-pnpm exec firedrill environment wake --project "$FIREDRILL_DEMO_PROJECT_ID" --environment "$FIREDRILL_DEMO_STRIPE_ENVIRONMENT_ID" --ttl-ms 7200000 --wait
+pnpm exec firedrill environment suspend --environment "$FIREDRILL_DEMO_CORE_ENVIRONMENT_ID" --wait
+pnpm exec firedrill environment suspend --environment "$FIREDRILL_DEMO_STRIPE_ENVIRONMENT_ID" --wait
+pnpm demo:firedrill:test
 ```
 
-These commands are separate rather than hidden inside the test launcher:
-pausing a shared Tool connection may interrupt someone using the live demo.
-If a runner stops while the batch is finishing, use the `resume` subcommand
-with the relative recovery file printed by Firedrill. It reads the original
-request and does not repeat an uncertain agent invocation:
+Run `pnpm demo:firedrill` afterwards to resume those connections. If a CLI wait
+is interrupted, paste its printed recovery command, or use the wrapper:
 
 ```sh
-pnpm demo:firedrill:test resume .firedrill/cloud/simulation-<printed-id>.json
+pnpm demo:firedrill:test resume .firedrill/cloud/simulation-PRINTED_ID.json
 ```
 
-The first attempted managed Stripe test on 2026-09-30 queued for capacity and
-expired before the agent target started; it was cancelled. After pausing both
-reusable sessions, the [core batch](https://app.firedrill.run/app/results/simulations/cisuite_f1d9f89ac7f46ff0cfd38888?project=prj_1ba42b556f01c8adf7ca0a19)
-sealed with **2 passed, 0 failed**, and the
-[Stripe batch](https://app.firedrill.run/app/results/simulations/cisuite_38c2d3a365d8db4d8aa34eb1?project=prj_1ba42b556f01c8adf7ca0a19)
-sealed with **1 passed, 0 failed**. The core CLI wait lost its final receipt
-during cleanup; resuming its saved request returned the sealed verdict without
-rerunning either case. Both reusable sessions were then woken and confirmed
-ready again.
+Keep that ignored recovery file private. Resume follows the original request;
+starting again with a new request can repeat uncertain agent work.
 
-The two setups cannot form one six-Tool isolated case while the Tool aliases
-collide. Thus a combined cross-provider verdict is not currently claimed.
-You can still demonstrate all six in the reusable local-agent flow above.
+## Run simulations with the SDK
 
-## Show the Tool apps
+The included SDK runner calls `runSimulation` from the same published package.
+It invokes the actual Revenue Desk command target and attaches agent outputs
+and redacted runner logs. No local world kernel is installed.
 
-In the Firedrill portal, open the ready reusable Tool connection, select the
-acting identity, then choose a Tool under **Open a Tool's app** and **Get app
-link**. The issued browser link is short-lived; the Tool's app and its API/MCP
-operations share the same synthetic state. Open the Gmail app before and after
-an agent action to show that shared state. Do not publish or bookmark an issued
-link as a permanent customer URL. See the
-[Tool app guide](https://docs.firedrill.run/guides/tool-apps).
+Provide a project-scoped `FIREDRILL_CREDENTIAL` from your Firedrill credentials
+settings or CLI. Keep the model key in `ANTHROPIC_API_KEY`; unlike the manual
+launcher, this script does not load a model-key file.
 
-## What is verified, and what is not
+```sh
+pnpm build
+pnpm demo:firedrill:sdk core --check
+pnpm demo:firedrill:sdk core
+pnpm demo:firedrill:sdk stripe
+```
 
-On 2026-09-30, the local web agent completed a Gmail inbox read and message
-open, then read Calendar, QuickBooks, Slack, HubSpot and Stripe through its
-normal tool gateway. The headless agent separately read synthetic Stripe and
-QuickBooks successfully. The first Calendar call used an unsupported
-`maxResults` argument; the Tool rejected it and the agent retried with the
-declared schema. These are actual agent calls, not a connection-only check.
+`--check` validates the local selection without contacting Firedrill or a
+model. It is not an execution proof. Increase independent cases explicitly:
 
-Each Tool's starter data is an independent fictional account. Customer emails
-and organizations do **not** line up across the six packages. You can show
-each integration and its browser app, but a cross-system billing inquiry,
-refund or handoff is not a meaningful passing test until you save coherent
-per-Tool datasets and select those exact revisions in a test setup. Do not
-present a model's cross-system narrative as a verified Firedrill verdict. The
-[dataset guide](https://docs.firedrill.run/guides/saved-datasets) explains
-versioned data and resets; the [test guide](https://docs.firedrill.run/guides/run-first-drill)
-explains case-scoped runner bindings and observable checks. The reusable demo
-launcher connects Tools and does not itself report a test verdict; use the
-separate saved-test command above for that.
+```sh
+export FIREDRILL_DEMO_SEEDS='["42","43","44"]'
+export FIREDRILL_DEMO_REPETITIONS=2
+export FIREDRILL_DEMO_CONCURRENCY=1
+pnpm demo:firedrill:sdk core
+```
 
-For date-sensitive work, Revenue Desk uses the local process date while the
-Tools use Firedrill's virtual time. The prepared starter worlds begin in
-mid-September 2026. Use explicit dates in demo prompts; do not claim that
-advancing Tool time also changed the agent's clock.
+For the two core drills this requests 12 cases. Repetitions and seeds alone do
+not create 12 different authored scenarios. Each case can incur model usage;
+concurrency is constrained by your Firedrill allowance and provider limits.
+Start small. The script prints the simulation's real counts, conclusion and
+result link. Recovery checkpoints and receipts stay under ignored
+`.firedrill/cto-sdk/`. To recover, use the printed checkpoint:
 
-## Demo prompts
+```sh
+pnpm demo:firedrill:sdk core --resume .firedrill/cto-sdk/PRINTED_DIRECTORY/checkpoint.json
+```
 
-Start with a read-only question: “List my synthetic Gmail inbox and summarize
-the most recent billing message. Do not change anything.” Then ask Revenue
-Desk to check the connected Calendar, QuickBooks, Slack, HubSpot and Stripe
-accounts. In **Runs**, show the actual Tool calls and their outcomes. In the
-Firedrill app, inspect the corresponding Tool setup and its recorded activity.
-The two products show different sides of the same call: Revenue Desk shows
-agent reasoning, approvals and tool use; Firedrill shows the synthetic Tool
-state and activity.
+API/MCP execution does not automatically capture Tool UI screenshots. This
+runner records real outputs and logs. Browser evidence requires an explicitly
+configured browser test or capture integration.
+[SDK simulations](https://docs.firedrill.run/guides/simulations#run-from-the-sdk)
 
-Writes should be demonstrated only after inspecting the target record and
-approval policy. Keep financial and outbound actions on `ask` or `deny` for a
-read-only demo. A successful model reply is not a substitute for checking the
-Tool's resulting state.
+## Run in GitHub Actions
+
+The ordinary CI workflow runs offline checks and a build. **Firedrill drills**
+is opt-in. In your own repository, set:
+
+- Variables: `FIREDRILL_PROJECT_ID`, `FIREDRILL_CORE_TEST_SETUP_ID`,
+  `FIREDRILL_STRIPE_TEST_SETUP_ID`.
+- Secrets: `FIREDRILL_CREDENTIAL` and `ANTHROPIC_API_KEY`.
+
+Run the workflow manually first. Set `FIREDRILL_DRILLS_ENABLED=true` to also
+run on trusted main pushes and same-repository PRs. Fork PRs do not receive
+credentials or run provider-backed drills. No GitHub App is needed for this
+direct CLI workflow. [Revision-bound PR integration](https://docs.firedrill.run/guides/pull-request-ci)
+
+## Data and limits
+
+Starter data is fictional and independent per Tool. The same customer does
+not necessarily exist across all six systems. Save coherent datasets before
+testing cross-system refunds, collections or handoffs:
+[saved datasets](https://docs.firedrill.run/guides/saved-datasets).
+
+The Tool clock is virtual; the agent's process still uses the local date.
+Advancing Tool time does not change the agent's clock. For date-sensitive tasks
+supply explicit dates and inspect both the task and recorded Tool evidence.
+
+This example keeps the normal agent intact and adds a test-side composition.
+It supports the selected operations implemented in `src/firedrill-demo/catalog.ts`,
+not every possible upstream service feature. Ordinary real-service setup and
+security details remain in the root README.
