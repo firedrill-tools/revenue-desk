@@ -1,0 +1,41 @@
+name: Firedrill drills
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: firedrill-drills-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  drills:
+    if: >-
+      (github.event_name == 'workflow_dispatch' || vars.FIREDRILL_DRILLS_ENABLED == 'true') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@c336a2788d9774dccfdeb4823a5058ccc9f07453 # v4.3.0
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run saved tests with the customer-owned agent
+        env:
+          FIREDRILL_CREDENTIAL: ${{ secrets.FIREDRILL_CREDENTIAL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FIREDRILL_DEMO_PROJECT_ID: ${{ vars.FIREDRILL_PROJECT_ID }}
+          FIREDRILL_DEMO_CORE_TEST_SETUP_ID: ${{ vars.FIREDRILL_CORE_TEST_SETUP_ID }}
+          FIREDRILL_DEMO_STRIPE_TEST_SETUP_ID: ${{ vars.FIREDRILL_STRIPE_TEST_SETUP_ID }}
+        run: |
+          test -n "$FIREDRILL_CREDENTIAL" && test -n "$ANTHROPIC_API_KEY"
+          pnpm demo:firedrill:test

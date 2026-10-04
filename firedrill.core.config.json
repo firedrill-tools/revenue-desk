@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "drillIds": ["revenue-desk-inbox-read", "revenue-desk-company-read"],
+  "targets": {
+    "revenue-desk-core": {
+      "command": "node",
+      "arguments": ["dist/firedrill-demo/target.js", "core"],
+      "bindings": ["http", "mcp"]
+    }
+  }
+}

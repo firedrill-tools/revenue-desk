@@ -3,9 +3,9 @@
 // conversations through the /api proxy, nor any file outside the web app,
 // such as the SQLite database under ./data.
 
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { createServer, type ViteDevServer } from "vite";
@@ -14,6 +14,7 @@ import { createApp } from "../../src/server/app.js";
 
 const repo = fileURLToPath(new URL("../..", import.meta.url));
 const probeDir = join(repo, "data", "vite-dev-server-test");
+const secretProbe = mkdtempSync(join(repo, "web", ".vite-secret-probe-"));
 
 let vite: ViteDevServer;
 let api: ReturnType<typeof serve>;
@@ -22,6 +23,7 @@ let base: string;
 beforeAll(async () => {
   mkdirSync(probeDir, { recursive: true });
   writeFileSync(join(probeDir, "revenue-desk.sqlite"), "not a real database");
+  writeFileSync(join(secretProbe, ".env"), "EXAMPLE_ONLY=not-a-secret\n");
   const app = createApp({ version: "0.0.0-test" });
   const apiPort = await new Promise<number>((resolve) => {
     api = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 }, (info: AddressInfo) =>
@@ -47,6 +49,7 @@ afterAll(async () => {
   await vite?.close();
   await new Promise<void>((resolve) => api?.close(() => resolve()));
   rmSync(probeDir, { recursive: true, force: true });
+  rmSync(secretProbe, { recursive: true, force: true });
 });
 
 describe("pnpm dev's Vite server", () => {
@@ -70,7 +73,7 @@ describe("pnpm dev's Vite server", () => {
       "package.json",
       "data/vite-dev-server-test/revenue-desk.sqlite",
       "src/server/security.ts",
-      ".env",
+      relative(repo, join(secretProbe, ".env")),
     ]) {
       const response = await fetch(`${base}/@fs${join(repo, path)}`);
       expect(response.status, path).toBe(403);

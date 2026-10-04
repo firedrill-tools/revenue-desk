@@ -35,6 +35,8 @@ import type { DbExecutor } from "../db/repos/types.js";
 import type { ConversationRow } from "../db/schema.js";
 import { seedDatabase } from "../db/seed.js";
 import { recordedUsageBaselines, stateDirUsageBaselines } from "../db/usage-baseline.js";
+import type { IntegrationCatalog } from "../gateway/catalog.js";
+import type { UpstreamConnector } from "../gateway/mcp-proxy.js";
 import {
   connectionFromFailure,
   connectionSnapshot,
@@ -53,13 +55,17 @@ export type ServiceOptions = {
   readonly log?: (line: string) => void;
   readonly now?: () => Date;
   readonly newId?: () => string;
+  /** Explicit alternate composition for a local synthetic-only invocation. */
+  readonly catalog?: IntegrationCatalog;
+  /** Explicit startup connector override; ordinary provider connections are unchanged. */
+  readonly connectUpstream?: UpstreamConnector;
 };
 
 export function createServices(options: ServiceOptions = {}): Promise<AskServices> {
   const log = options.log ?? ((line: string) => process.stderr.write(`revenue-desk: ${line}\n`));
   const now = options.now ?? (() => new Date());
   const newId = options.newId ?? randomUUID;
-  const catalog = integrations();
+  const catalog = options.catalog ?? integrations();
   /** The open workspace's database: the connections table holds the last checks. */
   let workspaceDb: DbExecutor | null = null;
 
@@ -67,7 +73,7 @@ export function createServices(options: ServiceOptions = {}): Promise<AskService
     loadConfig: (environment, { cwd }) => loadAgentEnv(environment, { cwd }),
     createRedactor: (env) => createRedactor(env),
     openWorkspace(env) {
-      const workspace = openCliWorkspace(env, { log, now, newId });
+      const workspace = openCliWorkspace(env, { log, now, newId, catalog });
       workspaceDb = workspace.db;
       return workspace;
     },
@@ -78,6 +84,9 @@ export function createServices(options: ServiceOptions = {}): Promise<AskService
     runTurn: createRunTurn({
       catalog,
       version: packageVersion(),
+      ...(options.connectUpstream === undefined
+        ? {}
+        : { connectUpstream: options.connectUpstream }),
       // A resumed session's usage is measured against what the database recorded.
       usageStore: (stateDir) =>
         workspaceDb === null
@@ -102,6 +111,7 @@ type WorkspaceOptions = {
   readonly log: (line: string) => void;
   readonly now: () => Date;
   readonly newId: () => string;
+  readonly catalog: IntegrationCatalog;
 };
 
 /** The shared state directory's database, seeded, for one invocation. */
@@ -167,7 +177,7 @@ function openCliWorkspace(
               userMessageId,
               assistantMessageId,
               policy: input.policy,
-              connections: connectionSnapshot(integrations(), input.env, knownConnections(tx))
+              connections: connectionSnapshot(options.catalog, input.env, knownConnections(tx))
                 .connections,
               startedAt,
               owner: currentRunOwner(),

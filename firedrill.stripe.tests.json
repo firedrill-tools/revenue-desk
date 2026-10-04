@@ -1,0 +1,49 @@
+{
+  "targets": [
+    {
+      "schemaVersion": 1,
+      "target": {
+        "id": "revenue-desk-stripe",
+        "kind": "command",
+        "bindings": ["http"],
+        "environmentFromHost": {
+          "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY"
+        },
+        "executable": "node",
+        "arguments": ["dist/firedrill-demo/target.js", "stripe"],
+        "workingDirectory": ".",
+        "timeoutMs": 300000
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "schemaVersion": 1,
+      "id": "revenue-desk-stripe-starter",
+      "title": "Synthetic payments account"
+    }
+  ],
+  "drills": [
+    {
+      "schemaVersion": 1,
+      "id": "revenue-desk-balance-read",
+      "title": "Read the synthetic payments balance",
+      "tags": ["revenue-desk", "read", "demo"],
+      "targetId": "revenue-desk-stripe",
+      "scenarioId": "revenue-desk-stripe-starter",
+      "actorId": "local-dev",
+      "task": {
+        "instruction": "Read the synthetic Stripe account balance and summarize the available amount. Do not create, change, charge, or refund anything."
+      },
+      "assertions": [
+        {
+          "id": "balance-was-read",
+          "kind": "operation.count",
+          "operation": { "packageId": "stripe", "operationId": "balance.retrieve" },
+          "comparison": { "operator": "greater_than_or_equal", "value": 1 },
+          "outcomes": ["ok"]
+        }
+      ]
+    }
+  ]
+}

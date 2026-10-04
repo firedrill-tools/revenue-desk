@@ -1,5 +1,10 @@
 # Revenue Desk
 
+A runnable example agent for [Firedrill](https://firedrill.run).
+[Try it against synthetic Tools](docs/FIREDRILL_DEMO.md) for a CLI-first setup,
+the React chat UI, saved behavioral tests, SDK simulations and opt-in CI.
+That path uses your own model key but no real vendor-service credentials.
+
 Revenue Desk is a back-office agent for the revenue-operations or billing lead
 at a small B2B company. It works across Gmail, Google Calendar, HubSpot,
 Stripe, QuickBooks Online and Slack from one chat, and asks a person before
@@ -32,8 +37,10 @@ them.
 
 ## How it connects
 
-Every integration is a real service; nothing is mocked or simulated in the
-product. Each uses one of three connection types: Composio for every system
+The ordinary application mode connects to real services. The separate
+[Firedrill test mode](docs/FIREDRILL_DEMO.md) explicitly connects to synthetic
+Tools instead; it is never a silent fallback. Ordinary mode uses one of three
+connection types: Composio for every system
 Composio supports (Gmail, Google Calendar, QuickBooks Online, Slack), MCP for
 HubSpot and the REST API for Stripe. Every tool reaches the model through an
 in-process gateway server per integration (tool names look like
@@ -61,8 +68,9 @@ Where each service is reached is fixed in the code
 `https://backend.composio.dev`, Stripe at `https://api.stripe.com`, HubSpot's
 MCP server at its own default `https://api.hubspot.com` (it is never given a
 host override), and the HubSpot owners lookup at `https://api.hubapi.com`.
-Configuration supplies credentials only, so Revenue Desk cannot be pointed at
-another server. As a second guard, a Composio session endpoint or sign-in
+Ordinary-mode configuration supplies credentials only; endpoint substitution
+is limited to the explicit Firedrill test-side composition. As a second guard,
+a Composio session endpoint or sign-in
 link that is not HTTPS on a public host (one on this machine, `*.localhost`
 or a private network) is refused before anything connects to it or opens
 it.
@@ -175,6 +183,13 @@ it starts; until its check finishes, a connection shows as not checked yet.
 The server listens on 127.0.0.1 only; `PORT` changes the port. The server and
 the CLI share the state directory (`AGENT_STATE_DIR`, default `./data`), so
 CLI conversations and runs appear in the app with source `cli`.
+
+### Synthetic Tool demo
+
+Revenue Desk also has an explicit, local [Firedrill demo mode](docs/FIREDRILL_DEMO.md).
+It runs the same agent and approval gateway against six synthetic Tools without
+connecting real provider accounts. The regular commands above are unchanged;
+synthetic mode starts only with `pnpm demo:firedrill`.
 
 ## Command line
 
@@ -581,4 +596,6 @@ too: Revenue Desk always gives it Composio's host.
 | A live test is skipped | Its system is not connected or not configured; the skip names it and what to do (Connect in Connections, or the variable to set). To make such a test fail instead, list the integration in `LIVE_REQUIRE`. |
 | A live test fails with "… is required by LIVE_REQUIRE but cannot be tested" | `LIVE_REQUIRE` lists that integration and its test could not run; the rest of the message says why and what to do. Connect or configure it, or remove it from `LIVE_REQUIRE`. |
 
-This repository is private and local-only. It has no licence file yet.
+This is a public reference example. Revenue Desk's original code currently has
+no license grant; review that before copying or redistributing it. Third-party
+UI components retain the licenses in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

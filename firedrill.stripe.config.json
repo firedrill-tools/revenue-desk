@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "drillIds": ["revenue-desk-balance-read"],
+  "targets": {
+    "revenue-desk-stripe": {
+      "command": "node",
+      "arguments": ["dist/firedrill-demo/target.js", "stripe"],
+      "bindings": ["http"]
+    }
+  }
+}
